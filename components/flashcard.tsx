@@ -60,10 +60,10 @@ export function Flashcard({ front, back, category, flipped }: Props) {
         animate={{ rotateY: flipped ? 180 : 0 }}
         transition={SPRING}
       >
-        <Face className="[backface-visibility:hidden] [transform:rotateY(0deg)]">
+        <Face face="front" className="[backface-visibility:hidden] [transform:rotateY(0deg)]">
           <Front category={category} front={front} />
         </Face>
-        <Face className="[backface-visibility:hidden] [transform:rotateY(180deg)]">
+        <Face face="back" className="[backface-visibility:hidden] [transform:rotateY(180deg)]">
           <Back category={category} back={back} />
         </Face>
       </motion.div>
@@ -71,9 +71,18 @@ export function Flashcard({ front, back, category, flipped }: Props) {
   );
 }
 
-function Face({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+function Face({
+  children,
+  className = "",
+  face,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  face?: "front" | "back";
+}) {
   return (
     <div
+      data-face={face}
       className={`absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-card bg-card px-8 py-10 text-center shadow-card ${className}`}
     >
       {children}
