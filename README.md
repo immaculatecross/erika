@@ -1,6 +1,6 @@
 # Erika
 
-Master the language you already speak. Local-first web app: give it up to thirty minutes of your real speech; a native-audio model inventories your mistakes; Erika turns them into flashcards, micro-lessons, and a focus map. The curriculum is you.
+Master the language you already speak. Local-first web app: give it your real speech — a mic take or a day-long dump from an always-on recorder; Erika extracts the moments you're talking, a native-audio model inventories your mistakes, and they become flashcards, micro-lessons, and a focus map. The curriculum is you.
 
 - **PRODUCT.md** — what this is and why.
 - **DESIGN.md** — the binding design constitution.

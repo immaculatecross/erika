@@ -14,7 +14,7 @@ Next.js (App Router, TypeScript strict) + Tailwind + better-sqlite3. Database an
 
 ## Rules
 
-- Monochrome only; no UI component libraries; system font stack (DESIGN.md).
+- DESIGN.md is binding: Apple system palette, spring motion, system font stack. No UI component frameworks; Motion (framer-motion) and Lucide icons are the sanctioned exceptions.
 - Source files stay under 500 lines — the pre-commit hook enforces it.
 - Conventional Commits on every first line — the commit-msg hook enforces it.
 - Never commit `.env*` (except `.env.example`) or anything under `data/`.
