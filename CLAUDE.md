@@ -1,5 +1,7 @@
 # Erika — instructions for agent sessions
 
+Read `AGENTS.md` and follow it — it routes every session to its playbook. Never write product code without a work order.
+
 Boot order: STATE.md → FEATURES.md → DECISIONS.md → the files your task names. DESIGN.md is binding for any UI change.
 
 ## Stack and layout
