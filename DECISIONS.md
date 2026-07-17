@@ -51,3 +51,7 @@ The repo is public at the operator's request. Branch protection armed on master:
 ## D-12 · 2026-07-17 · Ambitious roadmap adopted; v0.1 = E-1…E-5
 
 Smart ingest earned its own milestone (E-3), so the operator's "through flashcards" v0.1 is now five missions, and the backlog runs E-6…E-15 (lessons, focus map, pronunciation studio, recast phrasebook, conversation gym, speech archive, editor's letter, voice enrollment, hosting, companion/mobile). **Why:** the operator asked for a deeply ambitious roadmap and explicitly wants long-horizon dispatch exercised.
+
+## D-13 · 2026-07-17 · The bare mission: "Build the product" runs unattended
+
+"Build the product" (or any bare build request) is a complete mission: the FEATURES.md milestones inside the current version scope (today: v0.1 = E-1…E-5), in order, one work order at a time through the full loop, merging on the reviewer session's verdict (D-11). **Why:** the operator wants true fire-and-forget with a simple message; scope already lives in FEATURES.md, so the message only needs to point at it. **Consequences:** the dispatcher interrupts the operator only for a second review rejection on the same PR, a blocker unanswerable from the artifacts, or a preflight box it cannot verify itself — everything else lands asynchronously as PRs, run reports, and the final report.
