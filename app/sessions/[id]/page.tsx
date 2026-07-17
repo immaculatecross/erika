@@ -2,9 +2,12 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
 import { JobStateBadge } from "@/components/job-state-badge";
+import { IngestStatus } from "@/components/ingest-status";
+import { useIngest } from "@/lib/use-ingest";
+import type { TimelineSegment } from "@/lib/ingest-view";
 import { formatBytes, formatCreatedAt, formatDuration } from "@/lib/format";
 import type { Session } from "@/lib/session-types";
 
@@ -29,6 +32,12 @@ export default function SessionDetailPage() {
   const router = useRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [deleting, setDeleting] = useState(false);
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  // The ingest view polls itself (queued/processing → done/failed) without a
+  // reload; the badge tracks its live state, falling back to the loaded session.
+  const { view, polling, pollCount } = useIngest(id);
 
   useEffect(() => {
     fetch(`/api/sessions/${id}`)
@@ -36,6 +45,14 @@ export default function SessionDetailPage() {
       .then((session: Session) => setState({ kind: "ready", session }))
       .catch(() => setState({ kind: "missing" }));
   }, [id]);
+
+  function seekTo(segment: TimelineSegment) {
+    setSelectedIdx(segment.idx);
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = segment.startMs / 1000;
+    void audio.play().catch(() => {}); // autoplay may be blocked — the seek still lands
+  }
 
   async function remove() {
     setDeleting(true);
@@ -68,10 +85,11 @@ export default function SessionDetailPage() {
             <h1 className="min-w-0 break-words text-[34px] font-bold tracking-tight">
               {state.session.originalFilename}
             </h1>
-            <JobStateBadge state={state.session.jobState} />
+            <JobStateBadge state={view?.state ?? state.session.jobState} />
           </div>
 
           <audio
+            ref={audioRef}
             controls
             preload="metadata"
             src={`/api/sessions/${id}/audio`}
@@ -84,6 +102,16 @@ export default function SessionDetailPage() {
             <Meta label="Size" value={formatBytes(state.session.sizeBytes)} />
             <Meta label="Format" value={state.session.format.toUpperCase()} />
             <Meta label="Captured" value={formatCreatedAt(state.session.createdAt)} />
+          </div>
+
+          <div className="rounded-card bg-card p-6 shadow-card">
+            <IngestStatus
+              view={view}
+              polling={polling}
+              pollCount={pollCount}
+              selectedIdx={selectedIdx}
+              onSelect={seekTo}
+            />
           </div>
 
           <div>
