@@ -17,10 +17,12 @@ export async function GET(_request: Request, { params }: Ctx) {
 
 export async function DELETE(_request: Request, { params }: Ctx) {
   const { id } = await params;
-  // Rows first (ingest_jobs + segments cascade), then the on-disk directory —
-  // which now also holds the E-3 normalized rendition and extracted segments.
-  // Cached renditions in data/cache/ are keyed by content hash and shared across
-  // sessions, so they are intentionally left for other sessions that reuse them.
+  // Rows first (ingest_jobs, segments, and E-4 findings + analysis_jobs all
+  // cascade on the session FK), then the on-disk directory — which also holds the
+  // E-3 normalized rendition and extracted segments. Hash-keyed shared state is
+  // intentionally retained: cached renditions in data/cache/, the segment_analyses
+  // never-re-bill witnesses, and the spend_ledger (deleting a session must never
+  // erase spend history or let a re-run evade the budget cap).
   const existed = deleteSession(getDb(), id);
   if (!existed) return NextResponse.json({ error: "Session not found." }, { status: 404 });
   await removeSessionDir(id);
