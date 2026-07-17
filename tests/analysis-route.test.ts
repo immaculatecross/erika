@@ -10,24 +10,30 @@ import { tmpDir } from "./helpers";
 
 let root: string;
 let estimateGET: typeof import("@/app/api/sessions/[id]/analysis/estimate/route").GET;
+let reportGET: typeof import("@/app/api/sessions/[id]/analysis/route").GET;
 let startPOST: typeof import("@/app/api/sessions/[id]/analysis/route").POST;
 let getDb: typeof import("@/lib/db").getDb;
 let createSession: typeof import("@/lib/sessions").createSession;
 let upsertSegment: typeof import("@/lib/segments").upsertSegment;
 let writeSettings: typeof import("@/lib/settings").writeSettings;
 let recordSpend: typeof import("@/lib/analysis/budget").recordSpend;
+let enqueueAnalysis: typeof import("@/lib/analysis/cascade").enqueueAnalysis;
+let persistSegmentFindings: typeof import("@/lib/analysis/findings").persistSegmentFindings;
 
 beforeAll(async () => {
   root = tmpDir("erika-analysis-route-");
   process.env.ERIKA_DB_PATH = path.join(root, "erika.db");
   process.env.ERIKA_DATA_DIR = root;
   estimateGET = (await import("@/app/api/sessions/[id]/analysis/estimate/route")).GET;
+  reportGET = (await import("@/app/api/sessions/[id]/analysis/route")).GET;
   startPOST = (await import("@/app/api/sessions/[id]/analysis/route")).POST;
   getDb = (await import("@/lib/db")).getDb;
   createSession = (await import("@/lib/sessions")).createSession;
   upsertSegment = (await import("@/lib/segments")).upsertSegment;
   writeSettings = (await import("@/lib/settings")).writeSettings;
   recordSpend = (await import("@/lib/analysis/budget")).recordSpend;
+  enqueueAnalysis = (await import("@/lib/analysis/cascade")).enqueueAnalysis;
+  persistSegmentFindings = (await import("@/lib/analysis/findings")).persistSegmentFindings;
 });
 
 afterEach(() => getDb().prepare("DELETE FROM sessions").run());
@@ -77,5 +83,47 @@ describe("POST start analysis", () => {
     expect(res.status).toBe(402);
     const n = getDb().prepare("SELECT COUNT(*) AS n FROM analysis_jobs WHERE session_id='broke'").get() as { n: number };
     expect(n.n).toBe(0); // nothing enqueued
+  });
+});
+
+describe("GET analysis report", () => {
+  it("404s for an unknown session", async () => {
+    expect((await reportGET(req(), ctx("nope"))).status).toBe(404);
+  });
+
+  it("reports 'idle' with no findings before any run", async () => {
+    seed("fresh");
+    const body = await (await reportGET(req(), ctx("fresh"))).json();
+    expect(body.state).toBe("idle");
+    expect(body.total).toBe(0);
+    expect(body.findings).toEqual([]);
+    expect(body.counts).toHaveLength(5); // all five categories, zero-filled
+    expect(body.counts.every((c: { count: number }) => c.count === 0)).toBe(true);
+  });
+
+  it("returns the run state, findings, and per-category counts once analyzed", async () => {
+    seed("rep");
+    upsertSegment(getDb(), { sessionId: "rep", idx: 1, startMs: 60_000, endMs: 120_000, contentHash: "rep-h1" });
+    const job = enqueueAnalysis(getDb(), "rep");
+    getDb().prepare("UPDATE analysis_jobs SET state='done', progress=1 WHERE id=?").run(job.id);
+    persistSegmentFindings(getDb(), {
+      sessionId: "rep",
+      contentHash: "rep-h1",
+      flagged: true,
+      deepDone: true,
+      findings: [
+        { quote: "q1", correction: "c1", category: "grammar", explanation: "e1", severity: "high", startMs: 61_000, endMs: 62_000 },
+        { quote: "q2", correction: "c2", category: "grammar", explanation: "e2", severity: "low", startMs: 63_000, endMs: 64_000 },
+      ],
+    });
+
+    const body = await (await reportGET(req(), ctx("rep"))).json();
+    expect(body.state).toBe("done");
+    expect(body.total).toBe(2);
+    expect(body.findings).toHaveLength(2);
+    const byCat = Object.fromEntries(body.counts.map((c: { category: string; count: number }) => [c.category, c.count]));
+    expect(byCat.grammar).toBe(2);
+    expect(byCat.vocabulary).toBe(0);
+    expect(body.findings[0]).toMatchObject({ quote: "q1", severity: "high", startMs: 61_000 });
   });
 });
