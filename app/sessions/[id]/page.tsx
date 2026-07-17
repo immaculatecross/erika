@@ -6,6 +6,7 @@ import { useRef, useState, useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
 import { JobStateBadge } from "@/components/job-state-badge";
 import { IngestStatus } from "@/components/ingest-status";
+import { AnalysisPanel } from "@/components/analysis-panel";
 import { useIngest } from "@/lib/use-ingest";
 import type { TimelineSegment } from "@/lib/ingest-view";
 import { formatBytes, formatCreatedAt, formatDuration } from "@/lib/format";
@@ -46,12 +47,18 @@ export default function SessionDetailPage() {
       .catch(() => setState({ kind: "missing" }));
   }, [id]);
 
-  function seekTo(segment: TimelineSegment) {
-    setSelectedIdx(segment.idx);
+  // Seek the reused player to an absolute offset (ms). Shared by the speech
+  // timeline and the analysis report's jump-to-audio so both land the same way.
+  function seekToMs(startMs: number) {
     const audio = audioRef.current;
     if (!audio) return;
-    audio.currentTime = segment.startMs / 1000;
+    audio.currentTime = startMs / 1000;
     void audio.play().catch(() => {}); // autoplay may be blocked — the seek still lands
+  }
+
+  function seekTo(segment: TimelineSegment) {
+    setSelectedIdx(segment.idx);
+    seekToMs(segment.startMs);
   }
 
   async function remove() {
@@ -112,6 +119,10 @@ export default function SessionDetailPage() {
               selectedIdx={selectedIdx}
               onSelect={seekTo}
             />
+          </div>
+
+          <div className="rounded-card bg-card p-6 shadow-card">
+            <AnalysisPanel sessionId={id} onJump={seekToMs} />
           </div>
 
           <div>

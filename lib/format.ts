@@ -24,6 +24,18 @@ export function formatBytes(bytes: number): string {
   return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
 }
 
+/**
+ * USD → a compact money label for the cost estimate and budget. Sub-dime amounts
+ * keep three decimals ("$0.004") so a fractional-cent estimate stays truthful
+ * rather than rounding to "$0.00"; a dime or more shows the usual two ("$1.20").
+ * For tabular-numeral display.
+ */
+export function formatUsd(usd: number): string {
+  const v = Math.max(0, usd);
+  if (v > 0 && v < 0.1) return `$${v.toFixed(3)}`;
+  return `$${v.toFixed(2)}`;
+}
+
 /** SQLite UTC timestamp ("YYYY-MM-DD HH:MM:SS") → a locale date-time string. */
 export function formatCreatedAt(iso: string): string {
   const d = new Date(`${iso.replace(" ", "T")}Z`);
