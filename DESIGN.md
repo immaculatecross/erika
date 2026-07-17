@@ -12,7 +12,7 @@ Apple system palette, light and dark, every hue carrying meaning — never decor
 
 - **Light:** page `#F5F5F7`, cards `#FFFFFF`, ink `#1D1D1F`, secondary `#6E6E73`, hairline `rgba(0,0,0,0.08)`.
 - **Dark:** page `#000000`, cards `#1C1C1E` (elevated `#2C2C2E`), ink `#F5F5F7`, secondary `#98989D`, hairline `rgba(255,255,255,0.12)`.
-- **Accent:** indigo `#5856D6` (dark `#5E5CE6`) — interactive elements, focus, and the one number that matters on a screen. A screen with three accented elements has two too many.
+- **Accent:** black in light mode, white in dark — interactive elements, focus, and the one number that matters on a screen. Green and red are the only color tones, used solely where a state carries meaning (see Semantic). No indigo, no third accent hue; a screen with three accented elements has two too many.
 - **Semantic:** red `#FF3B30` (high severity), orange `#FF9500` (medium), green `#34C759` (resolved, mastered). Prefer 10–15% alpha tint fills over saturated blocks.
 
 ## Typography
@@ -35,7 +35,7 @@ Library: Motion (framer-motion). Transform and opacity only, 60fps, `prefers-red
 
 ## Components
 
-Hand-rolled — no UI component framework. Icons: Lucide, 1.5px stroke, 20px default. Primary button: accent fill, white text, pill. Secondary: neutral tint fill, no border. Tertiary: bare accent text. Mode switches are segmented controls. Empty states: one quiet sentence and one action — no illustrations.
+Hand-rolled — no UI component framework. Icons: Lucide, 1.5px stroke, 20px default. Primary button: accent fill (black in light, white in dark), inverse-color text, pill. Secondary: neutral tint fill, no border. Tertiary: bare accent text. Mode switches are segmented controls. Empty states: one quiet sentence and one action — no illustrations.
 
 ## Copy
 
