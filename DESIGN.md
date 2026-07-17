@@ -1,29 +1,42 @@
 # Design constitution
 
-Erika is monochrome, quiet, and precise — Apple-grade minimalism. These rules are binding for every UI change; a diff that violates them is wrong even if it works.
+Erika looks and moves like it shipped from Cupertino. These rules are binding for every UI change; a diff that violates them is wrong even if it works.
 
-## Palette (strict)
+## Character
 
-Grayscale only. Light mode: background `#FFFFFF`, raised surface `#FAFAFA`, hairline `#E5E5E5`, ink `#0A0A0A`, secondary text `#6F6F6F`, faint `#A3A3A3`. Dark mode inverts the ramp (background `#0A0A0A`, ink `#FAFAFA`, hairline `#262626`, secondary `#A3A3A3`).
+Calm, spacious, precise. The interface recedes; your language is the content. Quality shows in restraint: few elements, perfectly finished, beautifully animated.
 
-No color anywhere. State, severity, success, and failure are expressed through weight, size, motion, and words — never hue.
+## Palette
+
+Apple system palette, light and dark, every hue carrying meaning — never decoration.
+
+- **Light:** page `#F5F5F7`, cards `#FFFFFF`, ink `#1D1D1F`, secondary `#6E6E73`, hairline `rgba(0,0,0,0.08)`.
+- **Dark:** page `#000000`, cards `#1C1C1E` (elevated `#2C2C2E`), ink `#F5F5F7`, secondary `#98989D`, hairline `rgba(255,255,255,0.12)`.
+- **Accent:** indigo `#5856D6` (dark `#5E5CE6`) — interactive elements, focus, and the one number that matters on a screen. A screen with three accented elements has two too many.
+- **Semantic:** red `#FF3B30` (high severity), orange `#FF9500` (medium), green `#34C759` (resolved, mastered). Prefer 10–15% alpha tint fills over saturated blocks.
 
 ## Typography
 
-System stack: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif`. Scale: 34/semibold page titles (letter-spacing −0.02em), 22/semibold section heads, 17/regular body, 15/regular secondary, 13/medium uppercase labels (letter-spacing +0.06em). All statistics use tabular numerals.
+System stack: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif`. Display 34/700 (letter-spacing −0.022em), title 22/600, body 17/400 (line-height 1.47), secondary 15/400, caption 13/500 uppercase (+0.06em). All statistics in tabular numerals.
 
-## Space and surfaces
+## Materials and depth
 
-4px grid. Page gutters 32px, card padding 24px, section gaps 64px. Content column max-width ~720px for reading surfaces. Cards are white on white, separated by 1px hairlines, radius 16px; controls radius 10px. Shadows at most `0 1px 2px rgba(0,0,0,0.04)` — the design is flat.
+Glass where content scrolls under chrome: `backdrop-blur(20px)` over a translucent surface. Cards radius 18px, controls 12px, action buttons pill. Shadows soft and layered — `0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06)`; dark mode prefers hairline borders over shadows.
 
-## Motion
+## Motion — the soul; budget quality here
 
-150–250ms, ease-out, opacity plus a translate of at most 8px. Each surface may have one deliberate signature move (the card flip in practice, the reveal of a finding). Nothing bounces, nothing spins.
+Library: Motion (framer-motion). Transform and opacity only, 60fps, `prefers-reduced-motion` degrades everything to fades.
+
+- **Springs, not durations**, for anything that moves: stiffness ≈260, damping ≈28 — snappy, no wobble.
+- Lists stagger in: 30–45ms per item, 8px rise + fade.
+- Route changes crossfade with a 12px rise; never a hard cut.
+- **One signature moment per surface:** the recording waveform breathing with your voice; the analysis progress orb; a finding expanding in place (layout animation); the practice card's 3D flip; the grade buttons' press-down.
+- Every interactive element has hover, active (scale 0.98), and focus (2px accent ring, 2px offset) states.
 
 ## Components
 
-Primary button: ink fill, background-color text, pill radius. Secondary: hairline ghost. Mode switches are segmented controls. Focus ring: 2px ink, 2px offset. Empty states: one quiet sentence and one action — no illustrations, no emoji.
+Hand-rolled — no UI component framework. Icons: Lucide, 1.5px stroke, 20px default. Primary button: accent fill, white text, pill. Secondary: neutral tint fill, no border. Tertiary: bare accent text. Mode switches are segmented controls. Empty states: one quiet sentence and one action — no illustrations.
 
 ## Copy
 
-Quiet and exact. Erika speaks like a good editor: never cheerleads, no exclamation marks, always specific ("3 grammar slips in 12 minutes", not "Great job!").
+Quiet and exact. Erika speaks like a good editor: never cheerleads, no exclamation marks, sentence case everywhere, always specific — "3 grammar slips in 12 minutes", not "Great job!".
