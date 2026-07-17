@@ -60,6 +60,13 @@ describe("deep parsing", () => {
     expect(parseDeepResponse('{"findings":[]}').findings).toEqual([]);
   });
 
+  it("tolerates a JSON object wrapped in a markdown fence or prose", () => {
+    const fenced = "```json\n" + GOOD_DEEP + "\n```";
+    const prose = "Here is the analysis:\n" + GOOD_DEEP + "\nLet me know if you need more.";
+    expect(parseDeepResponse(fenced).findings).toHaveLength(1);
+    expect(parseDeepResponse(prose).findings).toHaveLength(1);
+  });
+
   it("rejects the whole response if any finding is malformed or partial", () => {
     const badCategory = JSON.stringify({ findings: [{ ...JSON.parse(GOOD_DEEP).findings[0], category: "spelling" }] });
     const badSeverity = JSON.stringify({ findings: [{ ...JSON.parse(GOOD_DEEP).findings[0], severity: "critical" }] });

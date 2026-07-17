@@ -80,17 +80,28 @@ export function deepPrompt(targetLanguage: string): string {
 
 // ---- pure parsers (tested directly) -------------------------------------
 
+/**
+ * Extract the JSON object from a model response. These audio models do not
+ * support a JSON response_format, so we instruct JSON in the prompt and tolerate
+ * a stray markdown fence or surrounding prose: parse as-is, else the first
+ * balanced `{…}` slice. Anything else is a truthful parse error.
+ */
 function asObject(raw: string): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new ModelParseError("Model response was not valid JSON.");
+  const candidates = [raw.trim()];
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start !== -1 && end > start) candidates.push(raw.slice(start, end + 1));
+  for (const c of candidates) {
+    try {
+      const parsed = JSON.parse(c);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // try the next candidate
+    }
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new ModelParseError("Model response was not a JSON object.");
-  }
-  return parsed as Record<string, unknown>;
+  throw new ModelParseError("Model response was not a JSON object.");
 }
 
 /** Parse a triage response. A missing/non-boolean `flagged` is a truthful error. */
@@ -162,9 +173,11 @@ async function callModel(model: ModelId, prompt: string, input: TriageInput | De
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey()}` },
       body: JSON.stringify({
+        // These audio models take audio in and return text; they do not support a
+        // JSON response_format, so JSON is requested in the prompt and extracted
+        // by the parser. `modalities: ["text"]` keeps the reply text-only.
         model,
         modalities: ["text"],
-        response_format: { type: "json_object" },
         messages: [
           {
             role: "user",
