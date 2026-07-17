@@ -47,3 +47,39 @@ What changed per area, the **exact commands** used to verify each criterion (inc
 ## Exit report
 
 Append the `task.md` exit report block (RESULT / PR / Changed / Verified / Risks / Blocker) here and as your final message.
+
+---
+
+## Exit report
+
+```
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/6
+Changed:  lib/recording.ts — pure helpers: formatElapsed, levelFromAnalyser (RMS),
+          assembleChunks, pickRecordingMime, encodeWav (16-bit WAV).
+          lib/use-recorder.ts — MediaRecorder + AnalyserNode state machine; 1 s
+          timeslices; on Stop assembles chunks and re-encodes to WAV.
+          components/level-meter.tsx — signature meter (scaleY spring from real
+          input; non-animated height readout under reduced motion).
+          components/recorder.tsx — Record button, live panel (red dot, tabular
+          timer, meter, Stop), quiet denied/unsupported message.
+          lib/upload-audio.ts — one shared client path to POST /api/sessions.
+          app/page.tsx / components/empty-state.tsx — Record wired beside Upload.
+          FEATURES.md E-2 building→done, E-3 backlog→next; STATE.md regenerated.
+          Server upload route, migrations, audio/detail routes: unchanged.
+Verified: npm run test (41 unit incl. tests/recording.test.ts — criteria 2,3,4 +
+          mime pick + WAV header); npm run typecheck; npm run lint; npm run build;
+          .mfactory/hooks/run-tripwires.sh --all (exit 0) — all green.
+          npx playwright test (Chromium fake audio device) — 11 green incl.
+          e2e/recorder.spec.ts: Record ~2.6 s → Stop → session with a queued job
+          and non-zero duration (criteria 1,2); reduced-motion meter variant
+          (criterion 3); denied getUserMedia shows a truthful line, no crash,
+          Upload still works (criterion 5).
+Risks:    Diff (~520 src + ~230 test lines) exceeds the ~400 soft cap — the WAV
+          normalization was unplanned (a live WebM/Opus stream has no container
+          duration ffprobe can read, so the WO's "WebM just works" did not hold);
+          one interdependent feature, so shipped whole rather than split. WAV is
+          uncompressed — fine for short mic takes; day dumps arrive via Upload.
+          decodeAudioData holds the take as PCM at Stop (bounded by take length).
+Blocker:  none
+```
