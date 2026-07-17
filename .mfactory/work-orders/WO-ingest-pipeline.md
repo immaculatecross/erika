@@ -79,3 +79,49 @@ Risks:
   - content hash is over the segment WAV bytes (deterministic PCM+header), not raw PCM only; stable/equal for identical audio in practice
 Blocker: none
 ```
+
+---
+
+## Repair note (PR #7 review finding — crash-resume trusted torn on-disk artifacts)
+
+```
+RESULT:  done
+PR:      https://github.com/immaculatecross/erika/pull/7  (feat/ingest-pipeline, repair commit)
+Finding: A worker killed mid-ffmpeg-write left a valid-header but TRUNCATED file that
+         resume accepted as finished (harm: silent wrong result), because the
+         skip/cache-hit decision keyed on existence/probe-ability, not completeness:
+         (1) normalize's isNormalized() checked only size>0 + 16 kHz/mono probe -> a torn
+             normalized.wav (probes 16 kHz mono, just short) was skipped on resume ->
+             detection saw fewer intervals -> too few segments, state=done. Reproduced:
+             torn normalize on a 3-speech-interval capture -> 1 segment instead of 3.
+         (2) renderRendition's cache hit was decided by access() alone -> a torn
+             data/cache/<hash>.t<tempo>.wav became a PERMANENT, cross-session hit (D-10:
+             never re-billed) reused by every identical segment. Reproduced: an identical
+             second session reused a torn 0.54 s rendition vs the correct 1.33 s.
+Fix:     Applied the completion-witness discipline segments already use (DB row written
+         LAST). New lib/ingest/ffmpeg.ts `atomicOutput(dest, run)`: run writes to a temp
+         sibling (dot-prefixed, extension preserved so ffmpeg picks its muxer), renamed
+         into place only after ffmpeg exits 0; on failure the temp is removed. normalize
+         and renderRendition now write through it, so a crash leaves only a temp file and
+         the skip/cache path only ever holds a fully-committed artifact. Segment extraction
+         was already immune (its row is the completion witness) and is unchanged.
+Changed:
+  - lib/ingest/ffmpeg.ts: + atomicOutput() temp-write + atomic-rename helper
+  - lib/ingest/normalize.ts, lib/ingest/render.ts: route ffmpeg output through atomicOutput
+  - tests/ingest-resume-torn.test.ts (new): 2 regressions — torn normalized.wav re-normalizes
+    (3 segments, not 1); torn cache rendition re-renders (correct duration, not a torn remnant).
+    Simulate the kill at the ffmpeg boundary (write full, byte-truncate = valid-header/short,
+    throw). Verified they FAIL on pre-fix lib (git-stash) and PASS after. No existing test changed.
+Verified:
+  - `npm run test` -> 64 passed (62 prior + 2 new); the two regressions fail pre-fix, pass post-fix
+  - `npm run typecheck` / `npm run lint` / `npm run build` -> clean; tripwire scan (--all) exit 0
+  - real crash drive (not a mock): stalling ffmpeg wrapper on PATH + SIGKILL of the live worker
+    mid-normalize -> torn partial only at `.normalized.tmp-<uuid>.wav`, normalized.wav ABSENT,
+    job stuck processing/normalizing. Restart -> reclaimStuckJobs resumes -> done, 3 segments
+    (3000 ms each), 3 renditions each 2.005 s ≈ 3.0/1.5. Nothing written under data/.
+Risks:
+  - A real kill leaves an orphan dot-prefixed temp file (harmless: never a skip/cache target,
+    never re-billed; overwritten paths differ per run). Sweeping orphan temps is a future tidy,
+    out of scope for this finding.
+Blocker: none
+```
