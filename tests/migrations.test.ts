@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, runMigrations } from "@/lib/db";
+import { migrations } from "@/lib/migrations";
 
 const tmpFiles: string[] = [];
 
@@ -42,7 +43,7 @@ describe("migrations runner", () => {
     const secondRun = runMigrations(db);
     expect(secondRun).toEqual([]);
     const count = db.prepare("SELECT COUNT(*) AS n FROM _migrations").get() as { n: number };
-    expect(count.n).toBe(1);
+    expect(count.n).toBe(migrations.length);
     db.close();
 
     // And a fresh connection to the same file applies nothing new either.
