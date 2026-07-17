@@ -19,7 +19,10 @@ import {
   type NewFinding,
 } from "./findings";
 import { callCost, DEEP_MODELS, MINI_MODEL, type ModelId } from "./rates";
-import { recordSpend, wouldExceedBudget } from "./budget";
+import { wouldExceedBudget } from "./budget";
+
+/** One real billable call: recorded atomically with the segment it completes. */
+type SpendEntry = { model: ModelId; contentHash: string; costUsd: number };
 
 // The two-stage cascade (D-10, D-3): for each speech segment, `gpt-audio-mini`
 // triages the time-compressed rendition; only a *flagged* segment is deep-listened
@@ -147,15 +150,19 @@ async function runDeep(
   seg: Segment,
   input: DeepInput,
   budget: number,
-): Promise<NewFinding[]> {
+): Promise<{ findings: NewFinding[]; spend: SpendEntry }> {
   let lastErr: Error | undefined;
   for (const model of DEEP_MODELS as readonly ModelId[]) {
     const cost = callCost(model, seg.durationMs);
     if (wouldExceedBudget(db, cost, budget)) throw new BudgetHalt();
     try {
       const res = await client.deepListen(model, input);
-      recordSpend(db, { model, contentHash: seg.contentHash, costUsd: cost });
-      return res.findings.map((f) => toTimeline(seg, f));
+      // Spend is not recorded here — it is committed atomically with the findings
+      // and witness by the caller, so a crash between the two can never re-bill.
+      return {
+        findings: res.findings.map((f) => toTimeline(seg, f)),
+        spend: { model, contentHash: seg.contentHash, costUsd: cost },
+      };
     } catch (err) {
       if (err instanceof ModelUnavailableError) {
         lastErr = err; // try the D-3 fallback model before giving up
@@ -214,14 +221,15 @@ export async function runAnalysisJob(
         if (wouldExceedBudget(db, miniCost, budget)) throw new BudgetHalt();
         const rendition = await fileBase64(renditionCachePath(hash, tempo));
         const triage = await client.triage({ audioBase64: rendition, format: "wav", targetLanguage });
-        recordSpend(db, { model: MINI_MODEL, contentHash: hash, costUsd: miniCost });
-        // Witness the triage immediately so a later halt never re-bills the mini.
+        // Record the mini spend and its completion witness atomically, so a halt
+        // (or crash) after the call can never re-bill this triage on resume.
         persistSegmentFindings(db, {
           sessionId: job.sessionId,
           contentHash: hash,
           flagged: triage.flagged,
           deepDone: false,
           findings: [],
+          spend: { model: MINI_MODEL, contentHash: hash, costUsd: miniCost },
         });
         analysis = { contentHash: hash, flagged: triage.flagged, deepDone: false };
       }
@@ -229,13 +237,21 @@ export async function runAnalysisJob(
       // Stage 2 — deep-listen the native-speed original, only if flagged.
       if (analysis.flagged && !analysis.deepDone) {
         const original = await fileBase64(segmentPath(job.sessionId, seg.idx));
-        const findings = await runDeep(db, client, seg, { audioBase64: original, format: "wav", targetLanguage }, budget);
+        const { findings, spend } = await runDeep(
+          db,
+          client,
+          seg,
+          { audioBase64: original, format: "wav", targetLanguage },
+          budget,
+        );
+        // Deep spend + findings + witness commit together (E-4 criterion 5).
         persistSegmentFindings(db, {
           sessionId: job.sessionId,
           contentHash: hash,
           flagged: true,
           deepDone: true,
           findings,
+          spend,
         });
       }
 

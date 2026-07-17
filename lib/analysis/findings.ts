@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db";
+import { recordSpend } from "./budget";
+import type { ModelId } from "./rates";
 
 // Typed data layer for analysis findings and the never-re-bill segment cache
 // (E-4, D-10), in the lib/settings.ts / lib/segments.ts style. Server-only.
@@ -76,11 +78,14 @@ export function isSeverity(v: unknown): v is Severity {
 }
 
 /**
- * Persist a triaged-and-deep-listened segment atomically: insert its findings
- * (possibly none) and write the `segment_analyses` witness in one transaction, so
- * a crash never leaves findings without the witness (which would re-bill) or a
- * witness without its findings. `flagged`/`deepDone` record how far the cascade
- * got: an unflagged segment is complete with no deep call.
+ * Persist a triaged-and-deep-listened segment atomically: record the call's spend
+ * (when given), insert its findings (possibly none), and write the
+ * `segment_analyses` witness — all in ONE transaction. So a crash can never leave
+ * a *charge without its completion witness* (which would re-bill that segment on
+ * resume, E-4 criterion 5), nor findings without a witness, nor a witness without
+ * its findings: the money record and the completion record commit together or not
+ * at all. `flagged`/`deepDone` record how far the cascade got: an unflagged
+ * segment is complete with no deep call.
  */
 export function persistSegmentFindings(
   db: Db,
@@ -90,6 +95,8 @@ export function persistSegmentFindings(
     flagged: boolean;
     deepDone: boolean;
     findings: NewFinding[];
+    /** The real billable call this write completes — recorded in the same txn. */
+    spend?: { model: ModelId; contentHash: string; costUsd: number };
   },
 ): void {
   const insert = db.prepare(
@@ -98,6 +105,7 @@ export function persistSegmentFindings(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   db.transaction(() => {
+    if (input.spend) recordSpend(db, input.spend);
     for (const f of input.findings) {
       insert.run(
         randomUUID(),
