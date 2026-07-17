@@ -1,0 +1,43 @@
+#!/bin/bash
+# mfactory pre-commit gate. Fast, deterministic, dependency-free.
+# Blocks: oversize source files, merge-conflict markers, tripwire patterns.
+# Heavy checks (lint, types, tests, coverage) are CI's job — this hook stays fast.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+MAX_LINES=500
+FAIL=0
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$STAGED" ] && exit 0
+
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  case "$f" in
+    *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.py|*.sh|*.rb|*.go)
+      lines=$(git show ":$f" | wc -l | tr -d ' ')
+      if [ "$lines" -gt "$MAX_LINES" ]; then
+        {
+          echo "BLOCKED [$f] $lines lines (cap $MAX_LINES)."
+          echo "  Fix: extract cohesive pieces into new modules. The cap keeps every"
+          echo "  file readable in one pass by a reviewer or a fresh agent session."
+        } >&2
+        FAIL=1
+      fi ;;
+  esac
+  # No -q: grep must consume all input, or SIGPIPE + pipefail turns a match
+  # into a non-zero pipeline and the gate fails open on large files.
+  if git show ":$f" | grep -E '^(<{7}|>{7}) ' >/dev/null; then
+    {
+      echo "BLOCKED [$f] unresolved merge-conflict markers."
+      echo "  Fix: resolve the conflict, delete the marker lines, re-stage the file."
+    } >&2
+    FAIL=1
+  fi
+done <<EOF
+$STAGED
+EOF
+
+"$HERE/run-tripwires.sh" --staged || FAIL=1
+
+exit $FAIL

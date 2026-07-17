@@ -1,0 +1,19 @@
+# dependencies / build
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# local data: database + audio sessions
+data/
+
+# secrets
+.env*
+!.env.example
+
+# tooling artifacts
+playwright-report/
+test-results/
+*.log
+.DS_Store

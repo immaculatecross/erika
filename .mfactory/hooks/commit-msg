@@ -1,0 +1,20 @@
+#!/bin/bash
+# mfactory commit-msg gate: Conventional Commits on the first line.
+# Merge, revert, and fixup commits pass untouched.
+set -uo pipefail
+
+FIRST=$(head -n1 "$1")
+case "$FIRST" in
+  Merge\ *|Revert\ *|fixup!*|squash!*) exit 0 ;;
+esac
+
+if ! printf '%s' "$FIRST" | grep -qE '^(feat|fix|docs|refactor|test|chore|ci|perf|build)(\([a-z0-9./-]+\))?!?: .{1,72}$'; then
+  {
+    echo "BLOCKED commit message: \"$FIRST\""
+    echo "  Fix: use Conventional Commits — type(scope): summary"
+    echo "    types: feat fix docs refactor test chore ci perf build"
+    echo "    example: feat(auth): add magic-link login"
+    echo "  Keep the summary imperative and at most 72 characters."
+  } >&2
+  exit 1
+fi
