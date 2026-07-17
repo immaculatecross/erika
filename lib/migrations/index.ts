@@ -150,4 +150,39 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-5 Flashcards (part 1): the drill loop's persistence. One `card` per
+    // finding — created once, deduplicated by the `finding_id` UNIQUE key, and
+    // cascade-deleted when its finding (hence its session) goes. `front`/`back`
+    // carry the rendered study text (quote → correction + why); `session_id`,
+    // `category`, `start_ms` are copied for the browser and later jump-to-audio.
+    // The SM-2 scheduler state (`ease`/`interval_days`/`repetitions`/`due`/
+    // `last_grade`, see lib/srs.ts) advances on each grade. `suspended` is written
+    // now but its UI arrives in E-5b (WO-flashcards-manage). `due` is a
+    // SQLite-comparable UTC timestamp so the due queue is a plain `due <= now`.
+    version: 5,
+    name: "cards",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE cards (
+          id            TEXT PRIMARY KEY,
+          finding_id    TEXT NOT NULL UNIQUE REFERENCES findings(id) ON DELETE CASCADE,
+          session_id    TEXT NOT NULL,
+          front         TEXT NOT NULL,
+          back          TEXT NOT NULL,
+          category      TEXT NOT NULL,
+          start_ms      INTEGER NOT NULL,
+          ease          REAL NOT NULL DEFAULT 2.5,
+          interval_days INTEGER NOT NULL DEFAULT 0,
+          repetitions   INTEGER NOT NULL DEFAULT 0,
+          due           TEXT NOT NULL,
+          last_grade    TEXT,
+          suspended     INTEGER NOT NULL DEFAULT 0,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_cards_due ON cards(due);
+        CREATE INDEX idx_cards_session ON cards(session_id);
+      `);
+    },
+  },
 ];

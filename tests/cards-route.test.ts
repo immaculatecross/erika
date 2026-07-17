@@ -1,0 +1,96 @@
+import fs from "node:fs";
+import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { tmpDir } from "./helpers";
+
+// The three card routes (E-5): POST generate (idempotent), GET the due queue, and
+// POST grade (SM-2 persist, with 404/400 guards). Real DB under a throwaway dir;
+// env is set before the lazy getDb() binds, as in the analysis-route test.
+
+let root: string;
+let generatePOST: typeof import("@/app/api/cards/generate/route").POST;
+let dueGET: typeof import("@/app/api/cards/route").GET;
+let gradePOST: typeof import("@/app/api/cards/[id]/grade/route").POST;
+let getDb: typeof import("@/lib/db").getDb;
+let createSession: typeof import("@/lib/sessions").createSession;
+let persistSegmentFindings: typeof import("@/lib/analysis/findings").persistSegmentFindings;
+
+beforeAll(async () => {
+  root = tmpDir("erika-cards-route-");
+  process.env.ERIKA_DB_PATH = path.join(root, "erika.db");
+  process.env.ERIKA_DATA_DIR = root;
+  generatePOST = (await import("@/app/api/cards/generate/route")).POST;
+  dueGET = (await import("@/app/api/cards/route")).GET;
+  gradePOST = (await import("@/app/api/cards/[id]/grade/route")).POST;
+  getDb = (await import("@/lib/db")).getDb;
+  createSession = (await import("@/lib/sessions")).createSession;
+  persistSegmentFindings = (await import("@/lib/analysis/findings")).persistSegmentFindings;
+});
+
+afterEach(() => getDb().prepare("DELETE FROM sessions").run());
+afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
+const gradeReq = (grade: unknown) =>
+  new Request("http://localhost", { method: "POST", body: JSON.stringify({ grade }) });
+
+function seed(id: string, n: number) {
+  createSession(getDb(), { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 60 });
+  for (let i = 0; i < n; i++) {
+    persistSegmentFindings(getDb(), {
+      sessionId: id,
+      contentHash: `${id}-h${i}`,
+      flagged: true,
+      deepDone: true,
+      findings: [
+        { quote: `q${i}`, correction: `c${i}`, category: "grammar", explanation: `e${i}`, severity: "high", startMs: i * 1000, endMs: i * 1000 + 500 },
+      ],
+    });
+  }
+}
+
+describe("POST /api/cards/generate", () => {
+  it("creates one card per finding and is idempotent across calls", async () => {
+    seed("gen", 3);
+    expect((await (await generatePOST()).json()).created).toBe(3);
+    expect((await (await generatePOST()).json()).created).toBe(0);
+  });
+});
+
+describe("GET /api/cards?due=1", () => {
+  it("returns the due cards and their count as a client-safe view", async () => {
+    seed("due", 2);
+    await generatePOST();
+    const body = await (await dueGET()).json();
+    expect(body.dueCount).toBe(2);
+    expect(body.cards).toHaveLength(2);
+    // The view carries only the drill fields — no SM-2/session plumbing leaks out.
+    expect(Object.keys(body.cards[0]).sort()).toEqual(["back", "category", "front", "id"]);
+  });
+});
+
+describe("POST /api/cards/[id]/grade", () => {
+  it("grades a card, persists the SM-2 schedule, and drops it from the due queue", async () => {
+    seed("grd", 1);
+    await generatePOST();
+    const card = (await (await dueGET()).json()).cards[0];
+
+    const res = await gradePOST(gradeReq("good"), ctx(card.id));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.schedule.repetitions).toBe(1);
+    expect(body.schedule.intervalDays).toBe(1);
+    expect(body.schedule.lastGrade).toBe("good");
+
+    // A graded card is no longer due.
+    expect((await (await dueGET()).json()).dueCount).toBe(0);
+  });
+
+  it("404s an unknown card and 400s an invalid grade", async () => {
+    seed("bad", 1);
+    await generatePOST();
+    const card = (await (await dueGET()).json()).cards[0];
+    expect((await gradePOST(gradeReq("good"), ctx("nope"))).status).toBe(404);
+    expect((await gradePOST(gradeReq("brilliant"), ctx(card.id))).status).toBe(400);
+  });
+});
