@@ -82,4 +82,72 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-4 Analysis (part 1): the cascade engine's persistence (D-10, D-3).
+    //
+    // `findings` — one correction for the dominant speaker, keyed to the session
+    //   (FK cascade on delete) and to the segment's `content_hash` so the same
+    //   audio's findings can be reused across sessions without a re-analysis.
+    // `analysis_jobs` — an async run per session, mirroring ingest_jobs' shape
+    //   (state/stage/progress/error) plus a `halted` state for the budget cap.
+    // `segment_analyses` — the never-re-bill witness: one row per `content_hash`
+    //   once that audio has been triaged (and deep-listened if it was flagged).
+    //   Hash-keyed and shared across sessions like the E-3 rendition cache, so it
+    //   is retained when a single session is deleted (another may still key it).
+    // `spend_ledger` — one row per real billable model call (cached calls record
+    //   nothing), with a 'YYYY-MM' month key for the budget cap. Deliberately has
+    //   NO session FK: deleting a session must never erase spend history.
+    version: 4,
+    name: "findings_analysis_jobs_spend_ledger",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE findings (
+          id           TEXT PRIMARY KEY,
+          session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          content_hash TEXT NOT NULL,
+          quote        TEXT NOT NULL,
+          correction   TEXT NOT NULL,
+          category     TEXT NOT NULL
+                         CHECK (category IN ('grammar','vocabulary','phrasing','idiom','pronunciation')),
+          explanation  TEXT NOT NULL,
+          severity     TEXT NOT NULL CHECK (severity IN ('high','medium','low')),
+          start_ms     INTEGER NOT NULL,
+          end_ms       INTEGER NOT NULL,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_findings_session ON findings(session_id);
+        CREATE INDEX idx_findings_hash ON findings(content_hash);
+
+        CREATE TABLE analysis_jobs (
+          id         TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          state      TEXT NOT NULL DEFAULT 'queued'
+                       CHECK (state IN ('queued','processing','done','failed','halted')),
+          stage      TEXT,
+          progress   REAL NOT NULL DEFAULT 0,
+          error      TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT
+        );
+        CREATE INDEX idx_analysis_jobs_session ON analysis_jobs(session_id);
+
+        CREATE TABLE segment_analyses (
+          content_hash TEXT PRIMARY KEY,
+          flagged      INTEGER NOT NULL,
+          deep_done    INTEGER NOT NULL DEFAULT 0,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE spend_ledger (
+          id           TEXT PRIMARY KEY,
+          month        TEXT NOT NULL,
+          model        TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          cost_usd     REAL NOT NULL,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_spend_ledger_month ON spend_ledger(month);
+      `);
+    },
+  },
 ];
