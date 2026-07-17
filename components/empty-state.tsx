@@ -9,11 +9,14 @@ interface EmptyStateProps {
   // One quiet sentence (DESIGN.md: empty states are a sentence and an action).
   line: string;
   action: string;
+  // When wired, the action button performs it; otherwise it is a quiet stub.
+  onAction?: () => void;
+  disabled?: boolean;
 }
 
 // Sessions and Practice both render this: no illustration, one sentence, one
 // action. Content staggers in and degrades to a fade under reduced motion.
-export function EmptyState({ title, line, action }: EmptyStateProps) {
+export function EmptyState({ title, line, action, onAction, disabled }: EmptyStateProps) {
   const reduced = usePrefersReducedMotion();
   return (
     <div className="flex min-h-screen items-center justify-center p-8">
@@ -32,7 +35,9 @@ export function EmptyState({ title, line, action }: EmptyStateProps) {
         <motion.button
           variants={staggerItem(reduced)}
           type="button"
-          className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98]"
+          onClick={onAction}
+          disabled={disabled}
+          className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98] disabled:opacity-50"
         >
           {action}
         </motion.button>
