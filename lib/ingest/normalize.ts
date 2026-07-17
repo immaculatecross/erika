@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { runFfmpeg, probeField } from "./ffmpeg";
+import { atomicOutput, runFfmpeg, probeField } from "./ffmpeg";
 
 // Stage 1: normalize the source to 16 kHz mono PCM (D-10 — one canonical form
 // everything downstream reads). Resampling preserves the timeline, so segment
@@ -14,21 +14,27 @@ export const NORMALIZED_CHANNELS = 1;
  * Write a 16 kHz mono PCM WAV of `source` to `dest`. Idempotent: if `dest`
  * already probes as 16 kHz mono it is left untouched and `false` is returned,
  * so a resumed job skips this expensive step. Returns whether it (re)wrote.
+ *
+ * The write is atomic (temp file + rename): a worker killed mid-normalize leaves
+ * only a temp file, never a truncated `dest`, so the skip above can only ever see
+ * a fully-committed normalization — a torn file is never mistaken for done.
  */
 export async function normalize(source: string, dest: string): Promise<boolean> {
   if (await isNormalized(dest)) return false;
-  await runFfmpeg([
-    "-y",
-    "-i",
-    source,
-    "-ac",
-    String(NORMALIZED_CHANNELS),
-    "-ar",
-    String(NORMALIZED_SAMPLE_RATE),
-    "-c:a",
-    "pcm_s16le",
-    dest,
-  ]);
+  await atomicOutput(dest, (tmp) =>
+    runFfmpeg([
+      "-y",
+      "-i",
+      source,
+      "-ac",
+      String(NORMALIZED_CHANNELS),
+      "-ar",
+      String(NORMALIZED_SAMPLE_RATE),
+      "-c:a",
+      "pcm_s16le",
+      tmp,
+    ]),
+  );
   return true;
 }
 

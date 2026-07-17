@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { access, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { renditionCachePath } from "../audio-storage";
-import { runFfmpeg } from "./ffmpeg";
+import { atomicOutput, runFfmpeg } from "./ffmpeg";
 
 // The on-disk segment artifacts of the pipeline (D-10). Extraction and the
 // time-compressed triage rendition are both ffmpeg file→file; the content hash
@@ -71,6 +71,12 @@ export function hashFile(filePath: string): Promise<string> {
  * by content hash + tempo under the shared data/cache/. Identical audio — even
  * across sessions — hits the cache and is never re-rendered. Returns the cache
  * path and whether it was a hit.
+ *
+ * The render is written atomically (temp file + rename): a worker killed mid-
+ * atempo leaves only a temp file, never a truncated rendition at the cache path.
+ * Because this cache is shared by content hash across all sessions (D-10 — never
+ * re-billed), a torn file at `dest` would become a permanent hit reused
+ * everywhere; the atomic write guarantees a cache hit is only ever a whole file.
  */
 export async function renderRendition(
   segmentFile: string,
@@ -80,16 +86,18 @@ export async function renderRendition(
   const dest = renditionCachePath(contentHash, tempo);
   if (await exists(dest)) return { path: dest, cached: true };
   await mkdir(path.dirname(dest), { recursive: true });
-  await runFfmpeg([
-    "-y",
-    "-i",
-    segmentFile,
-    "-filter:a",
-    `atempo=${tempo}`,
-    "-c:a",
-    "pcm_s16le",
-    dest,
-  ]);
+  await atomicOutput(dest, (tmp) =>
+    runFfmpeg([
+      "-y",
+      "-i",
+      segmentFile,
+      "-filter:a",
+      `atempo=${tempo}`,
+      "-c:a",
+      "pcm_s16le",
+      tmp,
+    ]),
+  );
   return { path: dest, cached: false };
 }
 

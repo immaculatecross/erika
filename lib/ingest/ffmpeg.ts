@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { rename, rm } from "node:fs/promises";
+import path from "node:path";
 import { promisify } from "node:util";
 
 // Thin spawn/collect helpers over the system ffmpeg/ffprobe (D-7). Every audio
@@ -31,6 +34,32 @@ export async function runFfmpeg(args: string[]): Promise<string> {
     const stderr = (err as { stderr?: string }).stderr ?? "";
     const tail = stderr.trim().split("\n").slice(-3).join(" ").trim();
     throw new FfmpegError(tail || (err as Error).message || "ffmpeg failed.");
+  }
+}
+
+/**
+ * Write an ffmpeg output atomically: `run` is handed a temp path (a sibling of
+ * `dest`, so the rename stays on one filesystem) to write to, and only after it
+ * resolves is that temp file renamed into place. A worker killed mid-write leaves
+ * a torn file at the *temp* path, never at `dest` — so a partial/truncated output
+ * can never be observed by a later run as a valid skip/cache target. On failure
+ * the temp file is removed and the error re-thrown; `dest` is left untouched.
+ *
+ * This is the completion-witness discipline the segments layer already uses (its
+ * DB row is written last): the artifact at `dest` only ever exists whole.
+ * `dest`'s directory must already exist (rename does not create it).
+ */
+export async function atomicOutput<T>(dest: string, run: (tmp: string) => Promise<T>): Promise<T> {
+  // Keep dest's extension on the temp file: ffmpeg picks its muxer from it.
+  const ext = path.extname(dest);
+  const tmp = path.join(path.dirname(dest), `.${path.basename(dest, ext)}.tmp-${randomUUID()}${ext}`);
+  try {
+    const result = await run(tmp);
+    await rename(tmp, dest);
+    return result;
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw err;
   }
 }
 
