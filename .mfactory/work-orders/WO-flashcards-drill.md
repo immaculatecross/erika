@@ -52,7 +52,7 @@ Append the `task.md` exit report block (RESULT / PR / Changed / Verified / Risks
 
 ```
 RESULT: done
-PR:       https://github.com/immaculatecross/erika/pull/<n>  (branch feat/flashcards-drill → master)
+PR:       https://github.com/immaculatecross/erika/pull/12  (branch feat/flashcards-drill → master)
 Changed:
   - Migration v5: `cards` table — one row per finding, `finding_id` UNIQUE (FK → findings, ON DELETE CASCADE), session_id/front/back/category/start_ms, SM-2 fields (ease/interval_days/repetitions/due/last_grade), suspended default 0. Append-only; v1–v4 untouched.
   - lib/srs.ts — pure SM-2 scheduler (no DB): Again resets streak + interval (due now) and drops ease; Hard/Good/Easy grow the interval 1 → 6 → round(prev×ease) with ease updated first so Easy lengthens most; ease floored at 1.3.
