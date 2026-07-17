@@ -22,6 +22,44 @@ export function sourcePath(id: string, format: string): string {
   return path.join(sessionDir(id), `source.${format}`);
 }
 
+/** The 16 kHz mono normalized rendition of a session's source (E-3). */
+export function normalizedPath(id: string): string {
+  return path.join(sessionDir(id), "normalized.wav");
+}
+
+/** A session's extracted speech segment, by ordered index (E-3). */
+export function segmentPath(id: string, idx: number): string {
+  return path.join(sessionDir(id), "segments", `seg-${String(idx).padStart(4, "0")}.wav`);
+}
+
+/** Ensure data/sessions/<id>/segments/ exists; returns its path. */
+export async function ensureSegmentsDir(id: string): Promise<string> {
+  const dir = path.join(sessionDir(id), "segments");
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+// Renditions are cached by content hash under a shared data/cache/ dir, so an
+// identical segment — even across sessions — reuses one artifact. A cache entry
+// is NOT removed when one session is deleted: another session may still key it.
+
+/** The shared, cross-session rendition cache dir: data/cache/. */
+export function cacheDir(): string {
+  return path.join(dataDir(), "cache");
+}
+
+/** Cache path of a segment's time-compressed rendition, keyed by hash + tempo. */
+export function renditionCachePath(contentHash: string, tempo: number): string {
+  return path.join(cacheDir(), `${contentHash}.t${tempo}.wav`);
+}
+
+/** Ensure data/cache/ exists; returns its path. */
+export async function ensureCacheDir(): Promise<string> {
+  const dir = cacheDir();
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
 /** Create data/sessions/<id>/ if absent; returns the directory path. */
 export async function ensureSessionDir(id: string): Promise<string> {
   const dir = sessionDir(id);

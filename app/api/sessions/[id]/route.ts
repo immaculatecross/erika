@@ -17,7 +17,10 @@ export async function GET(_request: Request, { params }: Ctx) {
 
 export async function DELETE(_request: Request, { params }: Ctx) {
   const { id } = await params;
-  // Rows first (ingest_jobs cascade), then the on-disk directory.
+  // Rows first (ingest_jobs + segments cascade), then the on-disk directory —
+  // which now also holds the E-3 normalized rendition and extracted segments.
+  // Cached renditions in data/cache/ are keyed by content hash and shared across
+  // sessions, so they are intentionally left for other sessions that reuse them.
   const existed = deleteSession(getDb(), id);
   if (!existed) return NextResponse.json({ error: "Session not found." }, { status: 404 });
   await removeSessionDir(id);

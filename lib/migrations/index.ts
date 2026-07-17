@@ -49,4 +49,37 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-3 Smart ingest (part 1): the async speech-extraction pipeline.
+    // `segments` holds each kept speech interval — original-timeline timestamps,
+    // an ordered index, and a SHA-256 content hash that is the dedup/cache key.
+    // `ingest_jobs` gains checkpoint columns so a killed worker resumes exactly
+    // where it stopped: a fine-grained `stage`, a 0–1 `progress`, an `error`
+    // string for the failed path, and `updated_at`. The coarse `state`
+    // (queued/processing/done/failed) the UI already reads is left untouched.
+    version: 3,
+    name: "segments_and_job_checkpoints",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE segments (
+          id           TEXT PRIMARY KEY,
+          session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          idx          INTEGER NOT NULL,
+          start_ms     INTEGER NOT NULL,
+          end_ms       INTEGER NOT NULL,
+          duration_ms  INTEGER NOT NULL,
+          content_hash TEXT NOT NULL,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE (session_id, idx)
+        );
+        CREATE INDEX idx_segments_session ON segments(session_id);
+        CREATE INDEX idx_segments_hash ON segments(content_hash);
+
+        ALTER TABLE ingest_jobs ADD COLUMN stage TEXT;
+        ALTER TABLE ingest_jobs ADD COLUMN progress REAL NOT NULL DEFAULT 0;
+        ALTER TABLE ingest_jobs ADD COLUMN error TEXT;
+        ALTER TABLE ingest_jobs ADD COLUMN updated_at TEXT;
+      `);
+    },
+  },
 ];
