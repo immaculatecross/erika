@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { motion } from "framer-motion";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
@@ -12,11 +13,14 @@ interface EmptyStateProps {
   // When wired, the action button performs it; otherwise it is a quiet stub.
   onAction?: () => void;
   disabled?: boolean;
+  // An optional secondary control rendered beside the primary action (e.g. the
+  // mic recorder next to Upload). Kept neutral so only one element is accented.
+  secondary?: ReactNode;
 }
 
 // Sessions and Practice both render this: no illustration, one sentence, one
 // action. Content staggers in and degrades to a fade under reduced motion.
-export function EmptyState({ title, line, action, onAction, disabled }: EmptyStateProps) {
+export function EmptyState({ title, line, action, onAction, disabled, secondary }: EmptyStateProps) {
   const reduced = usePrefersReducedMotion();
   return (
     <div className="flex min-h-screen items-center justify-center p-8">
@@ -32,15 +36,20 @@ export function EmptyState({ title, line, action, onAction, disabled }: EmptySta
         <motion.p variants={staggerItem(reduced)} className="text-[17px] text-secondary">
           {line}
         </motion.p>
-        <motion.button
+        <motion.div
           variants={staggerItem(reduced)}
-          type="button"
-          onClick={onAction}
-          disabled={disabled}
-          className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98] disabled:opacity-50"
+          className="flex flex-wrap items-center justify-center gap-3"
         >
-          {action}
-        </motion.button>
+          {secondary}
+          <button
+            type="button"
+            onClick={onAction}
+            disabled={disabled}
+            className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98] disabled:opacity-50"
+          >
+            {action}
+          </button>
+        </motion.div>
       </motion.div>
     </div>
   );

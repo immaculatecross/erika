@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { EmptyState } from "@/components/empty-state";
 import { JobStateBadge } from "@/components/job-state-badge";
+import { Recorder } from "@/components/recorder";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { formatCreatedAt, formatDuration } from "@/lib/format";
+import { uploadAudio } from "@/lib/upload-audio";
 import { SUPPORTED_FORMATS, type Session } from "@/lib/session-types";
 
 const ACCEPT = SUPPORTED_FORMATS.map((f) => `.${f}`).join(",");
@@ -37,21 +39,12 @@ export default function SessionsPage() {
     e.target.value = ""; // allow re-picking the same file
     if (!file) return;
     setUpload({ kind: "busy", name: file.name });
-    try {
-      const res = await fetch("/api/sessions", {
-        method: "POST",
-        headers: { "x-filename": encodeURIComponent(file.name) },
-        body: file,
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setUpload({ kind: "error", message: data.error ?? "Upload failed." });
-        return;
-      }
+    const result = await uploadAudio(file.name, file);
+    if (result.ok) {
       setUpload({ kind: "idle" });
       await load();
-    } catch {
-      setUpload({ kind: "error", message: "Upload failed." });
+    } else {
+      setUpload({ kind: "error", message: result.message });
     }
   }
 
@@ -74,10 +67,11 @@ export default function SessionsPage() {
         <div className="flex flex-col">
           <EmptyState
             title="Sessions"
-            line="No sessions yet. Upload a take or a day's audio to begin."
+            line="No sessions yet. Record a take or upload a day's audio to begin."
             action={busy ? `Uploading ${upload.name}…` : "Upload audio"}
             onAction={pick}
             disabled={busy}
+            secondary={<Recorder onRecorded={load} disabled={busy} />}
           />
           {upload.kind === "error" && (
             <p className="pb-8 text-center text-[13px] text-severe" role="alert">
@@ -87,16 +81,19 @@ export default function SessionsPage() {
         </div>
       ) : (
         <div className="mx-auto max-w-3xl p-8">
-          <header className="mb-6 flex items-center justify-between">
+          <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-[34px] font-bold tracking-tight">Sessions</h1>
-            <button
-              type="button"
-              onClick={pick}
-              disabled={busy}
-              className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98] disabled:opacity-50"
-            >
-              {busy ? `Uploading ${upload.name}…` : "Upload audio"}
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <Recorder onRecorded={load} disabled={busy} />
+              <button
+                type="button"
+                onClick={pick}
+                disabled={busy}
+                className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98] disabled:opacity-50"
+              >
+                {busy ? `Uploading ${upload.name}…` : "Upload audio"}
+              </button>
+            </div>
           </header>
           {upload.kind === "error" && (
             <p className="mb-4 text-[13px] text-severe" role="alert">

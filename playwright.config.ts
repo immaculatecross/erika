@@ -15,12 +15,27 @@ export default defineConfig({
     baseURL: BASE_URL,
     trace: "off",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        // A fake audio input so the mic recorder e2e can capture without hardware,
+        // and auto-accept the getUserMedia prompt. Harmless for the other specs.
+        launchOptions: {
+          args: [
+            "--use-fake-device-for-media-stream",
+            "--use-fake-ui-for-media-stream",
+          ],
+        },
+      },
+    },
+  ],
   webServer: {
     command: `next dev -p ${PORT}`,
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
-    env: { ERIKA_DB_PATH: ".playwright/e2e.db" },
+    env: { ERIKA_DB_PATH: ".playwright/e2e.db", ERIKA_DATA_DIR: ".playwright/e2e-data" },
   },
 });

@@ -25,9 +25,13 @@ test.describe("shell & routes", () => {
     await expect(active).toHaveText("Practice");
   });
 
-  test("empty states show one sentence and one action", async ({ page }) => {
+  test("the sessions empty state shows its capture actions and no illustration", async ({
+    page,
+  }) => {
     await page.goto("/");
-    await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+    // Capture (E-2) offers two ways in: record from the mic or upload a file.
+    await expect(page.getByRole("button", { name: "Record" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Upload audio" })).toBeVisible();
     await expect(page.locator("img")).toHaveCount(0); // no illustration
   });
 });
