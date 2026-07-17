@@ -15,5 +15,8 @@ data/
 # tooling artifacts
 playwright-report/
 test-results/
+.playwright/
+artifacts/
+next-env.d.ts
 *.log
 .DS_Store
