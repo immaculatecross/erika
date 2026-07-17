@@ -49,12 +49,26 @@ interface JobRow {
   error: string | null;
 }
 
+function toJob(r: JobRow): IngestJob {
+  return { id: r.id, sessionId: r.session_id, state: r.state, stage: r.stage, progress: r.progress, error: r.error };
+}
+
 export function getJob(db: Db, id: string): IngestJob | null {
   const r = db
     .prepare("SELECT id, session_id, state, stage, progress, error FROM ingest_jobs WHERE id = ?")
     .get(id) as JobRow | undefined;
-  if (!r) return null;
-  return { id: r.id, sessionId: r.session_id, state: r.state, stage: r.stage, progress: r.progress, error: r.error };
+  return r ? toJob(r) : null;
+}
+
+/**
+ * The ingest job for a session (one per session). Read accessor for the UI —
+ * the detail page surfaces state/stage/progress/error without knowing the job id.
+ */
+export function getJobBySession(db: Db, sessionId: string): IngestJob | null {
+  const r = db
+    .prepare("SELECT id, session_id, state, stage, progress, error FROM ingest_jobs WHERE session_id = ?")
+    .get(sessionId) as JobRow | undefined;
+  return r ? toJob(r) : null;
 }
 
 function patchJob(db: Db, id: string, p: Partial<Pick<JobRow, "state" | "stage" | "progress" | "error">>): void {
