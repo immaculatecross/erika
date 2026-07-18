@@ -41,3 +41,76 @@ What changed per item, the exact verification commands, the VAD parameters chose
 ## Exit report
 
 Append the `task.md` exit report block (RESULT / PR / Changed / Verified / Risks / Blocker) here and as your final message.
+
+---
+
+## Exit report
+
+```
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/22  (branch feat/hardening-sweep)
+Changed:
+  1. Worker environment — new `lib/env-file.ts` (dependency-free .env.local loader,
+     shell/CI vars win); `scripts/worker.ts` loads it before any module reads a secret
+     and exits non-zero at boot with the fix in the message when OPENAI_API_KEY is
+     absent. Chose an explicit loader over `node --env-file` (hard-fails when the file
+     is absent; `--env-file-if-exists` needs Node 20.12 and the repo's floor is 20) —
+     documented in the README's new "The worker" section.
+  2. Worker liveness — new `lib/jobs/liveness.ts` (pure verdict + row lookup) reusing
+     part 1's heartbeat lease; `workerAbsent` on both view models and routes; new
+     `components/worker-absent-notice.tsx` rendered by ingest and analysis.
+     `lib/jobs/lease-config.ts` splits the threshold out of `lease.ts` so a client
+     component can read it without pulling node:crypto into the bundle.
+  3. VAD recalibration — `lib/ingest/vad.ts`: threshold measured from the recording's
+     own noise floor (ffmpeg `astats`) instead of a fixed −30 dB, 250 ms pre/post-roll
+     padding, merge gap 300→700 ms, minimum 2000→1600 ms; committed labelled sample +
+     generator + recall assertion (D-13).
+  4. One bad reply no longer kills the run — `ModelTruncatedError`, `finish_reason`
+     checked, one bounded repair retry with a strict JSON-only instruction (both
+     attempts ledgered), then the segment is marked unreadable with a content-free
+     response shape (migration v9) and the run completes reporting
+     "N of M segments analysed · K unreadable".
+  5. Analyze gated on ingest — POST 409s a session with no segments; the panel shows a
+     truthful disabled state instead of offering a $0 run that reads as a clean bill.
+  6. Truthfulness — a lost mic take now says so (`takeOutcome` + `lost` error kind,
+     red/alert in the recorder); `lib/poll.ts` stops both polling hooks on 404/410.
+  7. Pre-commit NUL-byte gate ported into `.mfactory/hooks/pre-commit`, scoped to
+     source extensions, with a driven negative test.
+Verified:
+  npm run lint · npm run typecheck · npm run build · npm run test  → 286 tests, 42 files,
+    all green, no network (every model client mocked).
+  Live, against a throwaway DB on a dev server (data/ was wiped and is regenerable):
+    - worker with no key and no .env.local → truthful message, exit=1; with .env.local
+      → "[worker] started (1 var(s) from .env.local)", exit=0.
+    - upload → queued; aged the job → GET /ingest workerAbsent=true; session page shows
+      "Not processing — start the worker with `npm run worker`".
+    - POST /analysis on the un-ingested session → 409; page shows the disabled Analyze
+      and "Nothing to analyze yet"; after `npm run worker` → 4 segments, POST → 202.
+    - deleted the session under an open page → both hooks polling=false, poll count
+      frozen (3 → 3) instead of a 404 every second.
+  VAD parameters chosen: threshold = measured noise floor + 12 dB, clamped to
+    [−55, −30] dBFS (the ceiling is the old fixed floor, so the rule can never be more
+    aggressive than the behaviour that was dropping speech); silencedetect d = 0.3 s;
+    pre/post-roll 250 ms; merge gap 700 ms; minimum segment 1600 ms (post-padding).
+    On the committed labelled sample: recall 1.000 (kept 13.1 s of 17 s, so silence is
+    still discarded); the pre-E-16b parameters score 0.515 on the same sample, and a
+    test asserts that they do — the fixture can falsify, per D-13.
+Risks:
+  - The noise floor is measured once over the whole file. A recording whose room
+    changes partway (quiet room → café) gets one compromise threshold; a windowed
+    floor is the honest next step and is noted here rather than built.
+  - The calibration rests on one synthetic-but-labelled sample. It discriminates the
+    old parameters from the new decisively, but it is not a corpus: the numbers are
+    defensible, not proven optimal across real voices and rooms.
+  - Padding raises kept audio ~15-25 % (measured 13.1 s kept for 10.2 s of labelled
+    speech), so billed model-time rises with it. That is the recall/cost trade the WO
+    asked for, taken deliberately in favour of not losing the user's words.
+  - `QUEUED_STALE_MS` is 20 s. A worker that is alive but wedged inside a single very
+    long ffmpeg pass on ANOTHER job will make a newly queued job read as un-worked for
+    the duration. It says "start the worker", which is harmless if one is running.
+  - An unreadable segment stays pending, so a later run retries it (and re-bills that
+    call). Deliberate — a truncation is usually transient — but it does mean a
+    persistently unreadable segment is paid for on every re-analyze.
+  - Migration v9 adds three columns to `segment_analyses`; append-only, no backfill.
+Blocker:  none
+```
