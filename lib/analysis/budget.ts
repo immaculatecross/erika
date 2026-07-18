@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db";
-import type { ModelId } from "./rates";
+import type { BillableModelId } from "./rates";
 
 // The spend ledger and the monthly budget cap (D-10) — the money-safety spine of
 // E-4. Every *real* billable model call records its actual cost here with a month
@@ -37,7 +37,7 @@ export function wouldExceedBudget(db: Db, costUsd: number, budgetUsd: number): b
 /** Record one real billable call's actual cost. Returns the ledger row id. */
 export function recordSpend(
   db: Db,
-  entry: { model: ModelId; contentHash: string; costUsd: number },
+  entry: { model: BillableModelId; contentHash: string; costUsd: number },
   date: Date = new Date(),
 ): string {
   const id = randomUUID();
