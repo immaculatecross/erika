@@ -17,7 +17,9 @@ Read, in order: the work order, then the target repo's own instructions (`CLAUDE
 
 ## Size discipline
 
-Keep the PR reviewable — roughly ≤400 changed lines (lockfiles excluded). If the task cannot fit honestly, do not trim tests to squeeze under; report `split` with a proposed division. Splitting is a good outcome.
+**There is no diff-line budget (D-16).** One milestone is one PR, and its size follows the milestone; a cap only manufactured extra review cycles while being exceeded anyway. What keeps a PR reviewable is the **per-file 500-line hook**, coherent commits that each tell one part of the story, and never trimming tests to look smaller. Report `split` only if the work order genuinely contains two deliverables a *user* would recognise separately — not because a diff felt large.
+
+**Review tier.** Your work order declares one: Full, Light, or None. You may **raise** it in your exit report and never lower it — if a Light task ends up touching money, migrations, deletion, secrets, concurrency, the ingest/analysis correctness path, or an external contract, say so and it gets a Full review.
 
 ## Exit report (final message, and appended to the work order)
 
