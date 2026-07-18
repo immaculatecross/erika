@@ -48,7 +48,7 @@ Append the `task.md` exit report block (RESULT / PR / Changed / Verified / Risks
 
 ```
 RESULT: done
-PR:       https://github.com/immaculatecross/erika/pull/PENDING
+PR:       https://github.com/immaculatecross/erika/pull/24
 Changed:  lib/findings-model.ts — the canonical read-model: one SQL predicate
           (a complete segment_analyses witness) defines analysed segment /
           included finding / analysed session; all six read sites consume it.
