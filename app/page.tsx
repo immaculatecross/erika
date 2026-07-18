@@ -1,16 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { EmptyState } from "@/components/empty-state";
-import { JobStateBadge } from "@/components/job-state-badge";
 import { Recorder } from "@/components/recorder";
+import { SessionRow } from "@/components/session-row";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
-import { formatCreatedAt, formatDuration } from "@/lib/format";
 import { uploadAudio } from "@/lib/upload-audio";
-import { SUPPORTED_FORMATS, type Session } from "@/lib/session-types";
+import { SUPPORTED_FORMATS } from "@/lib/session-types";
+import type { SessionListItem } from "@/lib/sessions-list-view";
 
 const ACCEPT = SUPPORTED_FORMATS.map((f) => `.${f}`).join(",");
 
@@ -18,7 +17,7 @@ type Upload = { kind: "idle" } | { kind: "busy"; name: string } | { kind: "error
 
 export default function SessionsPage() {
   const reduced = usePrefersReducedMotion();
-  const [sessions, setSessions] = useState<Session[] | null>(null);
+  const [sessions, setSessions] = useState<SessionListItem[] | null>(null);
   const [upload, setUpload] = useState<Upload>({ kind: "idle" });
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -108,19 +107,7 @@ export default function SessionsPage() {
           >
             {sessions.map((s) => (
               <motion.li key={s.id} variants={staggerItem(reduced)}>
-                <Link
-                  href={`/sessions/${s.id}`}
-                  className="flex items-center justify-between gap-4 rounded-card bg-card p-4 shadow-card transition-transform active:scale-[0.99]"
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[17px] text-ink">{s.originalFilename}</span>
-                    <span className="text-[13px] text-secondary">{formatCreatedAt(s.createdAt)}</span>
-                  </span>
-                  <span className="tabular text-[15px] text-secondary">
-                    {formatDuration(s.durationSeconds)}
-                  </span>
-                  <JobStateBadge state={s.jobState} />
-                </Link>
+                <SessionRow item={s} onStarted={() => void load()} />
               </motion.li>
             ))}
           </motion.ul>

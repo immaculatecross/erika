@@ -13,12 +13,12 @@ import { FfprobeError, probeDurationSeconds } from "@/lib/ffprobe";
 import {
   createSession,
   isSupportedFormat,
-  listSessions,
   maxDurationSeconds,
   maxUploadBytes,
   newSessionId,
   SUPPORTED_FORMATS,
 } from "@/lib/sessions";
+import { listSessionItems } from "@/lib/session-yield";
 
 // The single ingestion entry point (file-upload now; mic-capture posts here in
 // E-2 part 2). The body is streamed to disk, never buffered — so a client
@@ -31,8 +31,11 @@ function bad(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
 
+// The list serves each session WITH its yield (E-18 criterion 2): analysed speech
+// time, findings count and dominant category via the canonical read-model, plus
+// the facts the inline-Analyze gate mirrors (segment count, in-flight run).
 export function GET() {
-  return NextResponse.json(listSessions(getDb()));
+  return NextResponse.json(listSessionItems(getDb()));
 }
 
 export async function POST(request: Request) {
