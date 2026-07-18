@@ -55,8 +55,8 @@ export function callCost(model: ModelId, durationMs: number): number {
 export const TEXT_MODEL = "gpt-4.1-mini" as const;
 export type TextModelId = typeof TEXT_MODEL;
 
-/** Every model that can bill into the shared ledger — audio (E-4) or text (E-6). */
-export type BillableModelId = ModelId | TextModelId;
+/** Every model that can bill into the shared ledger — audio (E-4), text (E-6), or TTS (E-21). */
+export type BillableModelId = ModelId | TextModelId | TtsModelId;
 
 export interface TextModelRate {
   usdPerPromptToken: number;
@@ -86,4 +86,32 @@ export function textCallCost(model: TextModelId, promptTokens: number, completio
  */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+// ---- TTS model (E-21 Contrastive playback) -------------------------------
+//
+// Rendering a finding's correction in the audio model's voice is a text-to-speech
+// call. TTS models bill on the number of INPUT CHARACTERS synthesized (not tokens
+// or audio-minutes), so they carry their own rate shape and cost function — but
+// their spend records into the SAME spend_ledger and counts against the SAME
+// monthly cap as the audio cascade and the text lessons (D-10). The id lives here,
+// the one price knob; the founding-era rate is an approximation to recalibrate
+// against real usage, exactly like the audio and text numbers above.
+
+export const TTS_MODEL = "gpt-4o-mini-tts" as const;
+export type TtsModelId = typeof TTS_MODEL;
+
+export interface TtsModelRate {
+  usdPerCharacter: number;
+}
+
+// ≈ $12 per 1M input characters — a short correction ("un problema", ~40 chars)
+// costs a small fraction of a cent, rendered once and cached forever.
+export const TTS_RATES: Record<TtsModelId, TtsModelRate> = {
+  "gpt-4o-mini-tts": { usdPerCharacter: 12 / 1_000_000 },
+};
+
+/** USD to synthesize `charCount` characters with `model`, per the rates table. */
+export function ttsCallCost(model: TtsModelId, charCount: number): number {
+  return Math.max(0, charCount) * TTS_RATES[model].usdPerCharacter;
 }

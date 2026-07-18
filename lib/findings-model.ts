@@ -220,6 +220,20 @@ export function listSessionFindings(db: Db, sessionId: string): Finding[] {
   return rows.map(toFinding);
 }
 
+/**
+ * One included finding by id, or null — the single-finding read every surface that
+ * acts on ONE finding (E-21 contrastive playback) goes through, so it can never
+ * act on a finding the canonical scope would hide. Same `INCLUDED_FINDING_SCOPE`
+ * as every list reader: a finding whose audio carries no complete witness is not
+ * returned, exactly as it is absent from the Phrasebook and the report.
+ */
+export function getIncludedFinding(db: Db, findingId: string): Finding | null {
+  const r = db
+    .prepare(`SELECT f.* FROM findings f WHERE f.id = ? AND ${INCLUDED_FINDING_SCOPE}`)
+    .get(findingId) as FindingRow | undefined;
+  return r ? toFinding(r) : null;
+}
+
 /** One session's segment truth — what the report's tally line states (E-17.5). */
 export interface SessionSegmentCounts {
   segmentCount: number;
