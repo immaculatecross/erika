@@ -12,9 +12,10 @@ test.describe("shell & routes", () => {
       await page.goto(path);
       await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
       await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
-      // Five nav items: Sessions, Practice, Focus (E-7), Phrasebook (E-9), Settings.
+      // Six nav items: Sessions, Practice, Focus (E-7), Phrasebook (E-9),
+      // Archive (E-11), Settings.
       const links = page.getByRole("navigation", { name: "Primary" }).getByRole("link");
-      await expect(links).toHaveCount(5);
+      await expect(links).toHaveCount(6);
     });
   }
 
