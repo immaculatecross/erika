@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { MAX_SEGMENT_MS, MIN_SEGMENT_MS, parseSilences, speechIntervals } from "@/lib/ingest/vad";
+import {
+  MAX_SEGMENT_MS,
+  MIN_SEGMENT_MS,
+  PAD_MS,
+  parseSilences,
+  speechIntervals,
+} from "@/lib/ingest/vad";
 import {
   DEFAULT_TRIAGE_TEMPO,
   MAX_TRIAGE_TEMPO,
@@ -27,27 +33,33 @@ describe("parseSilences", () => {
 });
 
 describe("speechIntervals (criteria 2 & 3 logic)", () => {
+  // These cover the interval algebra itself, so they pin padding to 0; the
+  // pre/post-roll it adds by default has its own block below.
+  const NO_PAD = { padMs: 0 };
+
   it("inverts silence into the surrounding speech intervals", () => {
     // [2s tone][3s silence][4s tone] → speech [0,2] and [5,9].
-    const out = speechIntervals([{ startMs: 2000, endMs: 5000 }], 9000);
+    const out = speechIntervals([{ startMs: 2000, endMs: 5000 }], 9000, NO_PAD);
     expect(out).toEqual([
       { startMs: 0, endMs: 2000 },
       { startMs: 5000, endMs: 9000 },
     ]);
   });
 
-  it("drops sub-2s intervals (1s kept-out, 5s kept-in)", () => {
+  it("drops intervals under the minimum (1s kept-out, 5s kept-in)", () => {
     // [1s tone][3s silence][5s tone] → only the 5s interval survives.
-    const out = speechIntervals([{ startMs: 1000, endMs: 4000 }], 9000);
+    const out = speechIntervals([{ startMs: 1000, endMs: 4000 }], 9000, NO_PAD);
     expect(out).toEqual([{ startMs: 4000, endMs: 9000 }]);
+    expect(1000).toBeLessThan(MIN_SEGMENT_MS); // the dropped one, stated explicitly
   });
 
   it("merges speech split by a gap ≤ mergeGapMs into one interval", () => {
     const out = speechIntervals(
       [
-        { startMs: 3000, endMs: 3200 }, // 200 ms gap — below the 300 ms merge threshold
+        { startMs: 3000, endMs: 3200 }, // 200 ms gap — below the merge threshold
       ],
       9000,
+      NO_PAD,
     );
     expect(out).toEqual([{ startMs: 0, endMs: 9000 }]);
   });
@@ -57,8 +69,40 @@ describe("speechIntervals (criteria 2 & 3 logic)", () => {
   });
 
   it("clamps silence bounds to [0, total]", () => {
-    const out = speechIntervals([{ startMs: -500, endMs: 3000 }], 8000);
+    const out = speechIntervals([{ startMs: -500, endMs: 3000 }], 8000, NO_PAD);
     expect(out).toEqual([{ startMs: 3000, endMs: 8000 }]);
+  });
+});
+
+describe("speechIntervals padding (E-16b criterion 3)", () => {
+  // Energy detection finds the loud core of a word; its onset and decay sit under
+  // any threshold. Cutting at the detected edge clipped real speech, which is what
+  // the operator heard, so every interval grows by PAD_MS on both sides.
+  it("grows each interval by the pre/post-roll, clamped to the file", () => {
+    const out = speechIntervals([{ startMs: 3000, endMs: 6000 }], 9000);
+    expect(out).toEqual([
+      { startMs: 0, endMs: 3000 + PAD_MS }, // start clamps at 0
+      { startMs: 6000 - PAD_MS, endMs: 9000 }, // end clamps at the total
+    ]);
+  });
+
+  it("merges two utterances the padding grows into each other", () => {
+    // A 1.1 s gap is wider than MERGE_GAP_MS on its own, but 250 ms of roll on
+    // each side closes it to 600 ms — one continuous stretch of speech.
+    const out = speechIntervals([{ startMs: 3000, endMs: 4100 }], 9000);
+    expect(out).toEqual([{ startMs: 0, endMs: 9000 }]);
+  });
+
+  it("counts the padding toward the minimum length", () => {
+    // A 1.2 s utterance — under MIN_SEGMENT_MS bare, kept once padded to 1.7 s.
+    const out = speechIntervals(
+      [
+        { startMs: 0, endMs: 4000 },
+        { startMs: 5200, endMs: 9000 },
+      ],
+      9000,
+    );
+    expect(out).toEqual([{ startMs: 3750, endMs: 5450 }]);
   });
 });
 
