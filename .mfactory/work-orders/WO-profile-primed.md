@@ -29,3 +29,18 @@ Slips clustering/dossiers/states (E-20), any real-API smoke (no key in this envi
 ## PR + exit report
 
 PR title Conventional-Commit; body: what changed, exact verification commands, risks. Append the `task.md` exit block to this file. Be token-efficient: read only what this WO names plus immediate dependencies; no repo-wide exploration; terse report.
+
+## Exit report
+
+```
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/27
+Changed:  lib/analysis/profile.ts (new) — bounded speaker profile, zero model calls, rates via computeFocus
+          triage/deep/lesson prompts carry L1 + profile block (cascade builds profile once per run)
+          deep reply: optional recurrenceId → findings.recurrence_of (migration v10, additive; D-13 defensive)
+          docs/schema.md v10 row; 23 new fixture tests (profile, recurrence, migration)
+Verified: npm run lint · typecheck · test (334 passed) · build · .mfactory/hooks/run-tripwires.sh — all green;
+          fixture tests prove identical calls/ledger rows with and after profile growth (no re-billing)
+Risks:    fixture-only coverage per D-13 (no real-API smoke — no key in this environment); recurrence link
+          stores the cited entry's clipped correction text; prompts grow by a hard-capped ≤1200 chars
+```
