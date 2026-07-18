@@ -35,6 +35,10 @@ export default function SessionDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  // A `?t=<ms>` deep link (from the Speech archive, E-11) asks the reused player to
+  // open at that offset. Read once on mount and consumed when audio metadata is
+  // ready, so a cross-page jump lands exactly like the in-page report's onJump.
+  const seekTargetRef = useRef<number | null>(null);
 
   // The ingest view polls itself (queued/processing → done/failed) without a
   // reload; the badge tracks its live state, falling back to the loaded session.
@@ -46,6 +50,20 @@ export default function SessionDetailPage() {
       .then((session: Session) => setState({ kind: "ready", session }))
       .catch(() => setState({ kind: "missing" }));
   }, [id]);
+
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("t");
+    const ms = t === null ? NaN : Number(t);
+    if (Number.isFinite(ms) && ms >= 0) seekTargetRef.current = ms;
+  }, []);
+
+  // Consume the deep-link target the moment the reused player can seek.
+  function seekToDeepLink() {
+    const ms = seekTargetRef.current;
+    if (ms === null) return;
+    seekTargetRef.current = null;
+    seekToMs(ms);
+  }
 
   // Seek the reused player to an absolute offset (ms). Shared by the speech
   // timeline and the analysis report's jump-to-audio so both land the same way.
@@ -100,6 +118,7 @@ export default function SessionDetailPage() {
             controls
             preload="metadata"
             src={`/api/sessions/${id}/audio`}
+            onLoadedMetadata={seekToDeepLink}
             className="w-full"
             aria-label="Session audio"
           />

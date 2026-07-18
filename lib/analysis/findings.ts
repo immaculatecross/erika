@@ -178,6 +178,35 @@ export function listAllFindings(db: Db): Finding[] {
   return rows.map(toFinding);
 }
 
+/** A finding enriched with its session's capture date and name — for the Archive. */
+export interface FindingWithSession extends Finding {
+  /** The owning session's `created_at` (SQLite UTC) — the chronological key. */
+  sessionCreatedAt: string;
+  /** The owning session's original filename — the group header label. */
+  sessionFilename: string;
+}
+
+/**
+ * Every finding across all sessions joined to its session's capture date and
+ * name — the Speech archive's chronological source (E-11). Ordering (by session
+ * date, then timestamp, newest session first) is the pure archive builder's job,
+ * so this returns a stable base order only. Read-only; no model, no writes.
+ */
+export function listAllFindingsWithSession(db: Db): FindingWithSession[] {
+  const rows = db
+    .prepare(
+      `SELECT f.*, s.created_at AS session_created_at, s.original_filename AS session_filename
+       FROM findings f JOIN sessions s ON s.id = f.session_id
+       ORDER BY s.created_at DESC, f.session_id, f.start_ms, f.id`,
+    )
+    .all() as (FindingRow & { session_created_at: string; session_filename: string })[];
+  return rows.map((r) => ({
+    ...toFinding(r),
+    sessionCreatedAt: r.session_created_at,
+    sessionFilename: r.session_filename,
+  }));
+}
+
 function sessionHasHash(db: Db, sessionId: string, contentHash: string): boolean {
   const r = db
     .prepare("SELECT 1 FROM findings WHERE session_id = ? AND content_hash = ? LIMIT 1")
