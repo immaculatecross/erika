@@ -151,7 +151,7 @@ export function AnalysisPanel({ sessionId, onJump }: Props) {
  * difference was invisible (E-16b criterion 4).
  */
 function SegmentTally({ view }: { view: AnalysisView }) {
-  const line = segmentTally(view.segmentCount, view.unreadableCount);
+  const line = segmentTally(view.segmentCount, view.analysedCount, view.unreadableCount);
   if (!line) return null;
   return (
     <p className="tabular text-[13px] text-secondary" data-segment-tally>
@@ -165,6 +165,13 @@ function SegmentTally({ view }: { view: AnalysisView }) {
  * used to offer Analyze anyway: the estimate came back $0, the run finished
  * instantly, and it reported "no findings" — which reads as a clean bill of
  * health on audio no model ever heard (E-16b criterion 5).
+ *
+ * It also used to render `WorkerAbsentNotice` unconditionally, which is why every
+ * healthy upload showed a live ingest bar with "Not processing — start the worker"
+ * directly beneath it: a permanently-on signal is no signal (E-16 review, advisory
+ * 1). Whether a worker is absent is a fact about a *job*, and the job in question
+ * here is the ingest one — `IngestStatus` above already states it, from its own
+ * `view.workerAbsent`. This panel only speaks when its own analysis job is stuck.
  */
 function NotIngestedYet() {
   return (
@@ -180,7 +187,6 @@ function NotIngestedYet() {
       >
         Analyze
       </button>
-      <WorkerAbsentNotice />
     </div>
   );
 }

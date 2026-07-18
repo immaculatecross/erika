@@ -1,9 +1,6 @@
 import type { Db } from "./db";
-import { listSessions } from "./sessions";
-import { getAnalysisJobBySession } from "./analysis/cascade";
-import { listSegments } from "./segments";
-import { listFindings } from "./analysis/findings";
 import type { Category, Severity } from "./analysis/findings";
+import { findingTallies, listAnalysedSessions } from "./findings-model";
 import { CATEGORY_ORDER } from "./analysis-view";
 
 // The Focus map aggregation (E-7, v0.2 milestone 1). Pure metric math over the
@@ -155,21 +152,32 @@ export function computeFocus(sessions: readonly AnalyzedSession[]): FocusModel {
 }
 
 /**
- * Read every *analyzed* session (its most recent analysis job is `done`, per
- * cascade.ts) into the pure input rows: its speech time (Σ segment durations) and
- * its findings. A session with speech but no completed analysis contributes
- * neither hours nor findings. Typed reads only — no SQL beyond the lib accessors.
+ * Read every *analysed* session into the pure input rows, via the canonical
+ * read-model (lib/findings-model.ts): its analysed speech time and its findings.
+ * The scope — what counts as analysed, and how a halted run or an in-flight
+ * re-analysis is treated — is defined there, once, and shared with the letter,
+ * the Phrasebook, the Archive, the lesson patterns and card generation (E-17).
+ *
+ * TWO queries for the whole database, both aggregating in SQL, rather than the
+ * three-per-session loop this replaced (`listSegments` + `listFindings` +
+ * `getAnalysisJobBySession` for every session on every GET). The tallies come back
+ * pre-counted by SQL `GROUP BY`; expanding each count back into that many
+ * `{category, severity}` entries keeps `computeFocus`'s hand-verified metric math
+ * untouched and its results identical.
  */
 export function collectAnalyzedSessions(db: Db): AnalyzedSession[] {
-  const rows: AnalyzedSession[] = [];
-  for (const s of listSessions(db)) {
-    const job = getAnalysisJobBySession(db, s.id);
-    if (!job || job.state !== "done") continue;
-    const speechMs = listSegments(db, s.id).reduce((sum, seg) => sum + seg.durationMs, 0);
-    const findings = listFindings(db, s.id).map((f) => ({ category: f.category, severity: f.severity }));
-    rows.push({ id: s.id, createdAt: s.createdAt, speechMs, findings });
+  const bySession = new Map<string, { category: Category; severity: Severity }[]>();
+  for (const t of findingTallies(db)) {
+    const bucket = bySession.get(t.sessionId) ?? [];
+    for (let i = 0; i < t.count; i++) bucket.push({ category: t.category, severity: t.severity });
+    bySession.set(t.sessionId, bucket);
   }
-  return rows;
+  return listAnalysedSessions(db).map((s) => ({
+    id: s.id,
+    createdAt: s.createdAt,
+    speechMs: s.analysedSpeechMs,
+    findings: bySession.get(s.id) ?? [],
+  }));
 }
 
 /** The Focus model for the whole database — what the read route serves. */

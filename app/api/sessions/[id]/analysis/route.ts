@@ -3,7 +3,7 @@ import { getDb } from "@/lib/db";
 import { getSession } from "@/lib/sessions";
 import { readSettings } from "@/lib/settings";
 import { enqueueAnalysis, getAnalysisJobBySession } from "@/lib/analysis/cascade";
-import { countUnreadableSegments, listFindings } from "@/lib/analysis/findings";
+import { listSessionFindings, sessionSegmentCounts } from "@/lib/findings-model";
 import { monthToDateSpend } from "@/lib/analysis/budget";
 import { listSegments } from "@/lib/segments";
 import { isWorkerAbsent } from "@/lib/jobs/liveness";
@@ -26,7 +26,8 @@ export async function GET(_request: Request, { params }: Ctx) {
   if (!getSession(db, id)) return NextResponse.json({ error: "Session not found." }, { status: 404 });
 
   const job = getAnalysisJobBySession(db, id);
-  const findings = listFindings(db, id);
+  const findings = listSessionFindings(db, id);
+  const counts = sessionSegmentCounts(db, id);
   const view: AnalysisView = {
     state: job?.state ?? "idle",
     stage: job?.stage ?? null,
@@ -44,8 +45,9 @@ export async function GET(_request: Request, { params }: Ctx) {
     })),
     counts: categoryCounts(findings),
     total: findings.length,
-    segmentCount: listSegments(db, id).length,
-    unreadableCount: countUnreadableSegments(db, id),
+    segmentCount: counts.segmentCount,
+    analysedCount: counts.analysedCount,
+    unreadableCount: counts.unreadableCount,
     workerAbsent: job ? isWorkerAbsent(db, "analysis_jobs", job.id) : false,
   };
   return NextResponse.json(view);

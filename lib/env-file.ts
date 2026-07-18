@@ -11,19 +11,32 @@ import path from "node:path";
 // at the first model call, as "OPENAI_API_KEY is not set" inside a job.
 //
 // An explicit loader is used rather than `node --env-file`: `--env-file` hard-fails
-// when the file is absent (ingest-only runs legitimately have no key file), and
-// `--env-file-if-exists` needs Node 20.12 while the repo's floor is Node 20. A
-// twenty-line parser is also directly unit-testable, which a runtime flag is not.
-// Documented in the README.
+// when the file is absent, and a missing `.env.local` must produce THIS module's
+// message ("put it in .env.local, see .env.example") rather than a Node usage
+// error about a flag the user never typed. `--env-file-if-exists` would avoid that
+// but needs Node 20.12, while the repo's floor is Node 20. A short parser is also
+// directly unit-testable, which a runtime flag is not. Documented in the README.
+//
+// (The original rationale here — "ingest-only runs legitimately have no key file" —
+// stopped being true in the same PR that wrote it: `startupEnvError` below now
+// exits the worker non-zero without a key, so there is no keyless run to protect.)
 
 /** The file the app and the worker both take their secrets from (never committed). */
 export const ENV_LOCAL = ".env.local";
 
 /**
  * Parse dotenv-style text into key/value pairs. Deliberately small: `KEY=value`
- * one per line, an optional `export ` prefix, `#` comments, blank lines, and
- * matching single/double quotes stripped from the value. No interpolation, no
- * multi-line values — anything fancier belongs in a real secrets store, not here.
+ * one per line, an optional `export ` prefix, `#` comments (whole-line and
+ * trailing), blank lines, and matching single/double quotes stripped from the
+ * value. No interpolation, no multi-line values — anything fancier belongs in a
+ * real secrets store, not here.
+ *
+ * A trailing comment is stripped only from an UNQUOTED value: `KEY=sk-abc # note`
+ * used to yield the literal `sk-abc # note`, which `startupEnvError` waved through
+ * as non-empty and OpenAI then rejected as a 401 at the first model call — a
+ * silently corrupted secret from a common dotenv habit (E-16 review, advisory 4).
+ * Inside quotes a `#` is data (`KEY="a#b"` is `a#b`), which is why the quote strip
+ * happens first and the comment strip only when no quotes were found.
  */
 export function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -45,6 +58,9 @@ export function parseEnvFile(text: string): Record<string, string> {
       value.length > 1
     ) {
       value = value.slice(1, -1);
+    } else {
+      // Unquoted: everything from a whitespace-preceded `#` onward is a comment.
+      value = value.replace(/\s+#.*$/, "").trim();
     }
     out[key] = value;
   }
