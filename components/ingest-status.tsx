@@ -1,6 +1,7 @@
 "use client";
 
 import { STAGE_LABELS, type IngestView, type TimelineSegment } from "@/lib/ingest-view";
+import type { FindingMarkerInput } from "@/lib/session-map";
 import { SegmentTimeline } from "@/components/segment-timeline";
 import { WorkerAbsentNotice } from "@/components/worker-absent-notice";
 
@@ -17,6 +18,10 @@ interface Props {
   pollCount: number;
   selectedIdx: number | null;
   onSelect: (segment: TimelineSegment) => void;
+  /** The findings plotted over the timeline as the session map (E-22). */
+  findings?: FindingMarkerInput[];
+  highlightedFindingIds?: ReadonlySet<string>;
+  onSelectFinding?: (id: string) => void;
 }
 
 function stageLabel(view: IngestView): string {
@@ -24,7 +29,16 @@ function stageLabel(view: IngestView): string {
   return (view.stage && STAGE_LABELS[view.stage]) || "Processing";
 }
 
-export function IngestStatus({ view, polling, pollCount, selectedIdx, onSelect }: Props) {
+export function IngestStatus({
+  view,
+  polling,
+  pollCount,
+  selectedIdx,
+  onSelect,
+  findings,
+  highlightedFindingIds,
+  onSelectFinding,
+}: Props) {
   return (
     <section
       aria-label="Ingest"
@@ -71,6 +85,9 @@ export function IngestStatus({ view, polling, pollCount, selectedIdx, onSelect }
             totalMs={view.summary.rawMs}
             selectedIdx={selectedIdx}
             onSelect={onSelect}
+            findings={findings}
+            highlightedFindingIds={highlightedFindingIds}
+            onSelectFinding={onSelectFinding}
           />
         </div>
       )}

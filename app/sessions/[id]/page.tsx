@@ -2,13 +2,20 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useRef, useState, useEffect } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
 import { JobStateBadge } from "@/components/job-state-badge";
 import { IngestStatus } from "@/components/ingest-status";
 import { AnalysisPanel } from "@/components/analysis-panel";
 import { useIngest } from "@/lib/use-ingest";
+import { useAnalysis } from "@/lib/use-analysis";
 import type { TimelineSegment } from "@/lib/ingest-view";
+import type { FindingView } from "@/lib/analysis-view";
+import {
+  mapFindingsToSegments,
+  segmentIdxForMs,
+  highlightedFindingIds as computeHighlighted,
+} from "@/lib/session-map";
 import { formatBytes, formatCreatedAt, formatDuration } from "@/lib/format";
 import type { Session } from "@/lib/session-types";
 
@@ -34,6 +41,7 @@ export default function SessionDetailPage() {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [deleting, setDeleting] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   // A `?t=<ms>` deep link (from the Speech archive, E-11) asks the reused player to
   // open at that offset. Read once on mount and consumed when audio metadata is
@@ -43,6 +51,23 @@ export default function SessionDetailPage() {
   // The ingest view polls itself (queued/processing → done/failed) without a
   // reload; the badge tracks its live state, falling back to the loaded session.
   const { view, polling, pollCount } = useIngest(id);
+  // The analysis poll is lifted here so the session map (E-22) can plot the same
+  // findings the report below shows, and a single selection is shared between them.
+  const analysis = useAnalysis(id);
+
+  // The session map: findings plotted on the ingest timeline. Both live at page
+  // level, so one selection drives the marker, its segment, and the report row.
+  const segments = useMemo(() => view?.segments ?? [], [view]);
+  const rawMs = view?.summary.rawMs ?? 0;
+  const findings = useMemo(
+    () => (analysis.view?.findings ?? []).map((f) => ({ id: f.id, startMs: f.startMs, severity: f.severity })),
+    [analysis.view],
+  );
+  const markers = useMemo(() => mapFindingsToSegments(segments, findings, rawMs), [segments, findings, rawMs]);
+  const highlighted = useMemo(
+    () => computeHighlighted(markers, selectedFindingId, selectedIdx),
+    [markers, selectedFindingId, selectedIdx],
+  );
 
   useEffect(() => {
     fetch(`/api/sessions/${id}`)
@@ -76,7 +101,25 @@ export default function SessionDetailPage() {
 
   function seekTo(segment: TimelineSegment) {
     setSelectedIdx(segment.idx);
+    setSelectedFindingId(null); // a segment highlights every finding on it (vice-versa)
     seekToMs(segment.startMs);
+  }
+
+  // A finding selected from the report: highlight its segment on the map, no seek —
+  // the report has its own "Play in context" control.
+  function selectFinding(finding: FindingView) {
+    setSelectedFindingId(finding.id);
+    setSelectedIdx(segmentIdxForMs(segments, finding.startMs));
+  }
+
+  // A marker clicked on the map: select the finding, highlight its segment, and
+  // play its moment — the map's own jump-to-audio (reusing the shared seek).
+  function playFindingMarker(findingId: string) {
+    const f = analysis.view?.findings.find((x) => x.id === findingId);
+    if (!f) return;
+    setSelectedFindingId(f.id);
+    setSelectedIdx(segmentIdxForMs(segments, f.startMs));
+    seekToMs(f.startMs);
   }
 
   async function remove() {
@@ -137,11 +180,21 @@ export default function SessionDetailPage() {
               pollCount={pollCount}
               selectedIdx={selectedIdx}
               onSelect={seekTo}
+              findings={findings}
+              highlightedFindingIds={highlighted}
+              onSelectFinding={playFindingMarker}
             />
           </div>
 
           <div className="rounded-card bg-card p-6 shadow-card">
-            <AnalysisPanel sessionId={id} onJump={seekToMs} />
+            <AnalysisPanel
+              sessionId={id}
+              analysis={analysis}
+              onJump={seekToMs}
+              highlightedFindingIds={highlighted}
+              selectedFindingId={selectedFindingId}
+              onSelectFinding={selectFinding}
+            />
           </div>
 
           <div>

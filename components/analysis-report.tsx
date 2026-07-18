@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, Play } from "lucide-react";
 import { SPRING } from "@/lib/motion";
@@ -20,15 +20,28 @@ interface Props {
   view: AnalysisView;
   /** Seek the reused audio player to a finding's start (ms). */
   onJump: (startMs: number) => void;
+  /** Findings to highlight — the session-map selection, shared with the timeline. */
+  highlightedFindingIds?: ReadonlySet<string>;
+  /** The single finding to scroll into view (a marker was clicked on the map). */
+  selectedFindingId?: string | null;
+  /** Select this finding (highlight its segment on the map). */
+  onSelect?: (finding: FindingView) => void;
 }
 
-export function AnalysisReport({ view, onJump }: Props) {
+export function AnalysisReport({ view, onJump, highlightedFindingIds, selectedFindingId, onSelect }: Props) {
   return (
     <div className="flex flex-col gap-5" data-analysis-report>
       <CountRow view={view} />
       <ul className="flex flex-col gap-2">
         {view.findings.map((f) => (
-          <FindingRow key={f.id} finding={f} onJump={onJump} />
+          <FindingRow
+            key={f.id}
+            finding={f}
+            onJump={onJump}
+            highlighted={highlightedFindingIds?.has(f.id) ?? false}
+            scrollTo={selectedFindingId === f.id}
+            onSelect={onSelect}
+          />
         ))}
       </ul>
     </div>
@@ -66,23 +79,48 @@ function CountRow({ view }: { view: AnalysisView }) {
   );
 }
 
-function FindingRow({ finding, onJump }: { finding: FindingView; onJump: (startMs: number) => void }) {
+function FindingRow({
+  finding,
+  onJump,
+  highlighted = false,
+  scrollTo = false,
+  onSelect,
+}: {
+  finding: FindingView;
+  onJump: (startMs: number) => void;
+  highlighted?: boolean;
+  scrollTo?: boolean;
+  onSelect?: (finding: FindingView) => void;
+}) {
   const reduced = usePrefersReducedMotion();
   const [open, setOpen] = useState(false);
   const sev = SEVERITY_STYLES[finding.severity];
+  const ref = useRef<HTMLLIElement>(null);
+
+  // A marker clicked on the map scrolls its finding into view here.
+  useEffect(() => {
+    if (scrollTo) ref.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "nearest" });
+  }, [scrollTo, reduced]);
 
   return (
     <motion.li
+      ref={ref}
       layout={reduced ? false : "position"}
       transition={SPRING}
       data-finding
       data-finding-id={finding.id}
       data-expanded={open}
-      className="overflow-hidden rounded-control bg-page"
+      data-selected={highlighted}
+      className={`overflow-hidden rounded-control bg-page transition-shadow ${
+        highlighted ? "ring-2 ring-accent" : ""
+      }`}
     >
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => !v);
+          onSelect?.(finding); // highlight this finding's segment on the map
+        }}
         aria-expanded={open}
         className="flex w-full items-center gap-3 px-4 py-3 text-left transition-transform active:scale-[0.99]"
       >
