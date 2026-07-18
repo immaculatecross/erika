@@ -167,6 +167,17 @@ export function listFindings(db: Db, sessionId: string): Finding[] {
   return rows.map(toFinding);
 }
 
+/**
+ * Every finding across all sessions — the Phrasebook's full recast library (E-9).
+ * Newest first (by insertion time), ties broken by id for a stable total order.
+ */
+export function listAllFindings(db: Db): Finding[] {
+  const rows = db
+    .prepare("SELECT * FROM findings ORDER BY created_at DESC, id")
+    .all() as FindingRow[];
+  return rows.map(toFinding);
+}
+
 function sessionHasHash(db: Db, sessionId: string, contentHash: string): boolean {
   const r = db
     .prepare("SELECT 1 FROM findings WHERE session_id = ? AND content_hash = ? LIMIT 1")

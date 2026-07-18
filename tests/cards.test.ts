@@ -8,6 +8,7 @@ import { persistSegmentFindings, type NewFinding } from "@/lib/analysis/findings
 import {
   cardBack,
   countDueCards,
+  createCardForFinding,
   deleteCard,
   generateCards,
   getCard,
@@ -176,6 +177,63 @@ describe("cascade + helpers", () => {
     const id = listDueCards(db)[0].id;
     expect(deleteCard(db, id)).toBe(true);
     expect(deleteCard(db, id)).toBe(false);
+  });
+});
+
+describe("createCardForFinding — the phrasebook pin (E-9)", () => {
+  /** The id of the single finding seeded on `sessionId`. */
+  function findingId(db: Db, sessionId: string): string {
+    return (db.prepare("SELECT id FROM findings WHERE session_id = ?").get(sessionId) as { id: string }).id;
+  }
+
+  it("creates one card for a finding and is idempotent (pin twice → one card)", () => {
+    const db = freshDb();
+    seedFindings(db, "pin", [finding()]);
+    const fid = findingId(db, "pin");
+
+    const first = createCardForFinding(db, fid);
+    expect(first?.findingId).toBe(fid);
+    const again = createCardForFinding(db, fid);
+    expect(again?.id).toBe(first?.id); // same card, no duplicate
+    expect((db.prepare("SELECT COUNT(*) AS n FROM cards").get() as { n: number }).n).toBe(1);
+    // The pinned card is due now → it shows up in the drill queue.
+    expect(listDueCards(db).map((c) => c.id)).toEqual([first?.id]);
+  });
+
+  it("clears a delete-tombstone so a previously-removed finding returns to the deck", () => {
+    const db = freshDb();
+    seedFindings(db, "back", [finding()]);
+    generateCards(db);
+    const cardId = listDueCards(db)[0].id;
+    const fid = findingId(db, "back");
+
+    // Remove it from the deck (E-5b): tombstoned, and bulk generate won't revive it.
+    deleteCard(db, cardId);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM deleted_findings").get() as { n: number }).n).toBe(1);
+    expect(generateCards(db)).toBe(0);
+    expect(listDueCards(db)).toHaveLength(0);
+
+    // Pinning deliberately adds it back: tombstone gone, card present and due.
+    const card = createCardForFinding(db, fid);
+    expect(card).not.toBeNull();
+    expect((db.prepare("SELECT COUNT(*) AS n FROM deleted_findings").get() as { n: number }).n).toBe(0);
+    expect(listDueCards(db).map((c) => c.findingId)).toEqual([fid]);
+  });
+
+  it("leaves an existing card's schedule untouched and returns null for an unknown finding", () => {
+    const db = freshDb();
+    seedFindings(db, "sched", [finding()]);
+    generateCards(db);
+    const before = listDueCards(db)[0];
+    gradeCard(db, before.id, "good"); // advance its SM-2 schedule
+    const fid = findingId(db, "sched");
+
+    const pinned = createCardForFinding(db, fid);
+    expect(pinned?.id).toBe(before.id);
+    expect(pinned?.repetitions).toBe(1); // schedule preserved, not reset
+    expect(pinned?.lastGrade).toBe("good");
+
+    expect(createCardForFinding(db, "no-such-finding")).toBeNull();
   });
 });
 

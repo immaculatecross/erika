@@ -12,9 +12,9 @@ In order; each assumes the previous. Statuses: `backlog` → `next` → `buildin
 | E-6 | backlog | Micro-lessons | Recurring error patterns become short grammar lessons with interactive exercises (multiple choice, fill-in, rewrite graded by the model with feedback); completing a lesson updates pattern mastery. |
 | E-7 | done | Focus map & progress metrics | Error rate per speaking-hour by category, trended across sessions; ranked "what to work on next"; the whole answer on one screen. |
 | E-8 | backlog | Pronunciation studio | Re-record a corrected phrase; the audio model compares your take against the target and gives specific feedback; minimal-pair drills generated from your pronunciation findings. |
-| E-9 | next | Phrasebook — the recast library | A searchable bank of "you say X, natives say Y" built from findings, including full-utterance recasts side by side; pin any entry into flashcards. |
+| E-9 | done | Phrasebook — the recast library | A searchable bank of "you say X, natives say Y" built from findings, including full-utterance recasts side by side; pin any entry into flashcards. |
 | E-10 | backlog | Conversation gym | Realtime voice roleplay (`gpt-realtime`) that steers scenarios into your weak patterns; a gym session yields findings like any capture. |
-| E-11 | backlog | Speech archive | A searchable timeline of your analyzed speech (transcripts exist only as analysis byproducts), filterable by category and severity — your speaking life at a glance. |
+| E-11 | next | Speech archive | A searchable timeline of your analyzed speech (transcripts exist only as analysis byproducts), filterable by category and severity — your speaking life at a glance. |
 | E-12 | backlog | The editor's letter | A weekly digest: trends, best recasts, the one thing to focus on next week. Quiet ritual, no gamification. |
 | E-13 | backlog | Voice enrollment — only you | A 30-second enrollment teaches Erika your voice; day dumps are filtered to your speech before analysis — bystanders are never analyzed (privacy) and never billed (cost). |
 | E-14 | backlog | Hosted + OAuth | The same app deployed multi-user behind OAuth sign-in. |
