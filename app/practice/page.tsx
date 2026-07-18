@@ -67,13 +67,20 @@ export default function PracticePage() {
           </span>{" "}
           {due === 1 ? "card" : "cards"} due for review.
         </motion.p>
-        <motion.div variants={staggerItem(reduced)}>
+        <motion.div variants={staggerItem(reduced)} className="flex flex-col items-center gap-3">
           <Link
             href="/practice/review"
             data-start-practice
             className="inline-block rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98]"
           >
             Start practice
+          </Link>
+          <Link
+            href="/practice/cards"
+            data-browse-cards
+            className="text-[15px] font-medium text-secondary transition-colors hover:text-ink"
+          >
+            Browse all cards
           </Link>
         </motion.div>
       </motion.div>
