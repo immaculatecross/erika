@@ -47,3 +47,62 @@ Per defect: the reproduction, the fix, and **explicit evidence the new test fail
 ## Exit report
 
 Append the `task.md` exit report block (RESULT / PR / Changed / Verified / Risks / Blocker) here and as your final message.
+
+---
+
+## Exit report
+
+```
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/21  (feat/hardening-core → master, `gates` green)
+
+Changed:
+  - lib/analysis/findings.ts — reuseCachedFindings takes the target segment and REMAPS donor
+    timestamps onto it (offset-within-segment re-anchored, clamped); ON CONFLICT DO NOTHING on
+    the v8 identity index in both writers (targeted, so CHECK violations still throw).
+  - lib/jobs/lease.ts (new) — claimQueued / reclaimStale / heartbeat / workerId shared by both
+    queues; JOB_LEASE_STALE_MS = 15 min, documented against the slowest checkpoint.
+  - lib/ingest/pipeline.ts, lib/analysis/cascade.ts — claim + reclaim via the lease; heartbeat at
+    every checkpoint and per segment (extract, render, cascade loop).
+  - lib/ingest/vad.ts — MAX_SEGMENT_MS = 4 min; splitLong cuts long intervals at the quietest
+    contained dip's midpoint within a bounded window, flat cut as fallback; SPLIT_FILL = 0.85.
+  - lib/analysis/cascade.ts billedCall + lib/lessons/billing.ts parseBilledResponse (used by
+    generate.ts and grade.ts) — ledger the charge when a billable call RESOLVES, not after parse.
+  - lib/migrations/index.ts — v8: worker_id/heartbeat_at on both job tables; dedupe + UNIQUE
+    idx_findings_identity. Append-only; v1–v7 untouched.
+  - scripts/worker.ts — comment only (the lease defaults carry the process identity).
+  - tests: +16 (cascade remap ×3 & spend-on-resolve ×2, vad split ×5, lease ×3 + findings guard,
+    migrations v8 ×2, lessons parse-failure ×2). Two pre-existing tests that asserted the
+    DEFECTIVE contract were inverted, not deleted, with the reason in a comment at the site.
+  - FEATURES.md E-16 next → building; STATE.md one-line in-progress note.
+
+Verified:
+  - npm run typecheck / lint / test / build — all clean; 234 tests pass (was 218).
+  - EACH new test verified to FAIL pre-fix by reverting only that defect's fix, running, then
+    restoring. Observed failures: D1 "expected 11000 to be 3601000" (the donor's timestamp
+    surviving the clone); D2 "expected [Array(1)] to deeply equal []" (a live job stolen) and
+    "expected […,…] to have a length of 1 but got 2" (duplicate findings); D3 "expected 1 to be
+    greater than 1" (one multi-hour segment); D4 "expected ['gpt-audio-mini'] to deeply equal
+    ['gpt-audio-1.5','gpt-audio-mini']" and "expected [] to have a length of 1" (unledgered
+    charges). Two control tests pass either way by design and are labelled as controls.
+  - E-4 atomicity intact: tests/analysis-atomicity.test.ts passes UNMODIFIED, rollback case
+    included. The success path never writes in the new code — only the failure path does.
+  - Real end-to-end drive with real ffmpeg (not just unit tests): a 14-minute unbroken tone
+    through processJob → 5 contiguous segments of 168 s, each ≤ the 240 s cap, real files
+    extracted and hashed; the fresh heartbeat left behind made reclaim by a second worker
+    return []. Scratch spec removed before committing.
+  - No network in any test (mock AudioModelClient / TextModelClient, synthesized fixtures).
+
+Risks:
+  - JOB_LEASE_STALE_MS = 15 min is a judgement call; a normalize pass exceeding it on slow
+    hardware could still be reclaimed live. Beating inside long ffmpeg stages is the real fix
+    and is a refactor, out of scope here.
+  - MAX_SEGMENT_MS changes segmentation for continuous audio, so such sessions' cached hashes
+    no longer match and would be re-analyzed (re-billed) once. Discrete speech is unaffected.
+  - Migration v8 deletes duplicate findings (cascading to their cards) — duplicates by
+    construction, and unavoidable for the unique index to build; covered by a migration test.
+  - Diff ~836 lines vs the WO's ~400 guidance; ~384 of it is the four regression suites. Per
+    task.md I did not trim tests to fit. Flagged in the PR body.
+
+Blocker:  none
+```
