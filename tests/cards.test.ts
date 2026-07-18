@@ -12,6 +12,7 @@ import {
   generateCards,
   getCard,
   gradeCard,
+  listCards,
   listDueCards,
   suspendCard,
 } from "@/lib/cards";
@@ -175,5 +176,61 @@ describe("cascade + helpers", () => {
     const id = listDueCards(db)[0].id;
     expect(deleteCard(db, id)).toBe(true);
     expect(deleteCard(db, id)).toBe(false);
+  });
+});
+
+describe("browser: listCards, suspend & delete policy (E-5b)", () => {
+  it("listCards returns every card — suspended and future included — soonest-due first", () => {
+    const db = freshDb();
+    seedFindings(db, "lc", [finding({ quote: "a" }), finding({ quote: "b" }), finding({ quote: "c" })]);
+    generateCards(db);
+    const byFront = new Map(listCards(db).map((c) => [c.front, c.id]));
+    db.prepare("UPDATE cards SET due = datetime('now', '+5 days') WHERE id = ?").run(byFront.get("a"));
+    db.prepare("UPDATE cards SET due = datetime('now', '-2 days') WHERE id = ?").run(byFront.get("b"));
+    suspendCard(db, byFront.get("c")!, true);
+
+    const all = listCards(db);
+    expect(all).toHaveLength(3); // suspended + future both listed, unlike the due queue
+    expect(all.map((c) => c.front)).toEqual(["b", "c", "a"]); // -2d, now, +5d
+    expect(all.find((c) => c.front === "c")?.suspended).toBe(true);
+  });
+
+  it("suspend drops a card from the due queue; unsuspend restores it", () => {
+    const db = freshDb();
+    seedFindings(db, "su", [finding()]);
+    generateCards(db);
+    const id = listDueCards(db)[0].id;
+
+    expect(suspendCard(db, id, true)).toBe(true);
+    expect(listDueCards(db)).toHaveLength(0); // excluded while suspended
+    expect(listCards(db)[0].suspended).toBe(true); // but still visible in the browser
+
+    expect(suspendCard(db, id, false)).toBe(true);
+    expect(listDueCards(db).map((c) => c.id)).toEqual([id]); // back in the queue
+  });
+
+  it("a deleted card does NOT resurrect on the next generateCards (tombstone policy)", () => {
+    const db = freshDb();
+    seedFindings(db, "tb", [finding()]);
+    generateCards(db);
+    const id = listDueCards(db)[0].id;
+
+    expect(deleteCard(db, id)).toBe(true);
+    expect(listCards(db)).toHaveLength(0); // gone from the browser
+    expect(listDueCards(db)).toHaveLength(0); // and the queue
+
+    expect(generateCards(db)).toBe(0); // the finding still exists, but no card returns
+    expect(listCards(db)).toHaveLength(0);
+  });
+
+  it("deleting a card's session clears its tombstone (finding gone → nothing to regenerate)", () => {
+    const db = freshDb();
+    seedFindings(db, "cascade", [finding()]);
+    generateCards(db);
+    deleteCard(db, listDueCards(db)[0].id);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM deleted_findings").get() as { n: number }).n).toBe(1);
+    db.prepare("DELETE FROM sessions WHERE id = ?").run("cascade");
+    // The FK cascade removed the tombstone with its finding.
+    expect((db.prepare("SELECT COUNT(*) AS n FROM deleted_findings").get() as { n: number }).n).toBe(0);
   });
 });

@@ -16,6 +16,20 @@ export interface CardView {
   category: string;
 }
 
+/**
+ * A card reduced to what the browser lists (E-5b): the drill fields plus its
+ * schedule-visible state — `due` (a SQLite UTC timestamp) and whether it is
+ * suspended. Still client-safe: no SM-2 internals or session plumbing leak out.
+ */
+export interface CardBrowserView {
+  id: string;
+  front: string;
+  back: string;
+  category: string;
+  due: string;
+  suspended: boolean;
+}
+
 // Front is the phrase in context; back is the correction, then the "why",
 // separated by a blank line so the runner can show the recast above the reason.
 // These live here (not lib/cards.ts) so the client flashcard can split a back

@@ -185,4 +185,22 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-5 Flashcards (part 2): the delete tombstone. Deleting a card in the
+    // browser records its `finding_id` here so the next idempotent
+    // `generateCards` does NOT resurrect the card — a deleted card stays gone
+    // while its finding lives. The FK cascade means a tombstone is cleaned up
+    // when its finding (hence its session) is deleted, at which point there is
+    // no finding left to regenerate a card from anyway.
+    version: 6,
+    name: "deleted_findings_tombstone",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE deleted_findings (
+          finding_id TEXT PRIMARY KEY REFERENCES findings(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];

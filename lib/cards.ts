@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "./db";
 import { schedule, FRESH_EASE, type Grade } from "./srs";
-import { cardBack, type CardView } from "./cards-view";
+import { cardBack, type CardView, type CardBrowserView } from "./cards-view";
 
 export { cardBack, splitBack } from "./cards-view";
 
@@ -70,6 +70,18 @@ export function toCardView(c: Card): CardView {
   return { id: c.id, front: c.front, back: c.back, category: c.category };
 }
 
+/** A card reduced to the client-safe view the browser lists (adds due/suspended). */
+export function toCardBrowserView(c: Card): CardBrowserView {
+  return {
+    id: c.id,
+    front: c.front,
+    back: c.back,
+    category: c.category,
+    due: c.due,
+    suspended: c.suspended,
+  };
+}
+
 interface GeneratableFinding {
   id: string;
   session_id: string;
@@ -91,7 +103,8 @@ export function generateCards(db: Db): number {
     .prepare(
       `SELECT f.id, f.session_id, f.quote, f.correction, f.explanation, f.category, f.start_ms
          FROM findings f
-        WHERE NOT EXISTS (SELECT 1 FROM cards c WHERE c.finding_id = f.id)`,
+        WHERE NOT EXISTS (SELECT 1 FROM cards c WHERE c.finding_id = f.id)
+          AND NOT EXISTS (SELECT 1 FROM deleted_findings d WHERE d.finding_id = f.id)`,
     )
     .all() as GeneratableFinding[];
 
@@ -134,6 +147,18 @@ export function listDueCards(db: Db): Card[] {
   return rows.map(toCard);
 }
 
+/**
+ * Every card, for the browser (E-5b), soonest-due first and suspended-visible.
+ * The order is a stable total order (`due` ASC, then `created_at`, then `id`) —
+ * the same key `listDueCards` uses — so the list never reshuffles between reads.
+ */
+export function listCards(db: Db): Card[] {
+  const rows = db
+    .prepare(`${SELECT_CARD} ORDER BY due ASC, created_at ASC, id ASC`)
+    .all() as CardRow[];
+  return rows.map(toCard);
+}
+
 /** How many cards are due now (not suspended) — the Practice screen's count. */
 export function countDueCards(db: Db): number {
   const r = db
@@ -168,12 +193,24 @@ export function gradeCard(db: Db, id: string, grade: Grade): Card {
   return getCard(db, id)!;
 }
 
-/** Suspend or un-suspend a card (its UI is E-5b). Returns whether a row changed. */
+/** Suspend or un-suspend a card. Returns whether a row changed. */
 export function suspendCard(db: Db, id: string, suspended: boolean): boolean {
   return db.prepare("UPDATE cards SET suspended = ? WHERE id = ?").run(suspended ? 1 : 0, id).changes > 0;
 }
 
-/** Delete a card (its UI is E-5b). Returns whether a row existed. */
+/**
+ * Delete a card and tombstone its finding so a later `generateCards` won't
+ * resurrect it (the documented delete policy). Atomic: the tombstone and the
+ * deletion commit together. Returns whether the card existed.
+ */
 export function deleteCard(db: Db, id: string): boolean {
-  return db.prepare("DELETE FROM cards WHERE id = ?").run(id).changes > 0;
+  return db.transaction(() => {
+    const row = db.prepare("SELECT finding_id FROM cards WHERE id = ?").get(id) as
+      | { finding_id: string }
+      | undefined;
+    if (!row) return false;
+    db.prepare("INSERT OR IGNORE INTO deleted_findings (finding_id) VALUES (?)").run(row.finding_id);
+    db.prepare("DELETE FROM cards WHERE id = ?").run(id);
+    return true;
+  })();
 }
