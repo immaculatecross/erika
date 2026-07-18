@@ -32,11 +32,29 @@ override it.
 | `npm run lint` | ESLint. |
 | `npm run typecheck` | `tsc --noEmit`. |
 | `npm run test` | Vitest unit + integration tests. |
+| `npm run worker` | Drains the ingest and analysis queues. **Nothing is processed until this runs.** |
 | `npm run test:e2e` | Playwright end-to-end tests (boots a dev server on a throwaway DB). |
 | `npm run screenshot -- <route>` | Headless PNG of a route into `artifacts/` (gitignored). |
 
 `npm run test:e2e` and `npm run screenshot` need the Chromium browser once:
 `npx playwright install chromium`.
+
+### The worker
+
+Uploading a recording or pressing Analyze only *queues* a job. A second process
+does the work, so run it alongside `npm run dev`:
+
+```sh
+npm run worker
+```
+
+It is a plain Node process, not Next, so it loads `.env.local` itself
+(`lib/env-file.ts` — an explicit loader rather than `node --env-file`, which
+hard-fails when the file is absent). Variables already in the environment win, so
+`OPENAI_API_KEY=… npm run worker` overrides the file. Without an
+`OPENAI_API_KEY` the worker says so and exits non-zero at startup rather than
+failing later at the first model call. While no worker is running, a job that has
+sat queued says so on the session page instead of showing a calm badge forever.
 
 ### Screenshot a route
 
