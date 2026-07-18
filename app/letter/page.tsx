@@ -1,0 +1,178 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import { staggerContainer, staggerItem } from "@/lib/motion";
+import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
+import { EmptyState } from "@/components/empty-state";
+import { TrendBadge } from "@/components/category-bars";
+import type { Letter, LetterFinding, Severity } from "@/lib/letter";
+
+// The editor's letter (E-12, v0.2 — the finale): a quiet weekly digest, the
+// narrative counterpart to the Focus map. One headline stat (this week's error
+// rate) with its trend against last week, a few of your best recasts side by side,
+// and the one thing to work on next. Reached from the Focus screen (no new nav
+// item). DESIGN — editorial and calm, generous space, ink accent, green/red only
+// where the trend carries meaning (D-14), tabular numerals; no gamification —
+// Erika speaks like a good editor, always specific, never cheerleading.
+
+// Severity → its semantic tint (DESIGN.md D-8/D-14): red high, orange medium,
+// green low — 12% alpha fills, never saturated blocks. The only colour on a recast.
+const SEVERITY: Record<Severity, { label: string; text: string; tint: string }> = {
+  high: { label: "High", text: "text-severe", tint: "bg-severe/[0.12]" },
+  medium: { label: "Medium", text: "text-medium", tint: "bg-medium/[0.12]" },
+  low: { label: "Low", text: "text-good", tint: "bg-good/[0.12]" },
+};
+
+/** "YYYY-MM-DD" (UTC) → a short human date, e.g. "Jul 13". */
+function shortDate(ymd: string): string {
+  return new Date(`${ymd}T00:00:00Z`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function n1(x: number): string {
+  return x.toFixed(1);
+}
+
+/** The trend sentence, in the editor's voice — specific, never inflated. */
+function trendLine(letter: Letter): string {
+  const { trend } = letter;
+  const rate = `${n1(trend.current)} ${trend.current === 1 ? "error" : "errors"} per speaking hour`;
+  if (!trend.hasPrior) return `${rate} this week — your first letter, so there's no prior week to compare yet.`;
+  const prior = n1(trend.prior as number);
+  if (trend.direction === "improving") return `Down to ${rate}, from ${prior} the week before.`;
+  if (trend.direction === "worsening") return `Up to ${rate}, from ${prior} the week before.`;
+  return `Steady at ${rate}, level with the week before.`;
+}
+
+export default function LetterPage() {
+  const reduced = usePrefersReducedMotion();
+  const [letter, setLetter] = useState<Letter | null | undefined>(undefined);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/letter")
+      .then((r) => r.json())
+      .then((b: { letter: Letter | null }) => alive && setLetter(b.letter))
+      .catch(() => alive && setLetter(null));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (letter === undefined) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-8">
+        <p className="text-[15px] text-secondary">Reading your week…</p>
+      </div>
+    );
+  }
+
+  if (letter === null) {
+    return (
+      <EmptyState
+        title="This week's letter"
+        line="Your weekly letter arrives once Erika has analyzed a session — your trend, your best recasts, and the one thing to work on next. Nothing analyzed yet."
+        action="See your letter"
+        disabled
+      />
+    );
+  }
+
+  return (
+    <div data-letter className="mx-auto max-w-2xl p-8">
+      <motion.article
+        variants={staggerContainer(reduced)}
+        initial="initial"
+        animate="animate"
+        className="flex flex-col gap-10"
+      >
+        <motion.header variants={staggerItem(reduced)}>
+          <p className="text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">
+            The week of {shortDate(letter.weekStart)} – {shortDate(letter.weekEnd)}
+          </p>
+          <h1 className="mt-2 text-[34px] font-bold tracking-tight">{"This week's letter"}</h1>
+        </motion.header>
+
+        <motion.section variants={staggerItem(reduced)} className="flex flex-col gap-3">
+          <div className="flex items-end gap-4">
+            <p className="tabular text-[34px] font-bold leading-none tracking-tight text-ink" data-letter-rate>
+              {n1(letter.ratePerHour)}
+            </p>
+            {letter.trend.hasPrior && <TrendBadge trend={letter.trend.direction} />}
+          </div>
+          <p className="text-[17px] leading-[1.47] text-ink">{trendLine(letter)}</p>
+          <p className="tabular text-[13px] text-secondary">
+            {letter.totalFindings} {letter.totalFindings === 1 ? "finding" : "findings"} across{" "}
+            {n1(letter.speechHours)} h of analyzed speech · {letter.analyzedSessions}{" "}
+            {letter.analyzedSessions === 1 ? "session" : "sessions"}
+          </p>
+        </motion.section>
+
+        {letter.recasts.length > 0 && (
+          <motion.section variants={staggerItem(reduced)} className="flex flex-col gap-4" data-recasts>
+            <h2 className="text-[22px] font-semibold tracking-tight">Your best recasts</h2>
+            <div className="flex flex-col gap-3">
+              {letter.recasts.map((r) => (
+                <Recast key={r.id} recast={r} />
+              ))}
+            </div>
+          </motion.section>
+        )}
+
+        {letter.focusNext && (
+          <motion.section
+            variants={staggerItem(reduced)}
+            data-focus-next
+            data-focus-next-category={letter.focusNext.category}
+            className="flex flex-col gap-2 rounded-card bg-card p-6 shadow-card"
+          >
+            <h2 className="text-[22px] font-semibold tracking-tight">The one thing next week</h2>
+            <p className="text-[17px] leading-[1.47] text-ink">
+              Work on your <span className="font-semibold capitalize">{letter.focusNext.category}</span> —{" "}
+              <span className="tabular">
+                {letter.focusNext.count} {letter.focusNext.count === 1 ? "slip" : "slips"}, {n1(letter.focusNext.ratePerHour)} per hour
+              </span>
+              , the pattern costing you the most this week.
+            </p>
+          </motion.section>
+        )}
+      </motion.article>
+    </div>
+  );
+}
+
+function Recast({ recast }: { recast: LetterFinding }) {
+  const sev = SEVERITY[recast.severity];
+  return (
+    <div data-recast data-recast-id={recast.id} className="flex flex-col gap-4 rounded-card bg-card p-5 shadow-card">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Side label="You said" text={recast.quote} />
+        <Side label="Natives say" text={recast.correction} accent />
+      </div>
+      {recast.explanation && (
+        <p className="text-[15px] leading-[1.47] text-secondary">{recast.explanation}</p>
+      )}
+      <div className="flex items-center gap-2 pt-1">
+        <span className="text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">{recast.category}</span>
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.06em] ${sev.tint} ${sev.text}`}
+        >
+          {sev.label}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function Side({ label, text, accent }: { label: string; text: string; accent?: boolean }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-secondary">{label}</span>
+      <p className={`text-[17px] leading-[1.47] ${accent ? "font-semibold text-ink" : "text-ink"}`}>“{text}”</p>
+    </div>
+  );
+}
