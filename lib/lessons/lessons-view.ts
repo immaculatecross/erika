@@ -42,6 +42,8 @@ export interface PatternSummary {
   count: number;
   hasLesson: boolean;
   mastery: number;
+  /** Worst-case generation cost in USD; null once the lesson is generated. */
+  estimateUsd: number | null;
 }
 
 /** Collapse case and surrounding/inner whitespace so fill-in matching is forgiving. */
@@ -66,4 +68,14 @@ export function lessonScore(correctCount: number, total: number): number {
 /** Mastery 0..1 → an integer percentage for display (rendered tabular). */
 export function masteryPercent(mastery: number): number {
   return Math.round(mastery * 100);
+}
+
+/**
+ * The mastery figure a list row states. "0%" claims a measurement was taken and
+ * scored zero; a pattern whose lesson has never been completed simply has no
+ * measurement yet, so it reads "Not started" (RETRO-001 polish).
+ */
+export function masteryLabel(mastery: number): string {
+  const pct = masteryPercent(mastery);
+  return pct === 0 ? "Not started" : `${pct}%`;
 }

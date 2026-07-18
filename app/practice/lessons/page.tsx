@@ -6,14 +6,17 @@ import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
-import { masteryPercent, type PatternSummary } from "@/lib/lessons/lessons-view";
+import { masteryLabel, masteryPercent, type PatternSummary } from "@/lib/lessons/lessons-view";
+import { formatUsd } from "@/lib/format";
 
-// The lessons list under Practice (E-6b, WO criterion 1): the user's recurring
+// The lessons list under Practice (E-6b; E-18 criterion 5): the user's recurring
 // error patterns (a category with >= 3 findings) from GET /api/lessons/patterns,
-// each with its finding count and current mastery, linking into the runner. A
-// quiet empty state until a pattern qualifies. DESIGN — calm rows, ink accent,
-// green only on the mastery meter (a state that carries meaning, D-14), tabular
-// numerals, one signature stagger on entry.
+// each with its finding count, current mastery, and an honest price — "Lesson
+// ready" for a generated lesson, "Generate — est. $X" before one exists. A quiet
+// empty state until a pattern qualifies. DESIGN — calm rows, ink accent, green
+// only on the mastery meter (a state that carries meaning, D-14), tabular
+// numerals, one signature stagger on entry. A never-run pattern reads "Not
+// started", not "0%" (RETRO-001).
 
 type Phase = "loading" | "ready";
 
@@ -104,6 +107,9 @@ export default function LessonsPage() {
                 <span data-count className="tabular text-[15px] text-secondary">
                   {p.count} {p.count === 1 ? "finding" : "findings"}
                 </span>
+                <span data-lesson-price className="tabular text-[13px] text-secondary">
+                  {p.hasLesson ? "Lesson ready" : `Generate — est. ${formatUsd(p.estimateUsd ?? 0)}`}
+                </span>
               </div>
               <div className="flex flex-col items-end gap-1.5">
                 <span className="text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">
@@ -117,7 +123,7 @@ export default function LessonsPage() {
                     />
                   </div>
                   <span data-mastery className="tabular text-[15px] font-semibold text-ink">
-                    {masteryPercent(p.mastery)}%
+                    {masteryLabel(p.mastery)}
                   </span>
                 </div>
               </div>
