@@ -137,14 +137,17 @@ export function encodeWav(channels: Float32Array[], sampleRate: number): Blob {
 }
 
 /**
- * A filename for a mic take, e.g. "recording-2026-07-17T18-30-00.webm". The
- * timestamp is filesystem-safe (colons → dashes) and the extension is one the
- * ingestion endpoint accepts.
+ * A sensible default name for a mic take, e.g. "Recording 2026-07-17 at 18.30.wav"
+ * (RETRO-001: the machine stamp "recording-2026-07-17T18-30-00" read like debris
+ * in the sessions list). Local time, since it names the moment the user spoke;
+ * filesystem-safe (no colons); the extension is one the ingestion endpoint accepts.
  */
 export function recordingFilename(extension: AudioFormat, at: Date = new Date()): string {
-  const stamp = at.toISOString().slice(0, 19).replace(/:/g, "-");
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+  const time = `${pad(at.getHours())}.${pad(at.getMinutes())}`;
   const ext = (SUPPORTED_FORMATS as readonly string[]).includes(extension)
     ? extension
     : "webm";
-  return `recording-${stamp}.${ext}`;
+  return `Recording ${date} at ${time}.${ext}`;
 }

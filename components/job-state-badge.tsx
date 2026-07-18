@@ -1,12 +1,14 @@
 import type { IngestState } from "@/lib/session-types";
 
 // The ingest job's state as a quiet dot + caption. Semantic tokens only where a
-// state carries meaning (DESIGN.md D-14): green resolved, red failed. Queued and
-// processing are in-flight, not outcomes, so they stay neutral (secondary ink).
+// state carries meaning (DESIGN.md D-14, E-18 criterion 6): red failed, because
+// audio the user gave us was lost to analysis. "Ready" is neutral — ingest
+// finishing is plumbing, not progress; green is reserved for resolved/mastered/
+// improving. Queued and processing are in-flight, so they stay neutral too.
 const STATE: Record<IngestState, { label: string; dot: string; text: string }> = {
   queued: { label: "Queued", dot: "bg-secondary", text: "text-secondary" },
   processing: { label: "Processing", dot: "bg-secondary", text: "text-secondary" },
-  done: { label: "Ready", dot: "bg-good", text: "text-good" },
+  done: { label: "Ready", dot: "bg-secondary", text: "text-secondary" },
   failed: { label: "Failed", dot: "bg-severe", text: "text-severe" },
 };
 

@@ -145,9 +145,16 @@ describe("encodeWav (normalizes a take to a probeable format)", () => {
 });
 
 describe("recordingFilename", () => {
-  it("builds a filesystem-safe name with a supported extension", () => {
-    const at = new Date("2026-07-17T18:30:00.000Z");
-    expect(recordingFilename("webm", at)).toBe("recording-2026-07-17T18-30-00.webm");
+  // RETRO-001 polish: a mic take gets a sensible, human default name — local
+  // time (it names the moment the user spoke), no colons, readable in the list.
+  it("builds a sensible, filesystem-safe default name with a supported extension", () => {
+    const at = new Date(2026, 6, 17, 18, 30, 0); // local 2026-07-17 18:30
+    expect(recordingFilename("webm", at)).toBe("Recording 2026-07-17 at 18.30.webm");
+  });
+
+  it("pads single-digit fields and falls back to webm on an unknown extension", () => {
+    const at = new Date(2026, 0, 5, 9, 7, 0); // local 2026-01-05 09:07
+    expect(recordingFilename("nope" as never, at)).toBe("Recording 2026-01-05 at 09.07.webm");
   });
 });
 

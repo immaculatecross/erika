@@ -280,8 +280,8 @@ function IdleFlow({
   return (
     <div className="flex flex-col gap-3">
       <p className="text-[15px] text-secondary">
-        Run the cascade to find and explain this session&rsquo;s errors. You&rsquo;ll see the
-        estimated cost before anything runs.
+        Have Erika listen to this session&rsquo;s speech and explain each mistake. You&rsquo;ll see
+        the estimated cost before anything runs.
       </p>
       <button
         type="button"

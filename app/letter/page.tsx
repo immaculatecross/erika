@@ -6,7 +6,8 @@ import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
 import { TrendBadge } from "@/components/category-bars";
-import type { Letter, LetterFinding, Severity } from "@/lib/letter";
+import type { Letter, LetterFinding } from "@/lib/letter";
+import { SEVERITY_STYLES } from "@/lib/analysis-view";
 
 // The editor's letter (E-12, v0.2 — the finale): a quiet weekly digest, the
 // narrative counterpart to the Focus map. One headline stat (this week's error
@@ -16,13 +17,9 @@ import type { Letter, LetterFinding, Severity } from "@/lib/letter";
 // where the trend carries meaning (D-14), tabular numerals; no gamification —
 // Erika speaks like a good editor, always specific, never cheerleading.
 
-// Severity → its semantic tint (DESIGN.md D-8/D-14): red high, orange medium,
-// green low — 12% alpha fills, never saturated blocks. The only colour on a recast.
-const SEVERITY: Record<Severity, { label: string; text: string; tint: string }> = {
-  high: { label: "High", text: "text-severe", tint: "bg-severe/[0.12]" },
-  medium: { label: "Medium", text: "text-medium", tint: "bg-medium/[0.12]" },
-  low: { label: "Low", text: "text-good", tint: "bg-good/[0.12]" },
-};
+// Severity styling comes whole from the shared SEVERITY_STYLES (D-14, E-18
+// criterion 6): red high, orange medium, low neutral — green is reserved for
+// resolved/mastered/improving, and here only the improving trend earns it.
 
 /** "YYYY-MM-DD" (UTC) → a short human date, e.g. "Jul 13". */
 function shortDate(ymd: string): string {
@@ -76,8 +73,8 @@ export default function LetterPage() {
       <EmptyState
         title="This week's letter"
         line="Your weekly letter arrives once Erika has analyzed a session — your trend, your best recasts, and the one thing to work on next. Nothing analyzed yet."
-        action="See your letter"
-        disabled
+        action="Go to sessions"
+        href="/"
       />
     );
   }
@@ -146,7 +143,7 @@ export default function LetterPage() {
 }
 
 function Recast({ recast }: { recast: LetterFinding }) {
-  const sev = SEVERITY[recast.severity];
+  const sev = SEVERITY_STYLES[recast.severity];
   return (
     <div data-recast data-recast-id={recast.id} className="flex flex-col gap-4 rounded-card bg-card p-5 shadow-card">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

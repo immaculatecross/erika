@@ -22,16 +22,18 @@ test.describe("mic capture", () => {
     await page.waitForTimeout(2600);
     await page.getByRole("button", { name: "Stop" }).click();
 
-    // After assembly + upload + refresh, the new take is in the list.
-    const row = page.locator('a[href^="/sessions/"]').first();
+    // After assembly + upload + refresh, the new take is in the list, carrying
+    // the sensible default name a mic take gets (RETRO-001).
+    const row = page.locator("[data-session-row]").first();
     await expect(row).toBeVisible({ timeout: 20_000 });
     await expect(row.getByText("Queued")).toBeVisible();
+    await expect(row.getByText(/^Recording \d{4}-\d{2}-\d{2} at \d{2}\.\d{2}\.wav$/)).toBeVisible();
 
     // Non-zero duration proves the chunks assembled into a decodable file that
     // ffprobe measured (not truncated to a single fragment).
-    const duration = row.locator(".tabular");
-    await expect(duration).not.toHaveText("0:00");
-    await expect(duration).toHaveText(/^0:0[1-9]$|^0:[1-5]\d$|^\d+:\d\d/);
+    const meta = row.locator("[data-session-meta]");
+    await expect(meta).not.toHaveText(/· 0:00$/);
+    await expect(meta).toHaveText(/· \d+:\d\d(:\d\d)?$/);
   });
 
   test("meter degrades to a non-animated indicator under reduced motion (criterion 3)", async ({

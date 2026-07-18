@@ -6,22 +6,15 @@ import { ChevronDown, Play } from "lucide-react";
 import { SPRING } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { formatDuration } from "@/lib/format";
-import type { AnalysisView, FindingView, Severity } from "@/lib/analysis-view";
+import { SEVERITY_STYLES, type AnalysisView, type FindingView } from "@/lib/analysis-view";
 
 // The findings report (E-4 part 2 criterion 3): a row of per-category counts
 // across the five categories, then the findings themselves — each collapsed to
 // its quote and severity, expanding in place (layout animation) to reveal the
 // correction, the explanation, and a jump-to-audio control that seeks the reused
-// player to the finding's start. Severity is the only colour and only as meaning
-// (DESIGN.md D-8/D-14): red high, orange medium, green low; counts are tabular.
-
-// Severity → its semantic tint. `low` reads as resolved/quiet green, `medium`
-// orange, `high` red — 12% alpha fills, never saturated blocks (DESIGN.md).
-const SEVERITY: Record<Severity, { label: string; dot: string; text: string; tint: string }> = {
-  high: { label: "High", dot: "bg-severe", text: "text-severe", tint: "bg-severe/[0.12]" },
-  medium: { label: "Medium", dot: "bg-medium", text: "text-medium", tint: "bg-medium/[0.12]" },
-  low: { label: "Low", dot: "bg-good", text: "text-good", tint: "bg-good/[0.12]" },
-};
+// player to the finding's start. Severity styling comes whole from the shared
+// SEVERITY_STYLES (D-14, E-18 criterion 6): red high, orange medium, low neutral
+// — green is reserved for resolved/mastered/improving.
 
 interface Props {
   view: AnalysisView;
@@ -76,7 +69,7 @@ function CountRow({ view }: { view: AnalysisView }) {
 function FindingRow({ finding, onJump }: { finding: FindingView; onJump: (startMs: number) => void }) {
   const reduced = usePrefersReducedMotion();
   const [open, setOpen] = useState(false);
-  const sev = SEVERITY[finding.severity];
+  const sev = SEVERITY_STYLES[finding.severity];
 
   return (
     <motion.li

@@ -44,8 +44,8 @@ export default function FocusPage() {
       <EmptyState
         title="Focus"
         line="Your patterns appear here once Erika has analyzed a session. Nothing analyzed yet."
-        action="See your patterns"
-        disabled
+        action="Go to sessions"
+        href="/"
       />
     );
   }
