@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { listAllFindings } from "@/lib/analysis/findings";
+import { listIncludedFindings } from "@/lib/findings-model";
 import { derivePatterns, PATTERN_THRESHOLD } from "@/lib/lessons/patterns";
 import { getLessonByPattern } from "@/lib/lessons/lessons";
 import { getMastery } from "@/lib/lessons/mastery";
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const db = getDb();
-  const patterns = derivePatterns(listAllFindings(db)).map((p) => ({
+  const patterns = derivePatterns(listIncludedFindings(db)).map((p) => ({
     key: p.key,
     category: p.category,
     count: p.count,

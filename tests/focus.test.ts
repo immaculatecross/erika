@@ -134,9 +134,14 @@ describe("buildFocusModel — only analyzed sessions count (criterion 4 data pat
     for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
   });
 
+  // An un-analysed session is one nothing has listened to: speech extracted, but
+  // no `segment_analyses` witness and so no findings. (Before E-17 this seed wrote
+  // findings AND a complete witness and then withheld only the job row — a state
+  // the cascade cannot produce, since findings are written by a run.)
   function seed(db: Db, id: string, analyzed: boolean) {
     createSession(db, { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
     upsertSegment(db, { sessionId: id, idx: 0, startMs: 0, endMs: HOUR, contentHash: `${id}-h0` });
+    if (!analyzed) return;
     persistSegmentFindings(db, {
       sessionId: id,
       contentHash: `${id}-h0`,
@@ -144,10 +149,8 @@ describe("buildFocusModel — only analyzed sessions count (criterion 4 data pat
       deepDone: true,
       findings: [{ quote: "q", correction: "c", category: "grammar", explanation: "e", severity: "high", startMs: 0, endMs: 500 }],
     });
-    if (analyzed) {
-      const job = enqueueAnalysis(db, id);
-      db.prepare("UPDATE analysis_jobs SET state='done', progress=1 WHERE id=?").run(job.id);
-    }
+    const job = enqueueAnalysis(db, id);
+    db.prepare("UPDATE analysis_jobs SET state='done', progress=1 WHERE id=?").run(job.id);
   }
 
   it("is empty over a fresh DB — zero sessions, zero hours, no NaN", () => {
@@ -160,7 +163,7 @@ describe("buildFocusModel — only analyzed sessions count (criterion 4 data pat
   it("counts a done-analysis session and ignores one still un-analyzed", () => {
     const db = freshDb();
     seed(db, "done-one", true);
-    seed(db, "pending-one", false); // has speech + findings, but no completed analysis
+    seed(db, "pending-one", false); // has speech, but nothing has analysed it
     const model = buildFocusModel(db);
     expect(model.analyzedSessions).toBe(1);
     expect(model.speechHours).toBe(1); // only the analyzed session's hour

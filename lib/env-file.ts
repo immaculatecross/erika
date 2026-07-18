@@ -11,19 +11,35 @@ import path from "node:path";
 // at the first model call, as "OPENAI_API_KEY is not set" inside a job.
 //
 // An explicit loader is used rather than `node --env-file`: `--env-file` hard-fails
-// when the file is absent (ingest-only runs legitimately have no key file), and
-// `--env-file-if-exists` needs Node 20.12 while the repo's floor is Node 20. A
-// twenty-line parser is also directly unit-testable, which a runtime flag is not.
-// Documented in the README.
+// when the file is absent, and a missing `.env.local` must produce THIS module's
+// message ("put it in .env.local, see .env.example") rather than a Node usage
+// error about a flag the user never typed. `--env-file-if-exists` would avoid that
+// but needs Node 20.12, while the repo's floor is Node 20. A short parser is also
+// directly unit-testable, which a runtime flag is not. Documented in the README.
+//
+// (The original rationale here — "ingest-only runs legitimately have no key file" —
+// stopped being true in the same PR that wrote it: `startupEnvError` below now
+// exits the worker non-zero without a key, so there is no keyless run to protect.)
 
 /** The file the app and the worker both take their secrets from (never committed). */
 export const ENV_LOCAL = ".env.local";
 
 /**
  * Parse dotenv-style text into key/value pairs. Deliberately small: `KEY=value`
- * one per line, an optional `export ` prefix, `#` comments, blank lines, and
- * matching single/double quotes stripped from the value. No interpolation, no
- * multi-line values — anything fancier belongs in a real secrets store, not here.
+ * one per line, an optional `export ` prefix, `#` comments (whole-line and
+ * trailing), blank lines, and matching single/double quotes stripped from the
+ * value. No interpolation, no multi-line values — anything fancier belongs in a
+ * real secrets store, not here.
+ *
+ * Comments next to a value (E-16 review advisory 4; PR #24 review advisory 1): a
+ * QUOTED value ends at its closing quote and anything after it — `KEY="sk-abc" #
+ * note` — is dropped; inside the quotes a `#` is data (`KEY="a#b"` is `a#b`). An
+ * UNQUOTED value is cut at a `#` that starts the value or follows whitespace —
+ * `KEY=sk-abc # note` is `sk-abc`, `KEY= # note` is empty — while a `#` inside a
+ * token is data (`sk-ab#cd`; a secret may legitimately contain one). Anything
+ * less yields a silently corrupted secret from a common dotenv habit, which
+ * `startupEnvError` waves through as non-empty and OpenAI rejects as a 401 at the
+ * first model call.
  */
 export function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -39,12 +55,15 @@ export function parseEnvFile(text: string): Record<string, string> {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
     let value = line.slice(eq + 1).trim();
     const quote = value[0];
-    if (
-      (quote === '"' || quote === "'") &&
-      value.endsWith(quote) &&
-      value.length > 1
-    ) {
-      value = value.slice(1, -1);
+    const close = quote === '"' || quote === "'" ? value.indexOf(quote, 1) : -1;
+    if (close > 0) {
+      // Quoted: the value is what sits inside the pair; a trailing comment (or
+      // any other stray text) after the closing quote is not part of it.
+      value = value.slice(1, close);
+    } else {
+      // Unquoted (or an unterminated quote, kept verbatim): a `#` at the start
+      // or after whitespace begins a comment; inside a token it is data.
+      value = value.replace(/(^|\s)#.*$/, "").trim();
     }
     out[key] = value;
   }

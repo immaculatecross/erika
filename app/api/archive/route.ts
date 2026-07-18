@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { listAllFindingsWithSession } from "@/lib/analysis/findings";
+import { listIncludedFindingsWithSession } from "@/lib/findings-model";
 import { buildEntries, CATEGORY_ORDER, SEVERITY_ORDER } from "@/lib/archive";
 
 // The Speech archive read route (E-11). Pure view over existing findings joined
@@ -11,6 +11,6 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const db = getDb();
-  const entries = buildEntries(listAllFindingsWithSession(db));
+  const entries = buildEntries(listIncludedFindingsWithSession(db));
   return NextResponse.json({ entries, categories: CATEGORY_ORDER, severities: SEVERITY_ORDER });
 }

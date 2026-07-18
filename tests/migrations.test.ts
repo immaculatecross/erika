@@ -116,3 +116,34 @@ describe("migrations runner", () => {
     migrated.close();
   });
 });
+
+// E-17 criterion 3: docs/schema.md is bound to the migration ritual mechanically,
+// not by good intentions. A schema doc that lags the schema is worse than none —
+// it is believed, and it is wrong. Adding a migration therefore fails the suite
+// until the doc names it and states the new latest version.
+describe("docs/schema.md tracks the migrations", () => {
+  const doc = fs.readFileSync(path.join(process.cwd(), "docs", "schema.md"), "utf8");
+
+  it("names every migration by version and name", () => {
+    for (const m of migrations) {
+      expect(doc).toContain(`\`${m.name}\``);
+      expect(doc).toMatch(new RegExp(`\\|\\s*${m.version}\\s*\\|\\s*\`${m.name}\``));
+    }
+  });
+
+  it("states the current latest version", () => {
+    const latest = Math.max(...migrations.map((m) => m.version));
+    expect(doc).toContain(`Latest version: v${latest}.`);
+  });
+
+  it("documents every table the schema actually creates", () => {
+    const db = openDatabase(tmpDbPath());
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]
+    )
+      .map((r) => r.name)
+      .filter((n) => !n.startsWith("sqlite_") && n !== "_migrations");
+    for (const t of tables) expect(doc).toContain(`\`${t}\``);
+    db.close();
+  });
+});

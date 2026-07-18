@@ -40,16 +40,26 @@ describe("formatUsd", () => {
   });
 });
 
-describe("segmentTally (E-16b criterion 4)", () => {
+describe("segmentTally (E-16b criterion 4, corrected by E-17 criterion 5)", () => {
   // "No errors found" over 14 of 15 segments is a different claim from the same
-  // words over all 15. A run that lost a segment has to say so.
-  it("stays silent when every segment was read", () => {
-    expect(segmentTally(15, 0)).toBeNull();
-    expect(segmentTally(0, 0)).toBeNull();
+  // words over all 15. A run that lost a segment — or never reached it — says so.
+  it("stays silent when every segment was analysed and none was lost", () => {
+    expect(segmentTally(15, 15, 0)).toBeNull();
+    expect(segmentTally(0, 0, 0)).toBeNull();
   });
 
   it("reports how many of how many were analysed", () => {
-    expect(segmentTally(15, 1)).toBe("14 of 15 segments analysed · 1 unreadable");
-    expect(segmentTally(3, 3)).toBe("0 of 3 segments analysed · 3 unreadable");
+    expect(segmentTally(15, 14, 1)).toBe("14 of 15 segments analysed · 1 unreadable");
+    expect(segmentTally(3, 0, 3)).toBe("0 of 3 segments analysed · 3 unreadable");
+  });
+
+  // The halted run the old `segmentCount − unreadableCount` derivation lied about:
+  // 6 segments, 1 analysed, 1 unreadable, 4 never reached — it claimed "5 of 6".
+  it("counts what was analysed on a halted run rather than deriving it", () => {
+    expect(segmentTally(6, 1, 1)).toBe("1 of 6 segments analysed · 1 unreadable");
+  });
+
+  it("speaks on an incomplete run even when nothing was unreadable", () => {
+    expect(segmentTally(6, 2, 0)).toBe("2 of 6 segments analysed");
   });
 });

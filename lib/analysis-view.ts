@@ -59,6 +59,11 @@ export interface AnalysisView {
    * report "no findings", which reads as a clean bill of health (E-16b criterion 5).
    */
   segmentCount: number;
+  /**
+   * Segments a model actually heard — counted from the analysis witnesses by the
+   * canonical read-model, never inferred by subtraction (E-17 criterion 1/5).
+   */
+  analysedCount: number;
   /** Segments whose model reply could not be read (E-16b criterion 4). */
   unreadableCount: number;
   /** No worker is draining this run's queue (E-16b criterion 2). */
@@ -66,14 +71,28 @@ export interface AnalysisView {
 }
 
 /**
- * The honest one-line tally under a finished run, or null when there is nothing
- * to qualify. A run that lost a segment must say so — "no findings" over 14 of 15
- * segments is a different claim from "no findings" over all 15.
+ * The honest one-line tally under a run, or null when the run covered everything
+ * and lost nothing. "No findings" over 14 of 15 segments is a different claim from
+ * "no findings" over all 15 — and so is "no findings" over the 2 of 6 a budget
+ * halt reached.
+ *
+ * `analysedCount` is counted, not derived. It used to be `segmentCount −
+ * unreadableCount`, which is exact on a run that finished but credits every
+ * segment a halted run never touched: 6 segments with 1 analysed, 1 unreadable and
+ * 4 never reached reported "5 of 6 segments analysed · 1 unreadable" (E-16 review,
+ * advisory 2). The count now comes from the analysis witnesses via
+ * `sessionSegmentCounts`, so it is true in every run state.
  */
-export function segmentTally(segmentCount: number, unreadableCount: number): string | null {
-  if (unreadableCount <= 0) return null;
-  const analysed = Math.max(0, segmentCount - unreadableCount);
-  return `${analysed} of ${segmentCount} segments analysed · ${unreadableCount} unreadable`;
+export function segmentTally(
+  segmentCount: number,
+  analysedCount: number,
+  unreadableCount: number,
+): string | null {
+  if (segmentCount <= 0) return null;
+  const analysed = Math.min(Math.max(0, analysedCount), segmentCount);
+  if (analysed >= segmentCount && unreadableCount <= 0) return null;
+  const line = `${analysed} of ${segmentCount} segments analysed`;
+  return unreadableCount > 0 ? `${line} · ${unreadableCount} unreadable` : line;
 }
 
 /** Human labels for each analysis stage the orb shows while a run is in flight. */

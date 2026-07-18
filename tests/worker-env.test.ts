@@ -45,6 +45,39 @@ describe("parseEnvFile", () => {
   it("ignores lines that are not KEY=value", () => {
     expect(parseEnvFile("no-equals\n=novalue\n1BAD=x\n")).toEqual({});
   });
+
+  // E-16 review, advisory 4: `KEY=sk-abc # note` yielded the literal "sk-abc # note".
+  // `startupEnvError` saw a non-empty string and let the worker boot, and OpenAI
+  // then rejected it as a 401 at the first model call — a silently corrupted secret
+  // from a common dotenv habit, waved through by the check that exists to catch it.
+  it("strips a trailing comment from an unquoted value", () => {
+    expect(parseEnvFile("OPENAI_API_KEY=sk-abc # my key\n")).toEqual({ OPENAI_API_KEY: "sk-abc" });
+    expect(parseEnvFile("A=b\t# tabbed\n")).toEqual({ A: "b" });
+  });
+
+  it("keeps a # that is part of the value, not a comment", () => {
+    // Inside quotes it is data; unquoted with no preceding space it is data too
+    // (a secret may legitimately contain one).
+    expect(parseEnvFile('A="a # b"\n')).toEqual({ A: "a # b" });
+    expect(parseEnvFile("A='a # b'\n")).toEqual({ A: "a # b" });
+    expect(parseEnvFile("A=sk-ab#cd\n")).toEqual({ A: "sk-ab#cd" });
+  });
+
+  // PR #24 review, advisory 1: two comment shapes still corrupted the value. A
+  // QUOTED value with a trailing comment failed the ends-with-quote test and fell
+  // into the comment-strip branch, keeping the quote characters ('"sk-abc"'); an
+  // EMPTY value with a comment kept the comment text itself ("# note").
+  it("strips a trailing comment after a quoted value, quotes and all", () => {
+    expect(parseEnvFile('OPENAI_API_KEY="sk-abc" # note\n')).toEqual({ OPENAI_API_KEY: "sk-abc" });
+    expect(parseEnvFile("A='v' # note\n")).toEqual({ A: "v" });
+    expect(parseEnvFile('A="a # b" # note\n')).toEqual({ A: "a # b" });
+  });
+
+  it("an empty value followed by a comment is empty, not the comment text", () => {
+    expect(parseEnvFile("KEY= # note\n")).toEqual({ KEY: "" });
+    expect(parseEnvFile("KEY=#note\n")).toEqual({ KEY: "" });
+    expect(parseEnvFile("KEY=\n")).toEqual({ KEY: "" });
+  });
 });
 
 describe("loadEnvLocal", () => {

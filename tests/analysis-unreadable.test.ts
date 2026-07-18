@@ -8,10 +8,10 @@ import { upsertSegment } from "@/lib/segments";
 import { renditionCachePath, segmentPath } from "@/lib/audio-storage";
 import { runAnalysisJob, enqueueAnalysis } from "@/lib/analysis/cascade";
 import {
-  countUnreadableSegments,
   getSegmentAnalysis,
   listFindings,
 } from "@/lib/analysis/findings";
+import { sessionSegmentCounts } from "@/lib/findings-model";
 import {
   describeResponseShape,
   ModelParseError,
@@ -123,7 +123,7 @@ describe.each([
     expect(job.progress).toBe(1);
     // The two good segments were analysed and kept; only h1 was lost.
     expect(listFindings(db, "s1").map((f) => f.contentHash)).toEqual(["h0", "h2"]);
-    expect(countUnreadableSegments(db, "s1")).toBe(1);
+    expect(sessionSegmentCounts(db, "s1")).toMatchObject({ segmentCount: 3, analysedCount: 2, unreadableCount: 1 });
     db.close();
   });
 

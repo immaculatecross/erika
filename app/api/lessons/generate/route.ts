@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { listAllFindings } from "@/lib/analysis/findings";
+import { listIncludedFindings } from "@/lib/findings-model";
 import { derivePatterns } from "@/lib/lessons/patterns";
 import { generateLessonForPattern } from "@/lib/lessons/generate";
 import { openAiTextModel } from "@/lib/lessons/text-model";
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   const db = getDb();
   const body = (await request.json().catch(() => ({}))) as { patternKey?: unknown };
   const patternKey = typeof body.patternKey === "string" ? body.patternKey : "";
-  const pattern = derivePatterns(listAllFindings(db)).find((p) => p.key === patternKey);
+  const pattern = derivePatterns(listIncludedFindings(db)).find((p) => p.key === patternKey);
   if (!pattern) return NextResponse.json({ error: "No such recurring pattern." }, { status: 404 });
 
   try {

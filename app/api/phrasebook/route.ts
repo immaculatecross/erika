@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { listAllFindings } from "@/lib/analysis/findings";
+import { listIncludedFindings } from "@/lib/findings-model";
 import { listCards } from "@/lib/cards";
 import { buildEntries, CATEGORY_ORDER } from "@/lib/phrasebook";
 
@@ -13,6 +13,6 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const db = getDb();
   const inDeck = new Set(listCards(db).map((c) => c.findingId));
-  const entries = buildEntries(listAllFindings(db), inDeck);
+  const entries = buildEntries(listIncludedFindings(db), inDeck);
   return NextResponse.json({ entries, categories: CATEGORY_ORDER });
 }

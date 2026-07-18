@@ -1,9 +1,6 @@
 import type { Db } from "./db";
-import { listSessions } from "./sessions";
-import { getAnalysisJobBySession } from "./analysis/cascade";
-import { listSegments } from "./segments";
-import { listFindings } from "./analysis/findings";
 import type { Category, Severity } from "./analysis/findings";
+import { listAnalysedSessions, listIncludedFindings } from "./findings-model";
 import { computeFocus, SEVERITY_WEIGHT, CATEGORY_ORDER, type AnalyzedSession, type TrendDirection } from "./focus";
 
 // The editor's letter (E-12, v0.2 milestone 5 — the finale). A quiet weekly digest,
@@ -252,29 +249,38 @@ export function computeLetter(sessions: readonly LetterSession[], week?: string)
 }
 
 /**
- * Read every *analyzed* session (its most recent analysis job is `done`, per
- * cascade.ts) into the pure input rows: its capture date, speech time (Σ segment
- * durations) and its whole findings. A session with speech but no completed
- * analysis contributes neither hours nor findings. Typed reads only — no SQL
- * beyond the lib accessors, no model calls, no writes.
+ * Read every *analysed* session into the pure input rows via the canonical
+ * read-model (lib/findings-model.ts): its capture date, its analysed speech time,
+ * and its whole findings (the letter quotes them, so it needs the rows, not the
+ * tallies). The scope — and with it the halted / re-analysis-in-flight semantics —
+ * is the same one Focus, the Phrasebook, the Archive, the lesson patterns and card
+ * generation read, so the letter can no longer report a different week from them.
+ *
+ * TWO queries for the whole database instead of three per session. The ISO-week
+ * bucketing stays in the pure layer above: SQLite has no ISO-8601 week function
+ * (`strftime('%W')` is not ISO), and `isoWeekStart` is unit-tested against
+ * hand-computed boundaries.
  */
 export function collectLetterSessions(db: Db): LetterSession[] {
-  const rows: LetterSession[] = [];
-  for (const s of listSessions(db)) {
-    const job = getAnalysisJobBySession(db, s.id);
-    if (!job || job.state !== "done") continue;
-    const speechMs = listSegments(db, s.id).reduce((sum, seg) => sum + seg.durationMs, 0);
-    const findings: LetterFinding[] = listFindings(db, s.id).map((f) => ({
+  const bySession = new Map<string, LetterFinding[]>();
+  for (const f of listIncludedFindings(db)) {
+    const bucket = bySession.get(f.sessionId) ?? [];
+    bucket.push({
       id: f.id,
       quote: f.quote,
       correction: f.correction,
       explanation: f.explanation,
       category: f.category,
       severity: f.severity,
-    }));
-    rows.push({ id: s.id, createdAt: s.createdAt, speechMs, findings });
+    });
+    bySession.set(f.sessionId, bucket);
   }
-  return rows;
+  return listAnalysedSessions(db).map((s) => ({
+    id: s.id,
+    createdAt: s.createdAt,
+    speechMs: s.analysedSpeechMs,
+    findings: bySession.get(s.id) ?? [],
+  }));
 }
 
 /** The letter for the whole database — what the read route serves. */

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "./db";
+import { INCLUDED_FINDING_SCOPE } from "./findings-model";
 import { schedule, FRESH_EASE, type Grade } from "./srs";
 import { cardBack, type CardView, type CardBrowserView } from "./cards-view";
 
@@ -97,13 +98,20 @@ interface GeneratableFinding {
  * first review. Idempotent: findings already carrying a card are skipped by the
  * `NOT EXISTS` filter and, belt-and-braces, the `finding_id` UNIQUE key + INSERT
  * OR IGNORE makes a concurrent second run a no-op. Returns the number created.
+ *
+ * Which findings are eligible is NOT decided here: `INCLUDED_FINDING_SCOPE` is the
+ * canonical read-model's scope (lib/findings-model.ts, E-17), the same one the
+ * Phrasebook, the Archive, the lesson patterns, Focus and the letter read. The two
+ * `NOT EXISTS` clauses on top are deck bookkeeping — already carded, or tombstoned
+ * by a deliberate delete — not a second opinion about what a finding is.
  */
 export function generateCards(db: Db): number {
   const findings = db
     .prepare(
       `SELECT f.id, f.session_id, f.quote, f.correction, f.explanation, f.category, f.start_ms
          FROM findings f
-        WHERE NOT EXISTS (SELECT 1 FROM cards c WHERE c.finding_id = f.id)
+        WHERE ${INCLUDED_FINDING_SCOPE}
+          AND NOT EXISTS (SELECT 1 FROM cards c WHERE c.finding_id = f.id)
           AND NOT EXISTS (SELECT 1 FROM deleted_findings d WHERE d.finding_id = f.id)`,
     )
     .all() as GeneratableFinding[];

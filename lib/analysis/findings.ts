@@ -42,7 +42,9 @@ export interface NewFinding {
   endMs: number;
 }
 
-interface FindingRow {
+/** The raw `findings` row shape — exported so lib/findings-model.ts, which owns
+ *  the canonical read scopes (E-17), maps rows with the same `toFinding` as here. */
+export interface FindingRow {
   id: string;
   session_id: string;
   content_hash: string;
@@ -55,7 +57,7 @@ interface FindingRow {
   end_ms: number;
 }
 
-function toFinding(r: FindingRow): Finding {
+export function toFinding(r: FindingRow): Finding {
   return {
     id: r.id,
     sessionId: r.session_id,
@@ -200,18 +202,6 @@ export function isSegmentComplete(a: SegmentAnalysis | null): boolean {
   return !!a && !a.unreadable && (!a.flagged || a.deepDone);
 }
 
-/** How many of a session's segments are recorded unreadable — the honest count. */
-export function countUnreadableSegments(db: Db, sessionId: string): number {
-  const r = db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM segments s
-         JOIN segment_analyses a ON a.content_hash = s.content_hash
-        WHERE s.session_id = ? AND a.unreadable = 1`,
-    )
-    .get(sessionId) as { n: number };
-  return r.n;
-}
-
 /** All findings recorded for a content hash (from any session). */
 export function findingsForHash(db: Db, contentHash: string): Finding[] {
   const rows = db
@@ -228,16 +218,12 @@ export function listFindings(db: Db, sessionId: string): Finding[] {
   return rows.map(toFinding);
 }
 
-/**
- * Every finding across all sessions — the Phrasebook's full recast library (E-9).
- * Newest first (by insertion time), ties broken by id for a stable total order.
- */
-export function listAllFindings(db: Db): Finding[] {
-  const rows = db
-    .prepare("SELECT * FROM findings ORDER BY created_at DESC, id")
-    .all() as FindingRow[];
-  return rows.map(toFinding);
-}
+// The cross-session readers that used to live here (`listAllFindings`,
+// `listAllFindingsWithSession`) now live in lib/findings-model.ts as
+// `listIncludedFindings` / `listIncludedFindingsWithSession`: reading every row in
+// the table flat was one of the six disagreeing answers E-17 consolidated, and the
+// scope belongs with the definition, not with the row mapper. This module stays
+// the row-level data layer (writes, the segment cache, one session's findings).
 
 /** A finding enriched with its session's capture date and name — for the Archive. */
 export interface FindingWithSession extends Finding {
@@ -245,27 +231,6 @@ export interface FindingWithSession extends Finding {
   sessionCreatedAt: string;
   /** The owning session's original filename — the group header label. */
   sessionFilename: string;
-}
-
-/**
- * Every finding across all sessions joined to its session's capture date and
- * name — the Speech archive's chronological source (E-11). Ordering (by session
- * date, then timestamp, newest session first) is the pure archive builder's job,
- * so this returns a stable base order only. Read-only; no model, no writes.
- */
-export function listAllFindingsWithSession(db: Db): FindingWithSession[] {
-  const rows = db
-    .prepare(
-      `SELECT f.*, s.created_at AS session_created_at, s.original_filename AS session_filename
-       FROM findings f JOIN sessions s ON s.id = f.session_id
-       ORDER BY s.created_at DESC, f.session_id, f.start_ms, f.id`,
-    )
-    .all() as (FindingRow & { session_created_at: string; session_filename: string })[];
-  return rows.map((r) => ({
-    ...toFinding(r),
-    sessionCreatedAt: r.session_created_at,
-    sessionFilename: r.session_filename,
-  }));
 }
 
 function sessionHasHash(db: Db, sessionId: string, contentHash: string): boolean {

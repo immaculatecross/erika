@@ -6,6 +6,7 @@ Master the language you already speak. Local-first web app: give it your real sp
 - **DESIGN.md** — the binding design constitution.
 - **FEATURES.md** — milestones and what's next.
 - **DECISIONS.md** — settled calls.
+- **docs/schema.md** — the database, table by table, and the migration history.
 
 ## Setup
 
@@ -20,7 +21,8 @@ npm run dev                       # serves the app on http://localhost:3000
 
 The SQLite database is created automatically at `data/erika.db` on first run
 (the `data/` directory is gitignored). Point `ERIKA_DB_PATH` at another file to
-override it.
+override it. Its tables and their relationships are documented in
+[docs/schema.md](docs/schema.md), which every migration PR updates.
 
 ## Commands
 
