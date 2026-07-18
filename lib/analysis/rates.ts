@@ -42,3 +42,48 @@ export function assumedFlagRate(raw: string | undefined = process.env.ANALYSIS_F
 export function callCost(model: ModelId, durationMs: number): number {
   return (durationMs / 60_000) * RATES[model].usdPerAudioMinute;
 }
+
+// ---- text model (E-6 Micro-lessons) -------------------------------------
+//
+// Lesson generation and rewrite grading call an OpenAI *text* chat model. Text
+// models bill on TOKENS (prompt + completion), not audio-minutes, so they carry
+// their own rate shape and cost function — but their spend records into the SAME
+// spend_ledger and counts against the SAME monthly cap as the audio cascade
+// (D-10). Model id is documented here; the rates are founding-era approximations
+// to recalibrate against real `usage`, exactly like the audio numbers above.
+
+export const TEXT_MODEL = "gpt-4.1-mini" as const;
+export type TextModelId = typeof TEXT_MODEL;
+
+/** Every model that can bill into the shared ledger — audio (E-4) or text (E-6). */
+export type BillableModelId = ModelId | TextModelId;
+
+export interface TextModelRate {
+  usdPerPromptToken: number;
+  usdPerCompletionToken: number;
+}
+
+// ≈ $0.40 per 1M input tokens, $1.60 per 1M output tokens — a cheap, capable
+// chat model, apt for short lessons and one-line rewrite grades.
+export const TEXT_RATES: Record<TextModelId, TextModelRate> = {
+  "gpt-4.1-mini": {
+    usdPerPromptToken: 0.4 / 1_000_000,
+    usdPerCompletionToken: 1.6 / 1_000_000,
+  },
+};
+
+/** USD for a text call given its token usage, per the rates table. */
+export function textCallCost(model: TextModelId, promptTokens: number, completionTokens: number): number {
+  const r = TEXT_RATES[model];
+  return promptTokens * r.usdPerPromptToken + completionTokens * r.usdPerCompletionToken;
+}
+
+/**
+ * A rough upper-bound token count for a prompt string, used only to pre-check the
+ * budget *before* a call (~4 chars/token, the common English heuristic). The real
+ * charge is always recomputed from the API's actual `usage`; this only has to be
+ * safe enough that a call which would breach the cap is refused, never billed.
+ */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}

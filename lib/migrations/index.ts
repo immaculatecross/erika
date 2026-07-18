@@ -203,4 +203,38 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-6 Micro-lessons (part 1): the lesson engine's persistence.
+    //
+    // `lessons` — one generated grammar lesson per recurring error *pattern*. A
+    //   pattern key names the grouping the lesson targets; for v1 a pattern is a
+    //   category with >= 3 findings, so the key is `category:<category>` (see
+    //   lib/lessons/patterns.ts). `pattern_key` is UNIQUE so a lesson is generated
+    //   once per pattern and re-opening it is a cache hit — no re-generation, no
+    //   re-bill (WO criterion 4). `exercises` holds the typed exercise list as
+    //   JSON (multiple_choice / fill_in / rewrite). No session FK: a lesson is
+    //   derived from the whole finding history, not one session, and outlives any
+    //   single session delete — like the hash-keyed spend ledger.
+    // `lesson_mastery` — a per-pattern 0..1 mastery value, updated on lesson
+    //   completion by the documented EMA rule (lib/lessons/mastery.ts).
+    version: 7,
+    name: "lessons_and_mastery",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE lessons (
+          id          TEXT PRIMARY KEY,
+          pattern_key TEXT NOT NULL UNIQUE,
+          explanation TEXT NOT NULL,
+          exercises   TEXT NOT NULL,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE lesson_mastery (
+          pattern_key TEXT PRIMARY KEY,
+          mastery     REAL NOT NULL,
+          updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
