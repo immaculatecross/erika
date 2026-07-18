@@ -8,9 +8,10 @@ import type { TtsModelClient } from "@/lib/render/tts-model";
 // E-21 render-once engine (D-13: the TTS client is mocked; no test makes a network
 // call). Covers: render once → exactly one model call, one ledger row, one
 // rendition row, a file on disk; replay → zero further calls or rows; the
-// INSERT-first guard so a concurrent double-generate cannot double-bill; the budget
-// cap refusing truthfully with no call and no row; migration v12 shape and its FK
-// cascade; and deletion coherence (row cascades, the file is orphan-safe).
+// lease-before-spend ordering so a concurrent double-generate makes exactly ONE
+// provider call and bills once (the loser calls nothing — D-15); the budget cap
+// refusing truthfully with no call and no surviving row; migration v12 shape and
+// its FK cascade; and deletion coherence (row cascades, the file is orphan-safe).
 
 let root: string;
 let openDatabase: typeof import("@/lib/db").openDatabase;
@@ -128,7 +129,7 @@ describe("render-once engine", () => {
     db.close();
   });
 
-  it("a concurrent double-generate cannot double-bill (INSERT-first guard)", async () => {
+  it("a concurrent double-generate makes ONE provider call, bills once (lease-before-spend)", async () => {
     const db = freshDb();
     const finding = seedFinding(db, "s3");
     const client = mockClient();
@@ -137,9 +138,35 @@ describe("render-once engine", () => {
       renderCorrection(db, client, finding),
       renderCorrection(db, client, finding),
     ]);
-    // Exactly one transaction won the finding_id row and recorded the charge.
+    // Exactly one request won the finding_id lease, called the provider, and billed;
+    // the loser made ZERO provider call. This is the money-path invariant (D-15):
+    // recorded spend == actual spend even under concurrent Generate. (Pre-repair, the
+    // provider call happened before the claim, so both raced and client.calls was 2
+    // while ledger/rendition were still 1 — this assertion is what catches that.)
+    expect(client.calls).toBe(1);
     expect([a.generated, b.generated].filter(Boolean)).toHaveLength(1);
     expect(ledgerCount(db)).toBe(1);
+    expect(renditionCount(db)).toBe(1);
+    // The loser was handed the winner's rendition, not a second one.
+    expect(a.rendition.path).toBe(b.rendition.path);
+    db.close();
+  });
+
+  it("the losing racer makes zero provider call and bills nothing", async () => {
+    const db = freshDb();
+    const finding = seedFinding(db, "s3c");
+    const client = mockClient();
+
+    // First Generate wins the lease and renders (1 call). A second, overlapping
+    // Generate must lose the claim and return without touching the provider.
+    const first = await renderCorrection(db, client, finding);
+    expect(first.generated).toBe(true);
+    expect(client.calls).toBe(1);
+
+    const loser = await renderCorrection(db, client, finding);
+    expect(loser.generated).toBe(false);
+    expect(client.calls).toBe(1); // no extra call
+    expect(ledgerCount(db)).toBe(1); // no extra ledger row
     expect(renditionCount(db)).toBe(1);
     db.close();
   });
