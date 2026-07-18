@@ -1,8 +1,9 @@
 import type { Db } from "./db";
 import type { Category, Severity } from "./analysis/findings";
-import { findingTallies, listAnalysedSessions } from "./findings-model";
+import { findingTallies, listAnalysedSessions, listIncludedFindingsWithSession } from "./findings-model";
 import { CATEGORY_ORDER } from "./analysis-view";
 import { resolvedSlipCount } from "./slips";
+import { slipHourDistribution, type SlipHourDistribution } from "./slip-hours";
 
 // The Focus map aggregation (E-7, v0.2 milestone 1). Pure metric math over the
 // data v0.1 already produced — no model calls, no writes, no new capture. The
@@ -195,9 +196,30 @@ export function buildFocusModel(db: Db): FocusModel {
 export interface FocusPayload extends FocusModel {
   /** Recurring mistakes now resolved — mastery, the only place green belongs. */
   resolvedSlips: number;
+  /** When in the day the slips fall — the "when you slip" distribution (E-22). */
+  slipHours: SlipHourDistribution;
+}
+
+/**
+ * The findings, bucketed by the UTC hour they were spoken (E-22 criterion 3). The
+ * scope is the canonical INCLUDED_FINDING_SCOPE — the same set the rest of Focus
+ * counts — read once through `listIncludedFindingsWithSession`, which already
+ * carries each finding's session capture time. The bucketing itself is pure.
+ */
+function collectSlipHours(db: Db): SlipHourDistribution {
+  return slipHourDistribution(
+    listIncludedFindingsWithSession(db).map((f) => ({
+      sessionCreatedAt: f.sessionCreatedAt,
+      startMs: f.startMs,
+    })),
+  );
 }
 
 /** The Focus model for the whole database, plus the resolved-slip count (E-20). */
 export function buildFocusPayload(db: Db): FocusPayload {
-  return { ...buildFocusModel(db), resolvedSlips: resolvedSlipCount(db) };
+  return {
+    ...buildFocusModel(db),
+    resolvedSlips: resolvedSlipCount(db),
+    slipHours: collectSlipHours(db),
+  };
 }
