@@ -9,7 +9,7 @@ import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
 import { Sparkline } from "@/components/sparkline";
 import { CategoryBars, TrendBadge } from "@/components/category-bars";
-import type { FocusModel } from "@/lib/focus";
+import type { FocusPayload } from "@/lib/focus";
 
 // The Focus screen (E-7, v0.2): how often do I make each kind of mistake, is it
 // getting better, and what should I work on next — the whole answer on one
@@ -18,13 +18,13 @@ import type { FocusModel } from "@/lib/focus";
 // next. With nothing analyzed yet it keeps a quiet DESIGN-compliant empty state.
 export default function FocusPage() {
   const reduced = usePrefersReducedMotion();
-  const [model, setModel] = useState<FocusModel | null>(null);
+  const [model, setModel] = useState<FocusPayload | null>(null);
 
   useEffect(() => {
     let alive = true;
     fetch("/api/focus")
       .then((r) => r.json())
-      .then((m: FocusModel) => alive && setModel(m))
+      .then((m: FocusPayload) => alive && setModel(m))
       .catch(() => alive && setModel(null));
     return () => {
       alive = false;
@@ -89,6 +89,32 @@ export default function FocusPage() {
             <Sparkline values={model.trend.map((t) => t.ratePerHour)} />
             <TrendBadge trend={model.overallTrend} />
           </div>
+        </motion.section>
+
+        <motion.section variants={staggerItem(reduced)}>
+          <Link
+            href="/slips"
+            data-slips-link
+            className="flex items-center justify-between gap-4 rounded-card bg-card p-6 shadow-card transition-transform hover:bg-hairline active:scale-[0.99]"
+          >
+            <div>
+              <p
+                data-resolved-slips
+                className={`tabular text-[34px] font-bold leading-none tracking-tight ${
+                  model.resolvedSlips > 0 ? "text-good" : "text-ink"
+                }`}
+              >
+                {model.resolvedSlips}
+              </p>
+              <p className="mt-2 text-[15px] text-secondary">
+                {model.resolvedSlips === 1 ? "recurring mistake resolved" : "recurring mistakes resolved"}
+              </p>
+              <p className="mt-1 text-[13px] text-secondary">
+                Every occurrence and its drill history, one slip at a time.
+              </p>
+            </div>
+            <ArrowRight size={20} strokeWidth={1.5} aria-hidden className="shrink-0 text-secondary" />
+          </Link>
         </motion.section>
 
         <motion.section variants={staggerItem(reduced)} className="flex flex-col gap-4">
