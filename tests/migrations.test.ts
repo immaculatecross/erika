@@ -81,6 +81,25 @@ describe("migrations runner", () => {
     db.close();
   });
 
+  it("v13 adds ask_notes keyed by finding_id, cascading on finding delete (E-23)", () => {
+    const db = openDatabase(tmpDbPath());
+    const cols = (db.prepare("PRAGMA table_info(ask_notes)").all() as { name: string; pk: number }[]);
+    expect(cols.map((c) => c.name)).toEqual(
+      expect.arrayContaining(["finding_id", "note", "cited_ids", "cost_usd", "created_at"]),
+    );
+    expect(cols.find((c) => c.name === "finding_id")?.pk).toBe(1);
+
+    // A note cascades away when its finding (hence its session) is deleted.
+    db.prepare(`INSERT INTO sessions (id, original_filename, format, size_bytes, duration_seconds)
+                VALUES ('s1', 't.wav', 'wav', 1, 60)`).run();
+    db.prepare(`INSERT INTO findings (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
+                VALUES ('f1', 's1', 'h', 'q', 'c', 'grammar', 'why', 'low', 0, 1)`).run();
+    db.prepare("INSERT INTO ask_notes (finding_id, note, cited_ids, cost_usd) VALUES ('f1', 'n', '[\"f2\"]', 0.001)").run();
+    db.prepare("DELETE FROM sessions WHERE id = 's1'").run();
+    expect((db.prepare("SELECT COUNT(*) AS n FROM ask_notes").get() as { n: number }).n).toBe(0);
+    db.close();
+  });
+
   it("v8 collapses pre-existing duplicate findings so the unique index can build", () => {
     // A database written before the lease landed may already carry duplicates
     // from a double-run. Migrating must dedupe rather than fail to apply.

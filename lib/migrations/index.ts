@@ -405,4 +405,41 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-23 Ask Erika (the v0.3 finale): "ask for more" on a finding returns a
+    // persisted deeper note that cites at least one OTHER finding from the user's
+    // own corpus. Generated once, ever — re-opening a note is a pure cache hit with
+    // zero model calls and zero ledger rows, and the monthly cap refuses generation
+    // truthfully with no call and no row.
+    //
+    // `ask_notes` — one row per finding whose note has been generated. The
+    //   `finding_id` PK doubles as the render-once cache key AND the render lease
+    //   (E-21's proven pattern, lib/render/renditions.ts): the ask engine claims
+    //   this row BEFORE the budget check and the text-model call (lease-before-spend,
+    //   lib/ask/engine.ts), so a concurrent double-ask makes at most one billable
+    //   call — the racing loser detects the claim and returns without a call and
+    //   without a ledger row. `note` is the generated text; `cited_ids` is a JSON
+    //   array of the OTHER findings' ids the note draws on (≥1, structurally
+    //   enforced by the engine, resolvable to real included findings); `cost_usd` is
+    //   the actual text charge, also ledgered once into the shared spend_ledger. A
+    //   claim carries an empty `note` until the winning call completes and UPDATEs
+    //   it — the cache read only returns completed rows, and every handled failure
+    //   (budget refusal, a failed/unreadable call) releases the claim so a retry can
+    //   re-lease. FK cascade on delete: removing a finding (hence its session) drops
+    //   the note; there is no on-disk file, so the cascade is the whole cleanup and
+    //   display is orphan-safe by construction.
+    version: 13,
+    name: "ask_notes",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE ask_notes (
+          finding_id TEXT PRIMARY KEY REFERENCES findings(id) ON DELETE CASCADE,
+          note       TEXT NOT NULL,
+          cited_ids  TEXT NOT NULL,
+          cost_usd   REAL NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];

@@ -2,7 +2,7 @@
 
 SQLite (better-sqlite3) at `data/erika.db` (`ERIKA_DB_PATH` overrides). Applied by
 the runner in `lib/db.ts` from the append-only list in `lib/migrations/index.ts`;
-`_migrations` records the versions already applied. **Latest version: v12.**
+`_migrations` records the versions already applied. **Latest version: v13.**
 
 > **Ritual.** Adding a migration updates this file in the same PR. A schema doc
 > that lags the schema is worse than none — it is believed and it is wrong.
@@ -24,6 +24,7 @@ findings ──1:1── cards ──< (SM-2 state)
 findings ──1:1── deleted_findings           (tombstone: "do not re-card")
 findings ──1:1── finding_slips ──> slips    (one recurring mistake = one slip)
 findings ──1:1── renditions                 (render-once contrastive-playback clip)
+findings ──1:1── ask_notes                  (ask-once deeper note, cites other findings)
 lessons / lesson_mastery ── pattern_key     (no session FK — derived from all findings)
 spend_ledger                                (no FK at all — money outlives sessions)
 ```
@@ -52,6 +53,7 @@ survive the deletion of any one session that happened to contain that audio.
 | `slips` | 11 | `id`, unique `slip_key` | One recurring mistake (E-20): `category`, the representative `correction`, and the deterministic `slip_key` (`category:<normalized correction>`). A materialization of the pure clustering in `lib/slips.ts`, upserted by key so re-analysis of the same findings keeps the same id. State (active/remission/resolved) is computed, never stored. |
 | `finding_slips` | 11 | `finding_id` | The finding→slip association: one slip per finding, cascade-deleted with its finding. Rewritten idempotently by `materializeSlips`. |
 | `renditions` | 12 | `finding_id` | One contrastive-playback rendition per finding (E-21): `path` (mp3 under `data/renditions/`), `cost_usd` (the actual TTS charge, also ledgered once). The `finding_id` PK is both the render-once cache key and the render lease: the engine claims the row BEFORE the budget check and the provider call (lease-before-spend), so exactly one racing Generate calls the model and bills — the loser makes no call and no ledger row (D-15). An uncommitted claim (budget refusal / failed synthesize) is released so a retry can re-lease. FK cascade on delete; the file is cleaned by the delete route and playback is orphan-safe without it. |
+| `ask_notes` | 13 | `finding_id` | One ask-once deeper note per finding (E-23): `note` text, `cited_ids` (JSON array of the OTHER findings the note cites — ≥1, structurally enforced and resolvable to real included findings), `cost_usd` (the actual text charge, also ledgered once). The `finding_id` PK is both the ask-once cache key and the ask lease: the engine claims the row (with an empty `note`) BEFORE the budget check and the text-model call (lease-before-spend, mirroring `renditions`), so exactly one racing Ask calls the model and bills — the loser makes no call and no ledger row (D-15). The winning call completes the row (fills `note`/`cited_ids`); the cache read returns only completed rows, and every handled failure (budget refusal, a failed/unreadable call) releases the claim so a retry can re-lease. FK cascade on delete — no on-disk file, so the cascade is the whole cleanup. |
 
 Timestamps are SQLite UTC text (`datetime('now')`, `"YYYY-MM-DD HH:MM:SS"`) so
 they compare and sort as strings; `lib/jobs/liveness.ts` parses them to epoch ms.
@@ -83,6 +85,7 @@ re-upload contributes nothing anywhere until its own Analyze runs.
 | 10 | `findings_recurrence` | nullable `recurrence_of` on `findings` — the profile-entry recurrence link, storing the entry's CLIPPED (≤60-char) correction, not the full one (E-19) |
 | 11 | `slips` | `slips`, `finding_slips` — persistent recurring-mistake clusters and the finding→slip association (E-20) |
 | 12 | `renditions` | `renditions` — the render-once contrastive-playback cache, one row per finding (E-21) |
+| 13 | `ask_notes` | `ask_notes` — the ask-once deeper-note cache, one row per finding, citing ≥1 other finding (E-23) |
 
 Never edit a shipped migration — add the next one. `tests/migrations.test.ts`
 asserts a fresh database reaches the latest version and that re-running is a no-op.
