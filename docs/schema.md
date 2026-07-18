@@ -2,7 +2,7 @@
 
 SQLite (better-sqlite3) at `data/erika.db` (`ERIKA_DB_PATH` overrides). Applied by
 the runner in `lib/db.ts` from the append-only list in `lib/migrations/index.ts`;
-`_migrations` records the versions already applied. **Latest version: v10.**
+`_migrations` records the versions already applied. **Latest version: v11.**
 
 > **Ritual.** Adding a migration updates this file in the same PR. A schema doc
 > that lags the schema is worse than none — it is believed and it is wrong.
@@ -22,6 +22,7 @@ sessions ──< ingest_jobs                    (one ingest run per upload)
                         └──> segment_analyses
 findings ──1:1── cards ──< (SM-2 state)
 findings ──1:1── deleted_findings           (tombstone: "do not re-card")
+findings ──1:1── finding_slips ──> slips    (one recurring mistake = one slip)
 lessons / lesson_mastery ── pattern_key     (no session FK — derived from all findings)
 spend_ledger                                (no FK at all — money outlives sessions)
 ```
@@ -39,7 +40,7 @@ survive the deletion of any one session that happened to contain that audio.
 | `sessions` | 2 | `id` | One uploaded or recorded file: filename, format, bytes, duration, `created_at`. Deleting cascades to jobs, segments, findings. |
 | `ingest_jobs` | 2, 3, 8 | `id` | The speech-extraction run for a session: `state` (queued/processing/done/failed), `stage`, `progress`, `error`, and the v8 lease (`worker_id`, `heartbeat_at`). |
 | `segments` | 3 | `id`, unique `(session_id, idx)` | One kept speech interval: original-timeline `start_ms`/`end_ms`/`duration_ms` and its `content_hash`. |
-| `findings` | 4, 8, 10 | `id`, unique `(session_id, content_hash, start_ms, quote, correction, category)` | One correction: `quote` → `correction`, `category`, `explanation`, `severity`, timestamps. The v8 identity index makes a replayed write idempotent — it is not a defence against a double run (the lease is). From v10, nullable `recurrence_of`: the speaker-profile entry (its correction text) the deep model marked this finding as recurring (`lib/analysis/profile.ts`); NULL everywhere the model made no such claim. |
+| `findings` | 4, 8, 10 | `id`, unique `(session_id, content_hash, start_ms, quote, correction, category)` | One correction: `quote` → `correction`, `category`, `explanation`, `severity`, timestamps. The v8 identity index makes a replayed write idempotent — it is not a defence against a double run (the lease is). From v10, nullable `recurrence_of`: the CLIPPED (≤60-char, ellipsis-terminated) correction text of the speaker-profile entry the deep model marked this finding as recurring (`lib/analysis/profile.ts` clips it for the prompt, so the stored link is a prefix of the full correction, never equal to it); NULL everywhere the model made no such claim. |
 | `analysis_jobs` | 4, 8 | `id` | One cascade run: `state` (queued/processing/done/failed/**halted**), `stage`, `progress`, `error`, plus the v8 lease. `halted` = the budget cap stopped it. |
 | `segment_analyses` | 4, 9 | `content_hash` | The never-re-bill witness: `flagged` (triage's verdict), `deep_done`, and from v9 `unreadable` + `unreadable_reason` + `response_shape` (content-free). **This table is what "analysed" means** — see `lib/findings-model.ts`. |
 | `spend_ledger` | 4 | `id` | One row per real billable call: `month` ('YYYY-MM'), `model`, `content_hash`, `cost_usd`. No session FK — deleting a session must never erase spend history. |
@@ -47,6 +48,8 @@ survive the deletion of any one session that happened to contain that audio.
 | `deleted_findings` | 6 | `finding_id` | Tombstone so a deliberately deleted card is not regenerated. Pinning from the Phrasebook clears it. |
 | `lessons` | 7 | `id`, unique `pattern_key` | One generated lesson per recurring pattern (`category:<category>`, `lib/lessons/patterns.ts`); `exercises` is JSON. Unique = generated once, re-opened free. |
 | `lesson_mastery` | 7 | `pattern_key` | Per-pattern mastery 0..1, updated by the EMA rule in `lib/lessons/mastery.ts`. |
+| `slips` | 11 | `id`, unique `slip_key` | One recurring mistake (E-20): `category`, the representative `correction`, and the deterministic `slip_key` (`category:<normalized correction>`). A materialization of the pure clustering in `lib/slips.ts`, upserted by key so re-analysis of the same findings keeps the same id. State (active/remission/resolved) is computed, never stored. |
+| `finding_slips` | 11 | `finding_id` | The finding→slip association: one slip per finding, cascade-deleted with its finding. Rewritten idempotently by `materializeSlips`. |
 
 Timestamps are SQLite UTC text (`datetime('now')`, `"YYYY-MM-DD HH:MM:SS"`) so
 they compare and sort as strings; `lib/jobs/liveness.ts` parses them to epoch ms.
@@ -75,7 +78,8 @@ re-upload contributes nothing anywhere until its own Analyze runs.
 | 7 | `lessons_and_mastery` | `lessons`, `lesson_mastery` |
 | 8 | `job_lease_and_findings_identity` | lease columns on both job tables; `idx_findings_identity` (dedupes existing rows first) |
 | 9 | `segment_unreadable` | `unreadable`, `unreadable_reason`, `response_shape` on `segment_analyses` |
-| 10 | `findings_recurrence` | nullable `recurrence_of` on `findings` — the profile-entry recurrence link (E-19) |
+| 10 | `findings_recurrence` | nullable `recurrence_of` on `findings` — the profile-entry recurrence link, storing the entry's CLIPPED (≤60-char) correction, not the full one (E-19) |
+| 11 | `slips` | `slips`, `finding_slips` — persistent recurring-mistake clusters and the finding→slip association (E-20) |
 
 Never edit a shipped migration — add the next one. `tests/migrations.test.ts`
 asserts a fresh database reaches the latest version and that re-running is a no-op.

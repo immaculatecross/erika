@@ -2,6 +2,7 @@ import type { Db } from "./db";
 import type { Category, Severity } from "./analysis/findings";
 import { findingTallies, listAnalysedSessions } from "./findings-model";
 import { CATEGORY_ORDER } from "./analysis-view";
+import { resolvedSlipCount } from "./slips";
 
 // The Focus map aggregation (E-7, v0.2 milestone 1). Pure metric math over the
 // data v0.1 already produced — no model calls, no writes, no new capture. The
@@ -183,4 +184,20 @@ export function collectAnalyzedSessions(db: Db): AnalyzedSession[] {
 /** The Focus model for the whole database — what the read route serves. */
 export function buildFocusModel(db: Db): FocusModel {
   return computeFocus(collectAnalyzedSessions(db));
+}
+
+/**
+ * The Focus payload the read route serves: the metric model plus the count of
+ * RESOLVED slips (E-20) — the one number Focus attaches green to. `FocusModel`
+ * and `computeFocus` are deliberately untouched (their math is hand-verified and
+ * the ranking is unchanged); the slip count is layered on top here, read-only.
+ */
+export interface FocusPayload extends FocusModel {
+  /** Recurring mistakes now resolved — mastery, the only place green belongs. */
+  resolvedSlips: number;
+}
+
+/** The Focus model for the whole database, plus the resolved-slip count (E-20). */
+export function buildFocusPayload(db: Db): FocusPayload {
+  return { ...buildFocusModel(db), resolvedSlips: resolvedSlipCount(db) };
 }

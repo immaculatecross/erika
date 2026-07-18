@@ -339,4 +339,38 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-20 Slips, the fossil dossier: a recurring mistake becomes a persistent
+    // *slip*. Findings that share a normalized correction + category cluster into
+    // one slip with a stable, deterministic key (lib/slips.ts), folding in the
+    // v10 `recurrence_of` links — which store the CLIPPED (≤60-char) correction, so
+    // clustering prefix-matches rather than assuming string equality.
+    //
+    // `slips` persists the cluster; `finding_slips` is the finding→slip association
+    // (one slip per finding: PK on `finding_id`, cascade on delete). Both are a
+    // MATERIALIZATION of the pure clustering — `materializeSlips` rebuilds them
+    // idempotently, keyed by `slip_key`, so re-analysing the same findings lands the
+    // same rows with the same ids. Additive only: no existing table or row is
+    // touched, and a slip's state (active / in remission / resolved) is COMPUTED
+    // from later analysed sessions (lib/findings-model.ts semantics), never stored.
+    version: 11,
+    name: "slips",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE slips (
+          id         TEXT PRIMARY KEY,
+          slip_key   TEXT NOT NULL UNIQUE,
+          category   TEXT NOT NULL
+                       CHECK (category IN ('grammar','vocabulary','phrasing','idiom','pronunciation')),
+          correction TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE finding_slips (
+          finding_id TEXT PRIMARY KEY REFERENCES findings(id) ON DELETE CASCADE,
+          slip_id    TEXT NOT NULL REFERENCES slips(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_finding_slips_slip ON finding_slips(slip_id);
+      `);
+    },
+  },
 ];
