@@ -50,6 +50,13 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* A finding jumped to from an Ask Erika citation flashes the ink accent ring
+   briefly (E-23). Neutral accent, not green — the jump carries no state meaning. */
+[data-cite-flash] {
+  box-shadow: 0 0 0 2px var(--color-accent);
+  transition: box-shadow 0.3s ease;
+}
+
 /* Accent focus ring on every interactive element. */
 :where(a, button, input, select, [tabindex]):focus-visible {
   outline: 2px solid var(--color-accent);

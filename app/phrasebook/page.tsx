@@ -7,6 +7,7 @@ import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
 import { CompareControl } from "@/components/compare-control";
+import { AskErika } from "@/components/ask-erika";
 import {
   filterEntries,
   CATEGORY_ORDER,
@@ -182,6 +183,8 @@ function Row({
       )}
 
       <CompareControl findingId={entry.findingId} />
+
+      <AskErika findingId={entry.findingId} />
 
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
         <div className="flex items-center gap-2">
