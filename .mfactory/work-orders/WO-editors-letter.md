@@ -77,3 +77,30 @@ Verified: npm run test → 218 passed (letter.test.ts 13: ISO week bounds; trend
 Risks:    Prior-week trend is the immediately-preceding calendar week; a skipped week reads "no prior week" (documented, deliberate). Model-written prose letter is a documented v0.3 upgrade, not built here.
 Blocker:  none.
 ```
+
+## Repair note — PR #19 review fix (VCS-integrity / contract violation)
+
+```
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/19  (feat/editors-letter → master)
+Finding:  lib/letter.ts was committed as a BINARY blob — a literal NUL control byte (0x00) was
+          embedded in the source at line 154 (best-recasts dedup key delimiter). git treated the
+          file as binary: `git diff` = "Binary files differ", `gh pr diff 19` omitted it, `file` = data.
+          The source routed around the reviewer's `gh pr diff` gate and broke line-level diff/blame/merge.
+Changed:  lib/letter.ts — replaced the single raw NUL byte with the two-character escape `\0` in the
+          template string. Behavior-preserving: the dedup key still uses NUL (U+0000) as its delimiter
+          at runtime (quote + \0 + correction). No logic, delimiter, or dedup-rule change. Whole-file
+          control-byte scan: exactly one raw byte existed; zero remain.
+Verified: file lib/letter.ts        → "Java source, Unicode text, UTF-8 text" (text, not `data`).
+          git diff master...feat/editors-letter -- lib/letter.ts → normal textual diff
+                                       (index 0000000..bf32675, "@@ -0,0 +1,283 @@"; NOT "Binary files differ");
+                                       the dedup line is visible: const key = `...}\0${...}`.
+          gh pr diff 19               → includes lib/letter.ts's added lines.
+          tr -cd '\000' | wc -c      → 0 remaining NUL bytes; control-byte grep → none.
+          npm run test               → 218 passed (tests/letter.test.ts 13/13, incl. the best-recasts
+                                       dedup test criterion 3 — unchanged, still keys on quote+NUL+correction).
+          npm run lint · npm run typecheck · npm run build → all clean/succeed.
+          .mfactory/hooks/run-tripwires.sh → exit 0 (green).
+Risks:    none identified — change is scoped to removing one raw byte; runtime dedup behavior identical.
+Blocker:  none.
+```
