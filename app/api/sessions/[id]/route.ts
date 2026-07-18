@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { removeSessionDir } from "@/lib/audio-storage";
+import { removeRenditionFile, removeSessionDir } from "@/lib/audio-storage";
+import { renditionPathsForSession } from "@/lib/render/renditions";
 import { deleteSession, getSession } from "@/lib/sessions";
 
 export const runtime = "nodejs";
@@ -23,8 +24,14 @@ export async function DELETE(_request: Request, { params }: Ctx) {
   // intentionally retained: cached renditions in data/cache/, the segment_analyses
   // never-re-bill witnesses, and the spend_ledger (deleting a session must never
   // erase spend history or let a re-run evade the budget cap).
-  const existed = deleteSession(getDb(), id);
+  // Read the E-21 rendition file paths BEFORE the delete: their rows cascade away
+  // with the findings, so the on-disk files must be gathered first, then unlinked
+  // after (best-effort; a missing file is a no-op, and playback is orphan-safe).
+  const db = getDb();
+  const renditionFiles = renditionPathsForSession(db, id);
+  const existed = deleteSession(db, id);
   if (!existed) return NextResponse.json({ error: "Session not found." }, { status: 404 });
   await removeSessionDir(id);
+  await Promise.all(renditionFiles.map((p) => removeRenditionFile(p)));
   return NextResponse.json({ ok: true });
 }
