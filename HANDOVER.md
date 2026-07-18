@@ -21,6 +21,10 @@
 3. **Node 20+**, and **`gh` authenticated** as the author identity — branch protection requires PRs and the dispatcher merges.
 4. **Verify all of the above before a long unattended run.** A run that discovers a missing key at milestone four has wasted the first three.
 
+## Cloud dispatcher sessions — the plumbing differs, the loop doesn't
+
+A dispatcher running in a managed cloud sandbox (e.g. Claude Code on the web) hits three deltas a local checklist won't mention. **(1) No `gh` CLI** — GitHub operations (PRs, reviews, CI state, merges) go through the harness's GitHub tools instead; the review playbook's `gh pr review` becomes: the fresh reviewer session produces the verdict body, and the dispatcher relays it as a PR review/comment and merges on it (the same D-11 single-identity fallback). **(2) The mfactory checkout is not at `../mfactory-v2`** — add the repo through the platform's repo-add mechanism and use wherever it lands; the pinned `.mfactory/` kit here is the fallback if it can't be reached. **(3) Fresh worker/reviewer sessions are spawned via the harness's agent mechanism**, not `claude -p` — same isolation contract (the work order is the worker's entire briefing; the reviewer never sees the builder's reasoning), different invocation. Item 3 of the environment list above ("gh authenticated") reads accordingly in cloud mode. Everything else — boot order, work orders, tiers, pricing, the ritual — is unchanged; the 2026-07-18 mid-RUN-003 handoff ran cold from these files alone.
+
 ## Two processes, always
 
 `npm run dev` serves the UI and only **enqueues** work. `npm run worker` drains ingest and analysis jobs. Without the worker, uploads sit `queued` forever — the UI now says so instead of showing a calm badge.
