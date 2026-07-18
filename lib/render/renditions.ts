@@ -3,8 +3,12 @@ import type { Db } from "../db";
 // Typed data layer for E-21 contrastive-playback renditions, in the
 // lib/segments.ts / lib/analysis/findings.ts style. Server-only. A rendition is
 // one rendered correction clip per finding: its on-disk path and the actual TTS
-// cost. The `finding_id` PK is the render-once cache key AND the INSERT-first
-// double-bill guard — see lib/render/engine.ts. No model calls live here.
+// cost. The `finding_id` PK is the render-once cache key AND the lease that
+// serializes generation: the engine claims the row (INSERT) BEFORE it spends, so
+// only the request that wins the row calls the model — see lib/render/engine.ts.
+// A claim that never commits (budget refusal or a failed synthesize) is released
+// via `deleteRendition` so a legitimate retry is never blocked. No model calls
+// live here.
 
 export interface Rendition {
   findingId: string;
@@ -33,11 +37,14 @@ export function getRendition(db: Db, findingId: string): Rendition | null {
 }
 
 /**
- * Insert a rendition row idempotently, keyed by `finding_id`. Returns whether THIS
- * call inserted it: `true` means we won the row (record the spend), `false` means a
- * row already existed (a concurrent Generate got there first — bill nothing). The
- * `ON CONFLICT DO NOTHING` on the PK is the double-bill guard; because better-
- * sqlite3 runs transactions serially, two racing generations can never both win.
+ * Claim the `finding_id` row idempotently — this is the render lease. Returns
+ * whether THIS call inserted it: `true` means we won the claim (proceed to the one
+ * budgeted model call, then record the spend), `false` means a row already existed
+ * (a concurrent Generate claimed it first — make NO model call and bill nothing).
+ * The `ON CONFLICT DO NOTHING` on the PK is what makes the claim exclusive; because
+ * better-sqlite3 runs statements serially on the connection, two racing generations
+ * can never both win the row, so at most one provider call and one ledger row ever
+ * result. The engine claims BEFORE it spends (lib/render/engine.ts).
  */
 export function insertRendition(
   db: Db,
@@ -48,6 +55,17 @@ export function insertRendition(
       "INSERT INTO renditions (finding_id, path, cost_usd) VALUES (?, ?, ?) ON CONFLICT(finding_id) DO NOTHING",
     )
     .run(entry.findingId, entry.path, entry.costUsd);
+  return info.changes > 0;
+}
+
+/**
+ * Release a claim: delete the `finding_id` row. The engine calls this only on its
+ * OWN uncommitted claim when generation does not complete (budget refusal or a
+ * failed synthesize), so a legitimate retry can re-claim and render — a claimed row
+ * is never a permanent tombstone. Returns whether a row was removed.
+ */
+export function deleteRendition(db: Db, findingId: string): boolean {
+  const info = db.prepare("DELETE FROM renditions WHERE finding_id = ?").run(findingId);
   return info.changes > 0;
 }
 
