@@ -53,6 +53,27 @@ export interface AnalysisView {
   counts: CategoryCount[];
   /** Total findings across every category. */
   total: number;
+  /**
+   * Speech segments this session has. Zero means ingest has not produced anything
+   * to analyze — the state that used to offer Analyze, estimate $0, run, and then
+   * report "no findings", which reads as a clean bill of health (E-16b criterion 5).
+   */
+  segmentCount: number;
+  /** Segments whose model reply could not be read (E-16b criterion 4). */
+  unreadableCount: number;
+  /** No worker is draining this run's queue (E-16b criterion 2). */
+  workerAbsent: boolean;
+}
+
+/**
+ * The honest one-line tally under a finished run, or null when there is nothing
+ * to qualify. A run that lost a segment must say so — "no findings" over 14 of 15
+ * segments is a different claim from "no findings" over all 15.
+ */
+export function segmentTally(segmentCount: number, unreadableCount: number): string | null {
+  if (unreadableCount <= 0) return null;
+  const analysed = Math.max(0, segmentCount - unreadableCount);
+  return `${analysed} of ${segmentCount} segments analysed · ${unreadableCount} unreadable`;
 }
 
 /** Human labels for each analysis stage the orb shows while a run is in flight. */

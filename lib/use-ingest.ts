@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { pollAction } from "./poll";
 import type { IngestView } from "./ingest-view";
 
 // Client polling for the ingest view (E-3 part 2 criterion 1). While the job is
@@ -40,7 +41,14 @@ export function useIngest(id: string): IngestPoll {
       let next: IngestView | null = null;
       try {
         const res = await fetch(`/api/sessions/${id}/ingest`);
-        if (res.ok) next = (await res.json()) as IngestView;
+        const action = pollAction(res.status);
+        // The session is gone (deleted, or a stale URL): that is a final answer,
+        // not a hiccup. Stop, or the tab polls a 404 every second forever.
+        if (action === "stop") {
+          setPolling(false);
+          return;
+        }
+        if (action === "use") next = (await res.json()) as IngestView;
       } catch {
         next = null; // transient failure — try again on the next tick
       }

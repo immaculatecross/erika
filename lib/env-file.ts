@@ -32,11 +32,18 @@ export function parseEnvFile(text: string): Record<string, string> {
     if (line === "" || line.startsWith("#")) continue;
     const eq = line.indexOf("=");
     if (eq <= 0) continue;
-    const key = line.slice(0, eq).replace(/^export\s+/, "").trim();
+    const key = line
+      .slice(0, eq)
+      .replace(/^export\s+/, "")
+      .trim();
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
     let value = line.slice(eq + 1).trim();
     const quote = value[0];
-    if ((quote === '"' || quote === "'") && value.endsWith(quote) && value.length > 1) {
+    if (
+      (quote === '"' || quote === "'") &&
+      value.endsWith(quote) &&
+      value.length > 1
+    ) {
       value = value.slice(1, -1);
     }
     out[key] = value;
@@ -50,7 +57,10 @@ export function parseEnvFile(text: string): Record<string, string> {
  * and CI secrets still override the file. A missing file is not an error: ingest
  * needs no key, and the startup check below is what speaks up when one is needed.
  */
-export function loadEnvLocal(cwd: string = process.cwd(), env: NodeJS.ProcessEnv = process.env): string[] {
+export function loadEnvLocal(
+  cwd: string = process.cwd(),
+  env: Record<string, string | undefined> = process.env,
+): string[] {
   let text: string;
   try {
     text = readFileSync(path.join(cwd, ENV_LOCAL), "utf8");
@@ -75,7 +85,9 @@ export const REQUIRED_KEY = "OPENAI_API_KEY";
  * exits non-zero, which is the whole point — failing at boot with the fix in the
  * message beats failing later inside a job with "OPENAI_API_KEY is not set".
  */
-export function startupEnvError(env: NodeJS.ProcessEnv = process.env): string | null {
+export function startupEnvError(
+  env: Record<string, string | undefined> = process.env,
+): string | null {
   if ((env[REQUIRED_KEY] ?? "").trim() !== "") return null;
   return [
     `[worker] ${REQUIRED_KEY} is not set — analysis jobs would fail at the first model call.`,

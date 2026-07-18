@@ -59,6 +59,28 @@ const MIME_CANDIDATES = [
 export const UPLOAD_FORMAT: AudioFormat = "wav";
 
 /**
+ * What the user is told when a take cannot be turned into an uploadable file
+ * (E-16b criterion 6). Previously the decode/encode failure path just resolved
+ * `null` and the recorder returned quietly to idle — the take vanished and the
+ * person had no idea their recording was gone, or that recording again was the
+ * remedy. Losing audio silently is the worst failure this app can have.
+ */
+export const TAKE_LOST_MESSAGE =
+  "That take could not be saved and was lost — nothing was uploaded. Please record again.";
+
+/**
+ * Decide what a stopped recording produced. `wav` is null when the take was empty
+ * (the mic never delivered a byte) or when the browser could not decode its own
+ * MediaRecorder output — both are a lost take, and both must be said out loud.
+ */
+export function takeOutcome(wav: Blob | null): {
+  take: { blob: Blob; extension: AudioFormat } | null;
+  lost: boolean;
+} {
+  return wav ? { take: { blob: wav, extension: UPLOAD_FORMAT }, lost: false } : { take: null, lost: true };
+}
+
+/**
  * The first MediaRecorder mime this browser supports, or null when MediaRecorder
  * is unavailable or supports none of them. Guards the global so the module stays
  * importable in Node (tests) and during SSR.

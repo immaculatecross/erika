@@ -97,6 +97,8 @@ export function persistSegmentFindings(
     findings: NewFinding[];
     /** The real billable call this write completes — recorded in the same txn. */
     spend?: { model: ModelId; contentHash: string; costUsd: number };
+    /** Set when the model's reply could not be read even after the repair retry. */
+    unreadable?: { reason: string; shape: string | null };
   },
 ): void {
   // `ON CONFLICT DO NOTHING` targets only the v8 identity index, so replaying the
@@ -138,10 +140,21 @@ export function persistSegmentFindings(
       );
     }
     db.prepare(
-      `INSERT INTO segment_analyses (content_hash, flagged, deep_done)
-       VALUES (?, ?, ?)
-       ON CONFLICT(content_hash) DO UPDATE SET flagged = excluded.flagged, deep_done = excluded.deep_done`,
-    ).run(input.contentHash, input.flagged ? 1 : 0, input.deepDone ? 1 : 0);
+      `INSERT INTO segment_analyses (content_hash, flagged, deep_done, unreadable, unreadable_reason, response_shape)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(content_hash) DO UPDATE SET
+         flagged = excluded.flagged, deep_done = excluded.deep_done,
+         unreadable = excluded.unreadable,
+         unreadable_reason = excluded.unreadable_reason,
+         response_shape = excluded.response_shape`,
+    ).run(
+      input.contentHash,
+      input.flagged ? 1 : 0,
+      input.deepDone ? 1 : 0,
+      input.unreadable ? 1 : 0,
+      input.unreadable?.reason ?? null,
+      input.unreadable?.shape ?? null,
+    );
   })();
 }
 
@@ -149,23 +162,54 @@ export interface SegmentAnalysis {
   contentHash: string;
   flagged: boolean;
   deepDone: boolean;
+  /** The model's reply for this audio could not be read (E-16b criterion 4). */
+  unreadable: boolean;
+  /** Content-free structural descriptor of that reply, for the failure record. */
+  responseShape: string | null;
 }
 
 /** The analysis witness for a content hash, or null if never analyzed. */
 export function getSegmentAnalysis(db: Db, contentHash: string): SegmentAnalysis | null {
   const r = db
-    .prepare("SELECT content_hash, flagged, deep_done FROM segment_analyses WHERE content_hash = ?")
-    .get(contentHash) as { content_hash: string; flagged: number; deep_done: number } | undefined;
+    .prepare(
+      "SELECT content_hash, flagged, deep_done, unreadable, response_shape FROM segment_analyses WHERE content_hash = ?",
+    )
+    .get(contentHash) as
+    | { content_hash: string; flagged: number; deep_done: number; unreadable: number; response_shape: string | null }
+    | undefined;
   if (!r) return null;
-  return { contentHash: r.content_hash, flagged: !!r.flagged, deepDone: !!r.deep_done };
+  return {
+    contentHash: r.content_hash,
+    flagged: !!r.flagged,
+    deepDone: !!r.deep_done,
+    unreadable: !!r.unreadable,
+    responseShape: r.response_shape,
+  };
 }
 
 /**
  * Is this audio fully analyzed? True once triage ran and — if the mini flagged
  * it — the deep-listen also ran. Such a segment is a cache hit: never re-billed.
+ *
+ * An unreadable segment is deliberately NOT complete: the audio was never
+ * successfully analysed, so a later run should try it again (a truncation is
+ * often transient) and the estimate should keep counting it as pending. What
+ * stops it looping inside a single run is that the run makes one pass.
  */
 export function isSegmentComplete(a: SegmentAnalysis | null): boolean {
-  return !!a && (!a.flagged || a.deepDone);
+  return !!a && !a.unreadable && (!a.flagged || a.deepDone);
+}
+
+/** How many of a session's segments are recorded unreadable — the honest count. */
+export function countUnreadableSegments(db: Db, sessionId: string): number {
+  const r = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM segments s
+         JOIN segment_analyses a ON a.content_hash = s.content_hash
+        WHERE s.session_id = ? AND a.unreadable = 1`,
+    )
+    .get(sessionId) as { n: number };
+  return r.n;
 }
 
 /** All findings recorded for a content hash (from any session). */

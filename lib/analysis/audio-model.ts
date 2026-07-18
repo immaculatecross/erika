@@ -36,16 +36,58 @@ export interface DeepResult {
   findings: (NewFinding & { relStartMs?: number; relEndMs?: number })[];
 }
 
+/** Per-call knobs the cascade uses for its one bounded repair retry. */
+export interface CallOpts {
+  /**
+   * Re-ask with a stricter JSON-only instruction. Set only on the retry after an
+   * unparseable reply — a model that wrapped its answer in prose usually complies
+   * when told plainly, and one retry bounds the cost of finding out.
+   */
+  strictJson?: boolean;
+}
+
 /** The seam the cascade depends on. The real impl calls OpenAI; tests mock it. */
 export interface AudioModelClient {
-  triage(input: TriageInput): Promise<TriageResult>;
-  deepListen(model: ModelId, input: DeepInput): Promise<DeepResult>;
+  triage(input: TriageInput, opts?: CallOpts): Promise<TriageResult>;
+  deepListen(model: ModelId, input: DeepInput, opts?: CallOpts): Promise<DeepResult>;
 }
 
 /** Thrown when a model/endpoint is unavailable or unauthorized (a real blocker). */
 export class ModelUnavailableError extends Error {}
-/** Thrown when a model response cannot be parsed into the expected shape. */
-export class ModelParseError extends Error {}
+/**
+ * Thrown when a model response cannot be parsed into the expected shape.
+ *
+ * `shape` is a structural, content-free description of what came back
+ * (`describeResponseShape`) — persisted with the segment so the failure
+ * distribution becomes visible without storing the reply itself.
+ */
+export class ModelParseError extends Error {
+  shape?: string;
+}
+/**
+ * The reply stopped because it hit the token limit (E-16b criterion 4). Almost
+ * certainly the operator's actual "Model response was not a JSON object": a
+ * deep-listen answer cut off mid-array is not a parse *disagreement*, it is a
+ * truncation, and calling it the former sent every reader looking in the wrong
+ * place. A subclass of ModelParseError so it inherits the same handling — the
+ * call resolved, so it was billed, and one repair retry is still worth trying.
+ */
+export class ModelTruncatedError extends ModelParseError {}
+
+/**
+ * A content-free description of a bad reply: what stopped it, how long it was, and
+ * whether it contained anything object-shaped at all. Deliberately carries no text
+ * from the response — the point is to see the distribution of failures, not to
+ * archive model output (or anything the speaker said) in the database.
+ */
+export function describeResponseShape(raw: string, finishReason: string | null): string {
+  const parts = [
+    `finish_reason=${finishReason ?? "none"}`,
+    `chars=${raw.length}`,
+    `brace=${raw.includes("{") ? (raw.trimEnd().endsWith("}") ? "closed" : "unclosed") : "none"}`,
+  ];
+  return parts.join(" ");
+}
 
 // ---- prompts -------------------------------------------------------------
 
@@ -58,6 +100,16 @@ export function triagePrompt(targetLanguage: string): string {
     'Respond with JSON only: {"flagged": boolean, "reason": string}.',
   ].join(" ");
 }
+
+/**
+ * Appended on the one repair retry. The models have no JSON response_format, so
+ * the only lever is the wording — and a reply that arrived wrapped in prose or a
+ * fence usually complies when asked this bluntly.
+ */
+export const STRICT_JSON_INSTRUCTION =
+  "IMPORTANT: your previous reply could not be parsed. Reply with the raw JSON object ONLY —" +
+  " no prose, no explanation, no markdown code fence, nothing before the opening brace or after" +
+  " the closing brace. Keep it short enough to finish.";
 
 // The dominant-speaker instruction is prompt-level for v1; true voice enrollment
 // and diarization are E-13. Tests assert this instruction is present.
@@ -166,7 +218,13 @@ function apiKey(): string {
   return key;
 }
 
-async function callModel(model: ModelId, prompt: string, input: TriageInput | DeepInput): Promise<string> {
+interface RawReply {
+  content: string;
+  /** OpenAI's stop reason — "length" means the reply was cut off, not finished. */
+  finishReason: string | null;
+}
+
+async function callModel(model: ModelId, prompt: string, input: TriageInput | DeepInput): Promise<RawReply> {
   let res: Response;
   try {
     res = await fetch(OPENAI_URL, {
@@ -198,18 +256,48 @@ async function callModel(model: ModelId, prompt: string, input: TriageInput | De
     // 4xx around auth/model are legitimate "stop, don't retry-thrash" blockers.
     throw new ModelUnavailableError(msg);
   }
-  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  const content = json.choices?.[0]?.message?.content;
+  const json = (await res.json()) as {
+    choices?: { message?: { content?: string }; finish_reason?: string }[];
+  };
+  const choice = json.choices?.[0];
+  const content = choice?.message?.content;
+  const finishReason = choice?.finish_reason ?? null;
   if (typeof content !== "string") throw new ModelParseError(`${model} returned no message content.`);
-  return content;
+  return { content, finishReason };
 }
+
+/**
+ * Turn one raw reply into a parsed result, or into a truthful, shape-carrying
+ * error. Truncation is checked BEFORE parsing: a cut-off reply usually also fails
+ * to parse, and "the model ran out of room" is the useful message, not "that was
+ * not a JSON object".
+ */
+function interpret<T>(model: ModelId, reply: RawReply, parse: (raw: string) => T): T {
+  const shape = describeResponseShape(reply.content, reply.finishReason);
+  if (reply.finishReason === "length") {
+    const err = new ModelTruncatedError(`${model} reply was cut off at the token limit (${shape}).`);
+    err.shape = shape;
+    throw err;
+  }
+  try {
+    return parse(reply.content);
+  } catch (err) {
+    if (err instanceof ModelParseError) err.shape = shape;
+    throw err;
+  }
+}
+
+const strict = (prompt: string, opts?: CallOpts): string =>
+  opts?.strictJson ? `${prompt} ${STRICT_JSON_INSTRUCTION}` : prompt;
 
 /** The production client. Kept thin: build prompt → call → hand off to a parser. */
 export const openAiAudioModel: AudioModelClient = {
-  async triage(input) {
-    return parseTriageResponse(await callModel(MINI_MODEL, triagePrompt(input.targetLanguage), input));
+  async triage(input, opts) {
+    const prompt = strict(triagePrompt(input.targetLanguage), opts);
+    return interpret(MINI_MODEL, await callModel(MINI_MODEL, prompt, input), parseTriageResponse);
   },
-  async deepListen(model, input) {
-    return parseDeepResponse(await callModel(model, deepPrompt(input.targetLanguage), input));
+  async deepListen(model, input, opts) {
+    const prompt = strict(deepPrompt(input.targetLanguage), opts);
+    return interpret(model, await callModel(model, prompt, input), parseDeepResponse);
   },
 };

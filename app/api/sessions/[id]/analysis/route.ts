@@ -3,8 +3,10 @@ import { getDb } from "@/lib/db";
 import { getSession } from "@/lib/sessions";
 import { readSettings } from "@/lib/settings";
 import { enqueueAnalysis, getAnalysisJobBySession } from "@/lib/analysis/cascade";
-import { listFindings } from "@/lib/analysis/findings";
+import { countUnreadableSegments, listFindings } from "@/lib/analysis/findings";
 import { monthToDateSpend } from "@/lib/analysis/budget";
+import { listSegments } from "@/lib/segments";
+import { isWorkerAbsent } from "@/lib/jobs/liveness";
 import { categoryCounts, type AnalysisView } from "@/lib/analysis-view";
 
 // Start an async analysis run for a session (E-4, D-10). POST enqueues a job the
@@ -42,6 +44,9 @@ export async function GET(_request: Request, { params }: Ctx) {
     })),
     counts: categoryCounts(findings),
     total: findings.length,
+    segmentCount: listSegments(db, id).length,
+    unreadableCount: countUnreadableSegments(db, id),
+    workerAbsent: job ? isWorkerAbsent(db, "analysis_jobs", job.id) : false,
   };
   return NextResponse.json(view);
 }
@@ -50,6 +55,16 @@ export async function POST(_request: Request, { params }: Ctx) {
   const { id } = await params;
   const db = getDb();
   if (!getSession(db, id)) return NextResponse.json({ error: "Session not found." }, { status: 404 });
+
+  // Nothing has been extracted yet, so there is nothing to analyze. Refusing here
+  // is what stops a run that costs $0, finds nothing, and reads as a clean bill of
+  // health on a session the model never heard (E-16b criterion 5).
+  if (listSegments(db, id).length === 0) {
+    return NextResponse.json(
+      { error: "This session has no speech segments yet — run the worker to ingest it first." },
+      { status: 409 },
+    );
+  }
 
   const { monthlyBudgetUsd } = readSettings(db);
   const spent = monthToDateSpend(db);

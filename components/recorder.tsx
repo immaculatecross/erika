@@ -83,7 +83,10 @@ export function Recorder({
     );
   }
 
+  // A lost take and a failed save both mean audio did NOT land: those get red and
+  // an alert role. A denied/unsupported mic is a quiet instruction, not a loss.
   const message = saveError ?? error?.message ?? null;
+  const isLoss = saveError !== null || error?.kind === "lost";
 
   return (
     <div className="flex flex-col items-start gap-1">
@@ -97,7 +100,11 @@ export function Recorder({
         {saving ? "Saving…" : "Record"}
       </button>
       {message && (
-        <p className="max-w-xs text-[13px] text-secondary" role="status">
+        <p
+          className={`max-w-xs text-[13px] ${isLoss ? "text-severe" : "text-secondary"}`}
+          role={isLoss ? "alert" : "status"}
+          data-recorder-message
+        >
           {message}
         </p>
       )}

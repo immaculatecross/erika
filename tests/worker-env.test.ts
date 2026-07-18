@@ -49,7 +49,7 @@ describe("parseEnvFile", () => {
 
 describe("loadEnvLocal", () => {
   it("resolves the API key into the environment the model client reads", () => {
-    const env: NodeJS.ProcessEnv = {};
+    const env: Record<string, string | undefined> = {};
     const applied = loadEnvLocal(envDir("OPENAI_API_KEY=sk-from-file\n"), env);
     expect(applied).toEqual([REQUIRED_KEY]);
     expect(env[REQUIRED_KEY]).toBe("sk-from-file");
@@ -57,7 +57,7 @@ describe("loadEnvLocal", () => {
   });
 
   it("never overrides a variable already in the environment", () => {
-    const env: NodeJS.ProcessEnv = { OPENAI_API_KEY: "sk-from-shell" };
+    const env: Record<string, string | undefined> = { OPENAI_API_KEY: "sk-from-shell" };
     expect(loadEnvLocal(envDir("OPENAI_API_KEY=sk-from-file\n"), env)).toEqual([]);
     expect(env[REQUIRED_KEY]).toBe("sk-from-shell");
   });

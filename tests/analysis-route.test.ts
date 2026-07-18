@@ -127,3 +127,60 @@ describe("GET analysis report", () => {
     expect(body.findings[0]).toMatchObject({ quote: "q1", severity: "high", startMs: 61_000 });
   });
 });
+
+describe("analyze is gated on ingest (E-16b criterion 5)", () => {
+  /** A session with an ingest job but no segments — the un-ingested state. */
+  function seedWithoutSegments(id: string) {
+    createSession(getDb(), { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 600 });
+  }
+
+  it("the report says a session has no segments, so the UI can refuse to offer Analyze", async () => {
+    seedWithoutSegments("bare");
+    const bare = await (await reportGET(req(), ctx("bare"))).json();
+    expect(bare.segmentCount).toBe(0);
+
+    seed("ingested");
+    const ingested = await (await reportGET(req(), ctx("ingested"))).json();
+    expect(ingested.segmentCount).toBe(1);
+  });
+
+  it("POST refuses (409) a session with no segments", async () => {
+    // Before this it enqueued happily, estimated $0, finished instantly and
+    // reported "no findings" — a clean bill of health on unheard audio.
+    seedWithoutSegments("bare2");
+    const res = await startPOST(req(), ctx("bare2"));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/no speech segments/i);
+    expect(getDb().prepare("SELECT COUNT(*) AS n FROM analysis_jobs").get()).toMatchObject({ n: 0 });
+  });
+
+  it("POST still accepts a session that has segments", async () => {
+    // An earlier case in this file drives the budget to zero; settings outlive
+    // the per-test session cleanup, so restore headroom before asserting.
+    writeSettings(getDb(), { monthlyBudgetUsd: 10_000 });
+    seed("ok");
+    expect((await startPOST(req(), ctx("ok"))).status).toBe(202);
+  });
+});
+
+describe("the report carries the unreadable tally and worker signal", () => {
+  it("counts unreadable segments and reports no worker for a long-queued run", async () => {
+    seed("tally");
+    upsertSegment(getDb(), { sessionId: "tally", idx: 1, startMs: 60_000, endMs: 120_000, contentHash: "tally-h1" });
+    persistSegmentFindings(getDb(), {
+      sessionId: "tally",
+      contentHash: "tally-h1",
+      flagged: true,
+      deepDone: false,
+      findings: [],
+      unreadable: { reason: "cut off", shape: "finish_reason=length chars=4096 brace=unclosed" },
+    });
+    const job = enqueueAnalysis(getDb(), "tally");
+    getDb().prepare("UPDATE analysis_jobs SET created_at = datetime('now','-1 hour'), updated_at = datetime('now','-1 hour') WHERE id=?").run(job.id);
+
+    const body = await (await reportGET(req(), ctx("tally"))).json();
+    expect(body.segmentCount).toBe(2);
+    expect(body.unreadableCount).toBe(1);
+    expect(body.workerAbsent).toBe(true); // queued for an hour: nothing is draining it
+  });
+});

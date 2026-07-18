@@ -293,4 +293,32 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-16b (criterion 4): one bad model reply must not kill the whole run.
+    //
+    // Previously any ModelParseError propagated out of the segment loop and landed
+    // the entire job `failed` — "Analysis failed — Model response was not a JSON
+    // object" — discarding a run that had already analysed (and paid for) every
+    // other segment. A segment whose reply cannot be read after one repair retry is
+    // now marked here and the run continues.
+    //
+    // `unreadable_reason` is the truthful error text; `response_shape` is a
+    // content-free structural descriptor (finish_reason, length, brace state — see
+    // describeResponseShape) so the failure distribution becomes visible without
+    // storing model output, or anything the speaker said, in the database.
+    //
+    // The witness stays a cache row, so resume semantics are unchanged: an
+    // unreadable DEEP keeps its triage verdict (flagged=1, deep_done=0) and a later
+    // run resumes at the deep call without re-billing the triage, while an
+    // unreadable TRIAGE (flagged=0) tells us nothing and is started over.
+    version: 9,
+    name: "segment_unreadable",
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE segment_analyses ADD COLUMN unreadable        INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE segment_analyses ADD COLUMN unreadable_reason TEXT;
+        ALTER TABLE segment_analyses ADD COLUMN response_shape    TEXT;
+      `);
+    },
+  },
 ];
