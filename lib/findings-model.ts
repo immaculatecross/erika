@@ -21,13 +21,15 @@ import { toFinding } from "./analysis/findings";
 //     complete `segment_analyses` witness — triaged, deep-listened if triage
 //     flagged it, and not `unreadable`. This is `isSegmentComplete` expressed in
 //     SQL, and it is the only thing that means "a model actually listened to this".
+//   * An **included finding** is one whose own audio is analysed — its
+//     `content_hash` carries that witness. So a finding counts from the moment the
+//     run that produced it committed it (findings and the witness are written in
+//     one transaction, lib/analysis/findings.ts), and no later process state
+//     un-says it.
 //   * An **analysed session** is a session with at least one analysed segment, and
 //     its **analysed speech** is the Σ duration of *those* segments only — never
 //     the whole session's speech. A rate's denominator must be what was listened
 //     to, not what was recorded.
-//   * An **included finding** is every persisted finding of an analysed session.
-//     A finding is a fact about the user's speech from the moment it is written;
-//     no later process state un-says it.
 //
 // Analysis-job state is deliberately NOT a gate anywhere. A job row describes a
 // *process*; the witness describes *evidence*. Gating reads on process state is
@@ -47,14 +49,26 @@ import { toFinding } from "./analysis/findings";
 /** Predicate on a joined `segment_analyses` row `a`: this audio was analysed. */
 const WITNESS_COMPLETE = "a.content_hash IS NOT NULL AND a.unreadable = 0 AND (a.flagged = 0 OR a.deep_done = 1)";
 
-/** `EXISTS` clause: the session named by `alias` has at least one analysed segment. */
-function sessionIsAnalysed(alias: string): string {
+/**
+ * The atom, as an `EXISTS` clause over whatever column holds a content hash: the
+ * audio behind it carries a complete analysis witness. Everything below is this
+ * one predicate applied to the join each surface needs — a finding's own hash for
+ * the finding scopes, a session's segments for the speech denominator.
+ */
+function hashIsAnalysed(hashColumn: string): string {
   return `EXISTS (
-    SELECT 1 FROM segments sg
-      JOIN segment_analyses a ON a.content_hash = sg.content_hash
-     WHERE sg.session_id = ${alias} AND ${WITNESS_COMPLETE}
+    SELECT 1 FROM segment_analyses a
+     WHERE a.content_hash = ${hashColumn} AND ${WITNESS_COMPLETE}
   )`;
 }
+
+/**
+ * SQL fragment: the included-finding scope, for any query over `findings f`. The
+ * one gate every finding-reading surface uses — the session report, the
+ * Phrasebook, the Archive, the lesson patterns, card generation, and (through
+ * `findingTallies`) Focus and the letter.
+ */
+export const INCLUDED_FINDING_SCOPE = hashIsAnalysed("f.content_hash");
 
 /** One analysed session, with the speech that was actually listened to. */
 export interface AnalysedSessionRow {
@@ -117,16 +131,13 @@ export function findingTallies(db: Db): FindingTally[] {
     .prepare(
       `SELECT f.session_id AS session_id, f.category AS category, f.severity AS severity, COUNT(*) AS n
          FROM findings f
-        WHERE ${sessionIsAnalysed("f.session_id")}
+        WHERE ${INCLUDED_FINDING_SCOPE}
         GROUP BY f.session_id, f.category, f.severity
         ORDER BY f.session_id, f.category, f.severity`,
     )
     .all() as { session_id: string; category: Category; severity: Severity; n: number }[];
   return rows.map((r) => ({ sessionId: r.session_id, category: r.category, severity: r.severity, count: r.n }));
 }
-
-/** SQL fragment: the included-finding scope, for a query over `findings f`. */
-export const INCLUDED_FINDING_SCOPE = sessionIsAnalysed("f.session_id");
 
 /**
  * Every included finding, newest first (insertion time, ties by id) — the

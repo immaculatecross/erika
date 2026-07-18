@@ -16,7 +16,7 @@ let pinPOST: typeof import("@/app/api/phrasebook/[findingId]/pin/route").POST;
 let getDb: typeof import("@/lib/db").getDb;
 let createSession: typeof import("@/lib/sessions").createSession;
 let persistSegmentFindings: typeof import("@/lib/analysis/findings").persistSegmentFindings;
-let listAllFindings: typeof import("@/lib/analysis/findings").listAllFindings;
+let listIncludedFindings: typeof import("@/lib/findings-model").listIncludedFindings;
 let generateCards: typeof import("@/lib/cards").generateCards;
 let deleteCard: typeof import("@/lib/cards").deleteCard;
 let listDueCards: typeof import("@/lib/cards").listDueCards;
@@ -31,7 +31,7 @@ beforeAll(async () => {
   createSession = (await import("@/lib/sessions")).createSession;
   const findings = await import("@/lib/analysis/findings");
   persistSegmentFindings = findings.persistSegmentFindings;
-  listAllFindings = findings.listAllFindings;
+  listIncludedFindings = (await import("@/lib/findings-model")).listIncludedFindings;
   const cards = await import("@/lib/cards");
   generateCards = cards.generateCards;
   deleteCard = cards.deleteCard;
@@ -68,8 +68,8 @@ describe("GET /api/phrasebook", () => {
   it("lists entries from every session with both sides and an in-deck flag", async () => {
     seed("s1", 2);
     seed("s2", 1);
-    // listAllFindings sees all three across sessions.
-    expect(listAllFindings(getDb())).toHaveLength(3);
+    // listIncludedFindings sees all three across sessions.
+    expect(listIncludedFindings(getDb())).toHaveLength(3);
 
     const entries = await getEntries();
     expect(entries).toHaveLength(3);
@@ -90,7 +90,7 @@ describe("GET /api/phrasebook", () => {
 describe("POST /api/phrasebook/[findingId]/pin", () => {
   it("creates exactly one card, is idempotent, and lands the card in the due queue", async () => {
     seed("pin", 1);
-    const findingId = listAllFindings(getDb())[0].id;
+    const findingId = listIncludedFindings(getDb())[0].id;
 
     const res = await pinPOST(pinReq(), pinCtx(findingId));
     expect(res.status).toBe(200);
@@ -105,7 +105,7 @@ describe("POST /api/phrasebook/[findingId]/pin", () => {
   it("un-tombstones a previously-deleted finding so it returns to the deck", async () => {
     seed("back", 1);
     generateCards(getDb());
-    const findingId = listAllFindings(getDb())[0].id;
+    const findingId = listIncludedFindings(getDb())[0].id;
     deleteCard(getDb(), listDueCards(getDb())[0].id); // remove it (E-5b tombstone)
     expect(listDueCards(getDb())).toHaveLength(0);
 

@@ -5,7 +5,7 @@ import { tmpDir } from "./helpers";
 import type { ArchiveEntry } from "@/lib/archive";
 
 // The Speech archive read route + its session-joined accessor (E-11 criterion 1).
-// listAllFindingsWithSession joins each finding to its session's capture date; the
+// listIncludedFindingsWithSession joins each finding to its session's capture date; the
 // route builds the chronological timeline (newest session first, startMs ascending
 // within a session). Real DB under a throwaway dir; env set before the lazy getDb()
 // binds, as in the phrasebook-route test.
@@ -15,7 +15,7 @@ let archiveGET: typeof import("@/app/api/archive/route").GET;
 let getDb: typeof import("@/lib/db").getDb;
 let createSession: typeof import("@/lib/sessions").createSession;
 let persistSegmentFindings: typeof import("@/lib/analysis/findings").persistSegmentFindings;
-let listAllFindingsWithSession: typeof import("@/lib/analysis/findings").listAllFindingsWithSession;
+let listIncludedFindingsWithSession: typeof import("@/lib/findings-model").listIncludedFindingsWithSession;
 
 beforeAll(async () => {
   root = tmpDir("erika-archive-route-");
@@ -26,7 +26,7 @@ beforeAll(async () => {
   createSession = (await import("@/lib/sessions")).createSession;
   const findings = await import("@/lib/analysis/findings");
   persistSegmentFindings = findings.persistSegmentFindings;
-  listAllFindingsWithSession = findings.listAllFindingsWithSession;
+  listIncludedFindingsWithSession = (await import("@/lib/findings-model")).listIncludedFindingsWithSession;
 });
 
 afterEach(() => getDb().prepare("DELETE FROM sessions").run());
@@ -55,10 +55,10 @@ async function getEntries(): Promise<ArchiveEntry[]> {
   return (await (await archiveGET()).json()).entries as ArchiveEntry[];
 }
 
-describe("listAllFindingsWithSession", () => {
+describe("listIncludedFindingsWithSession", () => {
   it("joins each finding to its session's capture date and filename", () => {
     seed("s1", "2026-07-10 09:00:00", [1000]);
-    const rows = listAllFindingsWithSession(getDb());
+    const rows = listIncludedFindingsWithSession(getDb());
     expect(rows).toHaveLength(1);
     expect(rows[0].sessionCreatedAt).toBe("2026-07-10 09:00:00");
     expect(rows[0].sessionFilename).toBe("s1.wav");

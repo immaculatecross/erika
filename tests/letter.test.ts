@@ -178,6 +178,9 @@ describe("buildLetter — only analyzed sessions are read (criterion 1 data path
     createSession(db, { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
     db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(createdAt, id); // pin the week
     upsertSegment(db, { sessionId: id, idx: 0, startMs: 0, endMs: HOUR, contentHash: `${id}-h0` });
+    // An un-analysed session has speech but no witness and so no findings — the
+    // only shape the cascade can actually produce (see the same note in focus.test).
+    if (!analyzed) return;
     persistSegmentFindings(db, {
       sessionId: id,
       contentHash: `${id}-h0`,
@@ -193,10 +196,8 @@ describe("buildLetter — only analyzed sessions are read (criterion 1 data path
         endMs: i * 1000 + 500,
       })),
     });
-    if (analyzed) {
-      const job = enqueueAnalysis(db, id);
-      db.prepare("UPDATE analysis_jobs SET state='done', progress=1 WHERE id=?").run(job.id);
-    }
+    const job = enqueueAnalysis(db, id);
+    db.prepare("UPDATE analysis_jobs SET state='done', progress=1 WHERE id=?").run(job.id);
   }
 
   it("is null over a fresh DB", () => {

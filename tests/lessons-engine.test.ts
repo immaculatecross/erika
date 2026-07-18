@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { createSession } from "@/lib/sessions";
 import { writeSettings } from "@/lib/settings";
-import { persistSegmentFindings, listAllFindings, type NewFinding } from "@/lib/analysis/findings";
+import { persistSegmentFindings, type NewFinding } from "@/lib/analysis/findings";
+import { listIncludedFindings } from "@/lib/findings-model";
 import { monthToDateSpend, recordSpend } from "@/lib/analysis/budget";
 import { TEXT_MODEL, textCallCost } from "@/lib/analysis/rates";
 import { derivePatterns, type Pattern } from "@/lib/lessons/patterns";
@@ -54,7 +55,7 @@ function seedPattern(db: Db, n = 3): Pattern {
     endMs: i * 1000 + 500,
   }));
   persistSegmentFindings(db, { sessionId: "s1", contentHash: "h", flagged: true, deepDone: true, findings });
-  const patterns = derivePatterns(listAllFindings(db));
+  const patterns = derivePatterns(listIncludedFindings(db));
   expect(patterns).toHaveLength(1);
   return patterns[0];
 }
