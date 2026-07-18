@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MODEL_TIERS, type ModelTier, type Settings } from "@/lib/settings";
+import { formatUsd } from "@/lib/format";
 
 type Status = { kind: "idle" | "saving" | "saved" } | { kind: "error"; message: string };
 
@@ -11,12 +12,16 @@ const FIELD =
 
 export default function SettingsPage() {
   const [form, setForm] = useState<Settings | null>(null);
+  const [spent, setSpent] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
-      .then((s: Settings) => setForm(s))
+      .then(({ spentThisMonth, ...s }: Settings & { spentThisMonth: number }) => {
+        setForm(s);
+        setSpent(spentThisMonth);
+      })
       .catch(() => setStatus({ kind: "error", message: "Could not load settings." }));
   }, []);
 
@@ -98,6 +103,30 @@ export default function SettingsPage() {
             }
           />
         </label>
+
+        {/* Month-to-date spend from spend_ledger (E-18 criterion 4) — display
+            only; the cap and every budget check live server-side, untouched.
+            Red only when the cap is reached: that state carries meaning. */}
+        {spent !== null && (
+          <div className="flex flex-col gap-1.5" data-spend>
+            <span className={LABEL}>Spent this month</span>
+            <p className="tabular text-[15px] text-ink">
+              <span data-spent-figure>{formatUsd(spent)}</span>
+              <span className="text-secondary"> of {formatUsd(Number(form.monthlyBudgetUsd) || 0)}</span>
+              {spent >= (Number(form.monthlyBudgetUsd) || 0) - 1e-9 && (
+                <span className="text-severe"> — budget reached</span>
+              )}
+            </p>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-hairline" aria-hidden>
+              <div
+                className="h-full rounded-full bg-accent"
+                style={{
+                  width: `${Math.min(100, (Number(form.monthlyBudgetUsd) || 0) > 0 ? (spent / Number(form.monthlyBudgetUsd)) * 100 : spent > 0 ? 100 : 0)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center gap-3 pt-1">
           <button
