@@ -119,6 +119,10 @@ function surfaceCounts(db: Db): Record<string, number> {
     archive: buildArchive(
       listIncludedFindingsWithSession(db).map((f) => ({ ...f, id: f.id })),
     ).length,
+    // The lesson engine filters the shared set further (a category needs
+    // PATTERN_THRESHOLD findings to be a pattern), so every fixture here is
+    // single-category and at/above that threshold — otherwise the filter, not the
+    // scope, would decide the number and a scope difference could hide behind it.
     patterns: derivePatterns(listIncludedFindings(db)).reduce((n, p) => n + p.count, 0),
     cards: cardsBefore + created,
   };
@@ -144,7 +148,7 @@ describe("E-17 criterion 1 — one findings truth", () => {
 
   it("a re-analysis in flight changes nothing anywhere", () => {
     const db = freshDb();
-    seed(db, "rerun", { segments: 2, analysed: 2, state: "done" });
+    seed(db, "rerun", { segments: 3, analysed: 3, state: "done" });
     const before = surfaceCounts(db);
 
     // Press Analyze again: the latest job is now `queued`.
@@ -154,7 +158,8 @@ describe("E-17 criterion 1 — one findings truth", () => {
 
     const after = surfaceCounts(db);
     expect(after).toEqual(before);
-    expect(after.focus).toBe(2);
+    expect(after.focus).toBe(3);
+    expect(new Set(Object.values(after)).size).toBe(1);
     db.close();
   });
 
