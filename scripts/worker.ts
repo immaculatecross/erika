@@ -8,11 +8,14 @@ import {
 import { openAiAudioModel } from "../lib/analysis/audio-model";
 
 // `npm run worker`: a thin loop around processJob (E-3 ingest) and runAnalysisJob
-// (E-4 analysis — the real OpenAI cascade). On start it reclaims any job a
-// previous crash left in `processing` and resumes it (checkpointed / hash-cached,
-// so no redone, duplicated, or re-billed work), then drains the oldest queued
-// jobs. Set ERIKA_WORKER_ONCE=1 to exit once both queues are empty (used for
-// verification); otherwise it polls. All logging goes to stderr — stdout clean.
+// (E-4 analysis — the real OpenAI cascade). Every claim takes a heartbeat lease
+// under this process's worker identity (lib/jobs/lease.ts), so a reclaim on each
+// tick only picks up jobs whose lease has gone STALE — a second worker can no
+// longer re-run a job the first is still executing (E-16 defect 2). A genuinely
+// abandoned job is still resumed (checkpointed / hash-cached, so no redone,
+// duplicated, or re-billed work). Set ERIKA_WORKER_ONCE=1 to exit once both
+// queues are empty (used for verification); otherwise it polls. All logging goes
+// to stderr — stdout clean.
 
 const POLL_MS = Number(process.env.ERIKA_WORKER_POLL_MS ?? 1000);
 const ONCE = process.env.ERIKA_WORKER_ONCE === "1";

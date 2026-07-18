@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
 import { openDatabase, runMigrations } from "@/lib/db";
 import { migrations } from "@/lib/migrations";
 
@@ -51,5 +52,67 @@ describe("migrations runner", () => {
     const applied = runMigrations(reopened);
     expect(applied).toEqual([]);
     reopened.close();
+  });
+
+  it("v8 adds the lease columns and the findings identity index (E-16)", () => {
+    const db = openDatabase(tmpDbPath());
+    for (const table of ["ingest_jobs", "analysis_jobs"]) {
+      const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+      expect(cols).toContain("worker_id");
+      expect(cols).toContain("heartbeat_at");
+    }
+    const idx = (db.prepare("PRAGMA index_list(findings)").all() as { name: string; unique: number }[]).find(
+      (i) => i.name === "idx_findings_identity",
+    );
+    expect(idx?.unique).toBe(1);
+    db.close();
+  });
+
+  it("v8 collapses pre-existing duplicate findings so the unique index can build", () => {
+    // A database written before the lease landed may already carry duplicates
+    // from a double-run. Migrating must dedupe rather than fail to apply.
+    const p = tmpDbPath();
+    const upTo7 = migrations.filter((m) => m.version <= 7);
+    const db = openDatabase(p);
+    db.close();
+
+    // Rebuild a v7-era database and plant a duplicate pair.
+    fs.rmSync(p);
+    const legacy = new Database(p);
+    legacy.exec(`CREATE TABLE _migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now')));`);
+    for (const m of upTo7) {
+      m.up(legacy);
+      legacy.prepare("INSERT INTO _migrations (version, name) VALUES (?, ?)").run(m.version, m.name);
+    }
+    legacy
+      .prepare(
+        `INSERT INTO sessions (id, original_filename, format, size_bytes, duration_seconds)
+         VALUES ('s1', 't.wav', 'wav', 1, 60)`,
+      )
+      .run();
+    const ins = legacy.prepare(
+      `INSERT INTO findings (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
+       VALUES (?, 's1', 'h', 'dup', 'fix', 'grammar', 'why', 'low', 1000, 2000)`,
+    );
+    ins.run("a");
+    ins.run("b"); // the byte-identical row a replayed write would have left
+    // Same span, genuinely different finding — must SURVIVE the dedupe, because
+    // `quote` names the erroneous span, not the finding.
+    legacy
+      .prepare(
+        `INSERT INTO findings (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
+         VALUES ('c', 's1', 'h', 'dup', 'other fix', 'pronunciation', 'why', 'low', 1000, 2000)`,
+      )
+      .run();
+    expect((legacy.prepare("SELECT COUNT(*) AS n FROM findings").get() as { n: number }).n).toBe(3);
+    legacy.close();
+
+    const migrated = openDatabase(p); // applies v8
+    const rows = migrated.prepare("SELECT id FROM findings ORDER BY id").all() as { id: string }[];
+    // Oldest created_at wins, ties broken by id — deterministic, and 'c' is not a
+    // duplicate under the widened key so it is untouched.
+    expect(rows).toEqual([{ id: "a" }, { id: "c" }]);
+    migrated.close();
   });
 });

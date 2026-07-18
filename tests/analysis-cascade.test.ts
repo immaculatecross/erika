@@ -14,6 +14,8 @@ import {
   type AudioModelClient,
   type DeepResult,
   ModelParseError,
+  ModelUnavailableError,
+  parseDeepResponse,
 } from "@/lib/analysis/audio-model";
 
 // The cascade against a MOCK client + dummy on-disk audio (no network, no
@@ -108,6 +110,50 @@ describe("cascade shape (criterion 1)", () => {
 });
 
 describe("findings persistence (criterion 2)", () => {
+  // Regression for the identity key: `quote` names the erroneous SPAN, not the
+  // finding, and `relStartMs` is OPTIONAL in the deep-response contract — the
+  // parser accepts a reply without offsets and toTimeline anchors it at the
+  // segment start. So two genuinely different findings on one utterance share a
+  // (session, hash, start_ms, quote) key. A key that narrow drops the second
+  // silently: the job still lands `done` and the call is still billed in full.
+  it("keeps two distinct findings that share a quote and a start_ms", async () => {
+    const db = ws();
+    seed(db, "s1", ["h0"]);
+    // A deep reply the SHIPPED parser accepts as fully valid — same quote, two
+    // categories, two corrections, no offsets at all.
+    const { findings } = parseDeepResponse(
+      JSON.stringify({
+        findings: [
+          {
+            quote: "I have 25 years",
+            correction: "I am 25 years old",
+            category: "grammar",
+            explanation: "age takes 'to be' in English",
+            severity: "high",
+          },
+          {
+            quote: "I have 25 years",
+            correction: "I am twenty-five years old",
+            category: "pronunciation",
+            explanation: "the numeral is clipped",
+            severity: "medium",
+          },
+        ],
+      }),
+    );
+    expect(findings.every((f) => f.relStartMs === undefined)).toBe(true);
+
+    const { client } = mockClient({ flag: new Set(["h0"]), deepFindings: findings });
+    const job = await run(db, "s1", client);
+    expect(job.state).toBe("done");
+
+    const persisted = listFindings(db, "s1");
+    expect(persisted).toHaveLength(2); // both, not one
+    expect(persisted.map((f) => f.category).sort()).toEqual(["grammar", "pronunciation"]);
+    expect(new Set(persisted.map((f) => f.startMs))).toEqual(new Set([0])); // same span
+    db.close();
+  });
+
   it("persists parsed findings with timeline-absolute timestamps", async () => {
     const db = ws();
     seed(db, "s1", ["h0", "h1"]); // h1 at segment start 60_000ms
@@ -167,6 +213,131 @@ describe("never re-bill cached segments (criterion 4)", () => {
     expect(listFindings(db, "s2")).toHaveLength(1);
     const ledgerAfterS2 = db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number };
     expect(ledgerAfterS2.n).toBe(ledgerAfterS1.n);
+    db.close();
+  });
+});
+
+/** Seed a session carrying ONE segment of `hash` at an explicit timeline offset. */
+function seedAt(db: Db, sessionId: string, hash: string, startMs: number, durationMs = 4000): void {
+  createSession(db, { id: sessionId, originalFilename: "t.wav", format: "wav", sizeBytes: 1, durationSeconds: 7200 });
+  upsertSegment(db, { sessionId, idx: 0, startMs, endMs: startMs + durationMs, contentHash: hash });
+  for (const p of [renditionCachePath(hash, TEMPO), segmentPath(sessionId, 0)]) {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, Buffer.from(`audio-${hash}`));
+  }
+}
+
+describe("cache reuse remaps timestamps onto the target segment (E-16 defect 1)", () => {
+  // The donor finding's start_ms/end_ms are absolute offsets on the DONOR's
+  // timeline. Cloning them verbatim into a session where the identical audio sits
+  // an hour later produced a finding at 11 s — outside the target segment
+  // entirely, so jump-to-audio, the archive and the timeline all pointed at the
+  // wrong moment (or at nothing). What the two segments share is the offset
+  // WITHIN the segment; that is what must survive the clone.
+  it("an offset-shifted duplicate lands inside the target segment, not the donor's", async () => {
+    const db = ws();
+    seedAt(db, "donor", "hd", 10_000); // donor segment at 10–14 s
+    await run(db, "donor", mockClient({ flag: new Set(["hd"]) }).client);
+    const donorFinding = listFindings(db, "donor")[0];
+    expect(donorFinding.startMs).toBe(11_000); // rel 1000 within a segment at 10_000
+    expect(donorFinding.endMs).toBe(12_000);
+
+    // Byte-identical audio, one hour into a different session.
+    seedAt(db, "target", "hd", 3_600_000);
+    const dup = mockClient({ flag: new Set(["hd"]) });
+    const job = await run(db, "target", dup.client);
+    expect(job.state).toBe("done");
+    expect(dup.calls.triage).toEqual([]); // still a cache hit — zero calls
+    expect(dup.calls.deep).toEqual([]);
+
+    const reused = listFindings(db, "target");
+    expect(reused).toHaveLength(1);
+    // The same 1 s offset, re-anchored at the TARGET segment's start.
+    expect(reused[0].startMs).toBe(3_601_000); // was 11_000 before the fix
+    expect(reused[0].endMs).toBe(3_602_000);
+    // ...and, stated as the invariant that actually matters:
+    expect(reused[0].startMs).toBeGreaterThanOrEqual(3_600_000);
+    expect(reused[0].endMs).toBeLessThanOrEqual(3_604_000);
+    db.close();
+  });
+
+  it("a same-offset duplicate is unchanged", async () => {
+    const db = ws();
+    seedAt(db, "donor", "hd", 10_000);
+    await run(db, "donor", mockClient({ flag: new Set(["hd"]) }).client);
+    seedAt(db, "twin", "hd", 10_000); // identical audio at the identical offset
+    await run(db, "twin", mockClient({ flag: new Set(["hd"]) }).client);
+    expect(listFindings(db, "twin")[0]).toMatchObject({ startMs: 11_000, endMs: 12_000 });
+    db.close();
+  });
+
+  it("clamps a donor finding that would land past the target segment's end", async () => {
+    const db = ws();
+    seedAt(db, "donor", "hd", 10_000, 60_000); // a long donor segment
+    const late = mockClient({
+      flag: new Set(["hd"]),
+      deepFindings: [
+        {
+          quote: "late",
+          correction: "fixed",
+          category: "grammar",
+          explanation: "why",
+          severity: "low",
+          startMs: 0,
+          endMs: 0,
+          relStartMs: 50_000, // 50 s into the donor segment
+          relEndMs: 52_000,
+        },
+      ],
+    });
+    await run(db, "donor", late.client);
+    expect(listFindings(db, "donor")[0].startMs).toBe(60_000);
+
+    // The target segment for the same hash is only 4 s long: the offset cannot
+    // fit, so it is clamped to the target's bounds rather than escaping them.
+    seedAt(db, "short", "hd", 3_600_000, 4000);
+    await run(db, "short", mockClient({ flag: new Set(["hd"]) }).client);
+    const f = listFindings(db, "short")[0];
+    expect(f.startMs).toBe(3_604_000); // clamped to the segment end
+    expect(f.endMs).toBe(3_604_000);
+    db.close();
+  });
+});
+
+describe("spend is recorded when a call resolves, not after parsing (E-16 defect 4)", () => {
+  // A 200 that fails to parse charged OpenAI while the ledger recorded nothing —
+  // so the retry billed again and the "hard cap" capped only *recorded* money,
+  // understating spend exactly when things were going wrong.
+  it("a deep call that resolves but fails to parse still ledgers its cost", async () => {
+    const db = ws();
+    seed(db, "s1", ["h1"]); // one 60 s segment, flagged
+    const { client } = mockClient({ flag: new Set(["h1"]), deepThrows: new ModelParseError("garbage") });
+    const job = await run(db, "s1", client);
+
+    expect(job.state).toBe("failed");
+    expect(listFindings(db, "s1")).toEqual([]); // still nothing half-written
+    const rows = db.prepare("SELECT model, cost_usd FROM spend_ledger ORDER BY model").all() as {
+      model: string;
+      cost_usd: number;
+    }[];
+    // The mini triage (which parsed fine) AND the unparseable deep call.
+    expect(rows.map((r) => r.model)).toEqual(["gpt-audio-1.5", "gpt-audio-mini"]);
+    // 60 s of deep audio at $0.06/min = $0.06 — the real charge, not zero.
+    expect(rows[0].cost_usd).toBeCloseTo(0.06, 9);
+    db.close();
+  });
+
+  it("a network failure records nothing — no completion, no charge", async () => {
+    const db = ws();
+    seed(db, "s1", ["h1"]);
+    const { client } = mockClient({
+      flag: new Set(["h1"]),
+      deepThrows: new ModelUnavailableError("connection reset"),
+    });
+    await run(db, "s1", client);
+    // Only the mini's successful triage is on the ledger; the deep call is not.
+    const models = (db.prepare("SELECT model FROM spend_ledger").all() as { model: string }[]).map((r) => r.model);
+    expect(models).toEqual(["gpt-audio-mini"]);
     db.close();
   });
 });

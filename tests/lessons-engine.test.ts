@@ -7,6 +7,7 @@ import { createSession } from "@/lib/sessions";
 import { writeSettings } from "@/lib/settings";
 import { persistSegmentFindings, listAllFindings, type NewFinding } from "@/lib/analysis/findings";
 import { monthToDateSpend, recordSpend } from "@/lib/analysis/budget";
+import { TEXT_MODEL, textCallCost } from "@/lib/analysis/rates";
 import { derivePatterns, type Pattern } from "@/lib/lessons/patterns";
 import { generateLessonForPattern } from "@/lib/lessons/generate";
 import { gradeRewrite } from "@/lib/lessons/grade";
@@ -93,14 +94,43 @@ describe("lesson generation persists & caches (criteria 2, 4)", () => {
     db.close();
   });
 
-  it("a malformed reply persists no lesson and records no spend", async () => {
+  // E-16 defect 4 (was: "...and records no spend"). The call RESOLVED, so OpenAI
+  // charged for it; only the parse failed. Recording nothing here meant the retry
+  // billed again while the cap counted only the money we had managed to parse.
+  it("a malformed reply persists no lesson but STILL ledgers the resolved call", async () => {
     const db = freshDb();
     const pattern = seedPattern(db);
     const { client, calls } = mockClient("total garbage, not json");
     await expect(generateLessonForPattern(db, client, pattern)).rejects.toBeInstanceOf(TextModelParseError);
     expect(calls).toHaveLength(1); // the call happened...
-    expect(getLessonByPattern(db, pattern.key)).toBeNull(); // ...but nothing was written
-    expect(monthToDateSpend(db)).toBe(0);
+    expect(getLessonByPattern(db, pattern.key)).toBeNull(); // ...but no lesson was written
+    // ...and the charge is on the ledger, at the call's real usage-derived cost.
+    const rows = db.prepare("SELECT model, cost_usd FROM spend_ledger").all() as {
+      model: string;
+      cost_usd: number;
+    }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].model).toBe(TEXT_MODEL);
+    expect(rows[0].cost_usd).toBeCloseTo(textCallCost(TEXT_MODEL, 120, 240), 12);
+    expect(monthToDateSpend(db)).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("a malformed GRADE reply also ledgers its resolved call (defect 4, both engines)", async () => {
+    const db = freshDb();
+    const pattern = seedPattern(db);
+    const { client, calls } = mockClient("not json either");
+    await expect(
+      gradeRewrite(db, client, { patternKey: pattern.key, target: "I am 25", rewrite: "I have 25" }),
+    ).rejects.toBeInstanceOf(TextModelParseError);
+    expect(calls).toHaveLength(1);
+    const rows = db.prepare("SELECT content_hash, cost_usd FROM spend_ledger").all() as {
+      content_hash: string;
+      cost_usd: number;
+    }[];
+    expect(rows).toHaveLength(1); // exactly one — not double-recorded
+    expect(rows[0].content_hash).toBe(`grade:${pattern.key}`);
+    expect(rows[0].cost_usd).toBeCloseTo(textCallCost(TEXT_MODEL, 120, 240), 12);
     db.close();
   });
 });

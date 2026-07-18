@@ -1,6 +1,6 @@
 import type { Db } from "../db";
 import { readSettings } from "../settings";
-import { monthToDateSpend, wouldExceedBudget } from "../analysis/budget";
+import { monthToDateSpend, recordSpend, wouldExceedBudget } from "../analysis/budget";
 import { TEXT_MODEL, estimateTokens, textCallCost } from "../analysis/rates";
 import type { TextCompletion, TextModelClient } from "./text-model";
 
@@ -45,6 +45,28 @@ export async function runBilledTextCall(
   const completion = await client.complete(input);
   const costUsd = textCallCost(TEXT_MODEL, completion.promptTokens, completion.completionTokens);
   return { completion, costUsd };
+}
+
+/**
+ * Parse a resolved billable call's response, ledgering the charge if the parse
+ * fails (E-16 defect 4). The call already completed, so OpenAI already charged for
+ * it; recording nothing on a malformed reply let the retry bill again while the
+ * "hard cap" capped only *recorded* money — it understated spend precisely when
+ * things were going wrong. On success nothing is written here: the caller still
+ * records the spend itself, so `generateLessonForPattern` keeps committing the
+ * lesson and its charge in ONE transaction.
+ */
+export function parseBilledResponse<T>(
+  db: Db,
+  spend: { contentHash: string; costUsd: number },
+  parse: () => T,
+): T {
+  try {
+    return parse();
+  } catch (err) {
+    recordSpend(db, { model: TEXT_MODEL, contentHash: spend.contentHash, costUsd: spend.costUsd });
+    throw err;
+  }
 }
 
 /** True once the month's spend has already reached the cap — for route-level pre-checks. */

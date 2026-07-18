@@ -237,4 +237,60 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-16 Hardening (defect 2): the heartbeat lease and the findings identity key.
+    //
+    // Both job tables gain `worker_id` (who holds the lease) and `heartbeat_at`
+    // (when that holder last proved it was alive). Before this, *every* row in
+    // `processing` was reclaimable by anyone, so a second worker re-ran a job the
+    // first was actively executing — double OpenAI spend and duplicate findings.
+    // A claim now stamps both columns and each checkpoint refreshes the heartbeat;
+    // reclaim only takes rows whose heartbeat is older than JOB_LEASE_STALE_MS
+    // (lib/jobs/lease.ts). Legacy rows carry NULL, which reads as "no live lease"
+    // and stays reclaimable — the pre-v8 behaviour for genuinely abandoned work.
+    //
+    // `idx_findings_identity` guards ONE narrow case: re-inserting the *exact
+    // same finding* — same session, audio, timestamp, quote, correction and
+    // category. It does NOT prevent the double-run race; the heartbeat lease does
+    // that. Two independent model replies about the same speech routinely disagree
+    // on the offset by a few hundred ms, which is a different key, so both would
+    // persist. Read this as idempotence for a replayed write, nothing wider.
+    //
+    // `correction` and `category` are part of the key because `quote` names the
+    // erroneous SPAN, not the finding: one utterance can legitimately carry a
+    // grammar finding and a pronunciation finding with different corrections. A
+    // narrower key would silently drop the second — and `relStartMs` is optional
+    // in the deep-response contract (it defaults to 0), so a reply that omits
+    // offsets collapses every finding in the segment onto the same `start_ms`.
+    //
+    // Writers use `ON CONFLICT DO NOTHING` against this index, which swallows only
+    // the duplicate — a CHECK violation (bad category/severity) still throws and
+    // still rolls its transaction back (E-4 atomicity). Existing duplicates are
+    // collapsed before the index builds: the survivor is the oldest `created_at`,
+    // ties broken by `id`, so the choice is deterministic across re-runs and
+    // across machines. (`MIN(id)` alone would NOT be "earliest" — ids are random
+    // UUID text, so its ordering is lexicographic and unrelated to insert time.)
+    version: 8,
+    name: "job_lease_and_findings_identity",
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE ingest_jobs   ADD COLUMN worker_id    TEXT;
+        ALTER TABLE ingest_jobs   ADD COLUMN heartbeat_at TEXT;
+        ALTER TABLE analysis_jobs ADD COLUMN worker_id    TEXT;
+        ALTER TABLE analysis_jobs ADD COLUMN heartbeat_at TEXT;
+
+        DELETE FROM findings WHERE id NOT IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (
+              PARTITION BY session_id, content_hash, start_ms, quote, correction, category
+              ORDER BY created_at, id
+            ) AS rn
+            FROM findings
+          ) WHERE rn = 1
+        );
+        CREATE UNIQUE INDEX idx_findings_identity
+          ON findings (session_id, content_hash, start_ms, quote, correction, category);
+      `);
+    },
+  },
 ];

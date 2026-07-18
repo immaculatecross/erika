@@ -3,7 +3,7 @@ import { readSettings } from "../settings";
 import { recordSpend } from "../analysis/budget";
 import { TEXT_MODEL } from "../analysis/rates";
 import { extractJsonObject, TextModelParseError, type TextModelClient } from "./text-model";
-import { runBilledTextCall } from "./billing";
+import { parseBilledResponse, runBilledTextCall } from "./billing";
 
 // Rewrite grading (E-6, WO criterion 3): grade a learner's free-text rewrite
 // against the exercise's target sentence with ONE budget-checked text-model call
@@ -52,8 +52,9 @@ export function parseGradeResponse(raw: string): GradeResult {
 /**
  * Grade a rewrite against its target. Budget-check → one model call → parse →
  * record the spend into the shared ledger. Throws `BudgetExceededError` before
- * any call if the cap would be breached, or `TextModelParseError` on a malformed
- * reply (nothing recorded, since no call resolved). `patternKey` is the ledger
+ * any call if the cap would be breached — no call, so nothing recorded — or
+ * `TextModelParseError` on a malformed reply, which DOES record the charge: that
+ * call resolved and was billed (E-16 defect 4). `patternKey` is the ledger
  * witness — the pattern the graded exercise belongs to.
  */
 export async function gradeRewrite(
@@ -67,7 +68,12 @@ export async function gradeRewrite(
     prompt,
     maxOutputTokens: GRADE_MAX_OUTPUT_TOKENS,
   });
-  const result = parseGradeResponse(completion.text); // throws before recording on malformed
-  recordSpend(db, { model: TEXT_MODEL, contentHash: `grade:${input.patternKey}`, costUsd });
+  const ledgerKey = `grade:${input.patternKey}`;
+  // The call resolved, so it was billed: a malformed reply still ledgers the
+  // charge (E-16 defect 4) before rethrowing, rather than silently eating it.
+  const result = parseBilledResponse(db, { contentHash: ledgerKey, costUsd }, () =>
+    parseGradeResponse(completion.text),
+  );
+  recordSpend(db, { model: TEXT_MODEL, contentHash: ledgerKey, costUsd });
   return result;
 }

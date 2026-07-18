@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSilences, speechIntervals } from "@/lib/ingest/vad";
+import { MAX_SEGMENT_MS, MIN_SEGMENT_MS, parseSilences, speechIntervals } from "@/lib/ingest/vad";
 import {
   DEFAULT_TRIAGE_TEMPO,
   MAX_TRIAGE_TEMPO,
@@ -59,6 +59,76 @@ describe("speechIntervals (criteria 2 & 3 logic)", () => {
   it("clamps silence bounds to [0, total]", () => {
     const out = speechIntervals([{ startMs: -500, endMs: 3000 }], 8000);
     expect(out).toEqual([{ startMs: 3000, endMs: 8000 }]);
+  });
+});
+
+describe("speechIntervals bounds segment length (E-16 defect 3)", () => {
+  // Merging never split, so continuous background sound (a café, a TV left on)
+  // yielded ONE multi-hour "speech" segment — which cascade.ts then read whole
+  // into a Buffer and base64-encoded for the API, breaking analysis at exactly
+  // the day scale D-9 promises, and doing so AFTER the triage had been billed.
+  const total = (ivs: { startMs: number; endMs: number }[]) =>
+    ivs.reduce((n, iv) => n + (iv.endMs - iv.startMs), 0);
+
+  it("splits a 3-hour continuous tone into pieces that each fit the cap", () => {
+    const THREE_HOURS = 3 * 60 * 60 * 1000;
+    const out = speechIntervals([], THREE_HOURS); // no silence at all
+
+    expect(out.length).toBeGreaterThan(1); // was exactly 1 before the fix
+    for (const iv of out) expect(iv.endMs - iv.startMs).toBeLessThanOrEqual(MAX_SEGMENT_MS);
+    // Contiguous, ordered, and covering the whole span — no speech is lost.
+    expect(out[0].startMs).toBe(0);
+    expect(out[out.length - 1].endMs).toBe(THREE_HOURS);
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i].startMs).toBe(out[i - 1].endMs); // contiguous
+      expect(out[i].endMs).toBeGreaterThan(out[i].startMs); // correctly ordered
+    }
+    expect(total(out)).toBe(THREE_HOURS); // total speech time preserved exactly
+  });
+
+  it("leaves an interval already under the cap untouched", () => {
+    const out = speechIntervals([], MAX_SEGMENT_MS - 1000);
+    expect(out).toEqual([{ startMs: 0, endMs: MAX_SEGMENT_MS - 1000 }]);
+  });
+
+  it("cuts at the quietest contained dip rather than flat at the ideal point", () => {
+    // 8 minutes of continuous speech broken only by two sub-merge-threshold
+    // pauses (100 ms and 250 ms) — both merged over, so both are candidate cut
+    // points. It splits into 3 pieces with ideal cuts at 160 s and 320 s; the
+    // dips sit near the first, and the LONGER pause is the better boundary.
+    const EIGHT_MIN = 8 * 60 * 1000;
+    const out = speechIntervals(
+      [
+        { startMs: 156_000, endMs: 156_100 }, // 100 ms dip
+        { startMs: 163_000, endMs: 163_250 }, // 250 ms dip — the quietest
+      ],
+      EIGHT_MIN,
+      { mergeGapMs: 300 },
+    );
+    expect(out).toHaveLength(3);
+    expect(out[0].endMs).toBe(163_125); // the midpoint of the longer pause
+    expect(out[1].startMs).toBe(163_125); // still contiguous
+    for (const iv of out) expect(iv.endMs - iv.startMs).toBeLessThanOrEqual(MAX_SEGMENT_MS);
+    expect(total(out)).toBe(EIGHT_MIN); // and no speech time lost to the cut
+  });
+
+  it("splits so that no piece is dropped as sub-minimum", () => {
+    // Just over the cap: a naive "cut at the cap" would leave a 1 s tail, which
+    // the min-length filter would then discard — silently losing speech.
+    const out = speechIntervals([], MAX_SEGMENT_MS + 1000);
+    expect(out).toHaveLength(2);
+    for (const iv of out) {
+      expect(iv.endMs - iv.startMs).toBeLessThanOrEqual(MAX_SEGMENT_MS);
+      expect(iv.endMs - iv.startMs).toBeGreaterThanOrEqual(MIN_SEGMENT_MS);
+    }
+    expect(total(out)).toBe(MAX_SEGMENT_MS + 1000);
+  });
+
+  it("honours an explicit maxSegmentMs override", () => {
+    const out = speechIntervals([], 10_000, { maxSegmentMs: 3000 });
+    expect(out).toHaveLength(4); // ceil(10/3)
+    for (const iv of out) expect(iv.endMs - iv.startMs).toBeLessThanOrEqual(3000);
+    expect(total(out)).toBe(10_000);
   });
 });
 
