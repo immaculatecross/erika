@@ -37,3 +37,17 @@ Slips/fossil states (E-20), contrastive playback (E-21), session map (E-22), pag
 ## PR + exit report
 
 PR title Conventional-Commit; body: what changed, exact verification commands, risks. Append the `task.md` exit block to this file. Be token-efficient: read only what this WO names plus immediate dependencies; no repo-wide exploration; terse report.
+
+## Exit report
+
+```
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/28
+Changed:  /practice = daily plan (lib/plan.ts, /api/plan; letter-viewed marker in settings kv, no migration)
+          sessions list rows carry yield via findings-model aggregates; inline Analyze gated exactly as the route's 409/402
+          Settings shows month-to-date spend_ledger spend vs cap (display only)
+          lesson rows: "Lesson ready" vs "Generate — est. $X" via the existing estimate machinery
+          green reserved (shared SEVERITY_STYLES; READY/LOW/In-deck neutral); RETRO-001 fold-ins (real-link empty states, auto-named takes, "Not started", drill recap, no "cascade" jargon)
+Verified: npm run lint / typecheck / test (338 passed, +28) / build; tripwires via pre-commit; live dev-server drive on a throwaway DB (plan, letter-viewed flip, yield, 409/202 analyze, spend, lesson price)
+Risks:    /api/sessions shape is a superset (additive); serving /api/letter marks the letter read (prefetch would too); light/dark screenshots not capturable here (proxy blocks chromium download) — reviewer should eyeball
+```
