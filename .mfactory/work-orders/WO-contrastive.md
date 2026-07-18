@@ -28,3 +28,17 @@ Minimal-pair drills / pronunciation studio (E-8, v0.4), session map (E-22), Ask 
 ## PR + exit report
 
 Conventional-Commit title; body: what changed, exact verification commands, risks. Append the `task.md` exit block to this file. Token-efficient: read only what this WO names plus immediate dependencies; terse report.
+
+---
+
+## Repair addendum (2026-07-18) — money-path fix from Full-tier review of PR #30
+
+**Finding (BLOCKING, D-15 unrecorded spend):** `renderCorrection` ordered budget check → `synthesize()` → INSERT/`recordSpend`. Two concurrent Generates for the same finding both passed the null-cache and budget checks and both called the provider (two real charges); the second INSERT hit `ON CONFLICT DO NOTHING` so only one ledger row was written → actual spend > recorded spend, cap under-counted.
+
+**Fix:** lease-before-spend. `renderCorrection` now claims the `finding_id` row (`insertRendition`) FIRST — before the budget check and before `synthesize()`. Exactly one racing request wins the claim and reaches the provider; the loser detects the lost claim (or the winner's in-progress row) and returns `generated: false` with zero provider call and zero ledger row. Cost is fully determined from correction length (estimate == actual), so the claim row carries its final cost; only `recordSpend` + file write remain after a successful call. `recordSpend` runs immediately after a successful `synthesize()` (money that left the provider is always ledgered). An uncommitted claim is released via the new `deleteRendition` on budget refusal or failed synthesize, so a claim is a lease, not a permanent tombstone; past the point money is spent the claim is never released (a file-write failure keeps row+ledger, playback stays orphan-safe).
+
+**Test:** the concurrent double-generate test now asserts `client.calls === 1` (previously only ledger/rendition == 1, which passed with 2 calls). Added a second test proving the losing racer makes zero provider call and zero ledger row. Verified: with the test strengthened but the engine reverted to the pre-repair ordering, the `calls === 1` assertion fails (`expected 2 to be 1`); after the fix all 9 render tests pass.
+
+**Advisory folded in:** comments in `lib/render/engine.ts`, `lib/render/renditions.ts`, and `docs/schema.md` rewritten to describe the lease-before-spend ordering truthfully (the PK now gates the double *call*, not just the double bill).
+
+Scope untouched: FEATURES.md, STATE.md, slips/Focus, cascade/prompts, migration numbering (v12 stays; no schema change — the release path reuses the existing row).
