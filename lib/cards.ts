@@ -133,6 +133,47 @@ export function generateCards(db: Db): number {
   return created;
 }
 
+/**
+ * Pin one finding into the deck (E-9): ensure a card exists for it, deliberately
+ * clearing any `deleted_findings` tombstone first — so a finding the user removed
+ * from their deck (E-5b) can be added back on purpose. Idempotent: the
+ * `finding_id` UNIQUE key + INSERT OR IGNORE means a second pin is a no-op and the
+ * existing card (with its live schedule) is untouched — no duplicate. Returns the
+ * finding's card, or null if the finding does not exist. This is the ONLY seam
+ * that un-tombstones; the bulk `generateCards` still skips tombstoned findings.
+ */
+export function createCardForFinding(db: Db, findingId: string): Card | null {
+  return db.transaction(() => {
+    const f = db
+      .prepare(
+        `SELECT id, session_id, quote, correction, explanation, category, start_ms
+           FROM findings WHERE id = ?`,
+      )
+      .get(findingId) as GeneratableFinding | undefined;
+    if (!f) return null;
+
+    // A pin overrides a prior delete: drop the tombstone so the card returns.
+    db.prepare("DELETE FROM deleted_findings WHERE finding_id = ?").run(findingId);
+    db.prepare(
+      `INSERT OR IGNORE INTO cards
+         (id, finding_id, session_id, front, back, category, start_ms, ease, interval_days, repetitions, due, suspended)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, datetime('now'), 0)`,
+    ).run(
+      randomUUID(),
+      f.id,
+      f.session_id,
+      f.quote,
+      cardBack(f.correction, f.explanation),
+      f.category,
+      f.start_ms,
+      FRESH_EASE,
+    );
+
+    const row = db.prepare(`${SELECT_CARD} WHERE finding_id = ?`).get(findingId) as CardRow | undefined;
+    return row ? toCard(row) : null;
+  })();
+}
+
 const SELECT_CARD = "SELECT * FROM cards";
 
 /** Cards due now and not suspended, most overdue first (a stable total order). */
