@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { AudioLines, GraduationCap, Settings as SettingsIcon } from "lucide-react";
+import { AudioLines, GraduationCap, Target, Settings as SettingsIcon } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 interface NavItem {
@@ -14,6 +14,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { href: "/", label: "Sessions", icon: AudioLines },
   { href: "/practice", label: "Practice", icon: GraduationCap },
+  { href: "/focus", label: "Focus", icon: Target },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
