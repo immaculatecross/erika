@@ -115,3 +115,17 @@ export const TTS_RATES: Record<TtsModelId, TtsModelRate> = {
 export function ttsCallCost(model: TtsModelId, charCount: number): number {
   return Math.max(0, charCount) * TTS_RATES[model].usdPerCharacter;
 }
+
+// ---- ask notes (E-23 Ask Erika) ------------------------------------------
+//
+// "Ask for more" reuses the SAME text chat model as the E-6 micro-lessons
+// (TEXT_MODEL) and bills into the SAME shared spend_ledger against the SAME monthly
+// cap — no new price table, only a shorter output allowance. The one ask-specific
+// knob is that output-token cap, which bounds a note's worst-case pre-call cost
+// (`textCallCost(ASK_MODEL, estimateTokens(prompt), ASK_MAX_OUTPUT_TOKENS)`), just
+// as LESSON_MAX_OUTPUT_TOKENS bounds a lesson's. A note is a few sentences, so its
+// allowance is smaller than a full lesson's.
+
+export const ASK_MODEL = TEXT_MODEL;
+/** Output-token allowance for one ask-note — bounds its worst-case pre-call cost. */
+export const ASK_MAX_OUTPUT_TOKENS = 700;
