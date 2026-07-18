@@ -46,6 +46,15 @@ export default function PracticePage() {
         line="No cards to review. They arrive once Erika has heard you speak."
         action="Review cards"
         disabled
+        secondary={
+          <Link
+            href="/practice/lessons"
+            data-work-on-pattern
+            className="rounded-full bg-page px-5 py-2.5 text-[15px] font-medium text-ink transition-transform active:scale-[0.98]"
+          >
+            Work on a pattern
+          </Link>
+        }
       />
     );
   }
@@ -81,6 +90,13 @@ export default function PracticePage() {
             className="text-[15px] font-medium text-secondary transition-colors hover:text-ink"
           >
             Browse all cards
+          </Link>
+          <Link
+            href="/practice/lessons"
+            data-work-on-pattern
+            className="text-[15px] font-medium text-secondary transition-colors hover:text-ink"
+          >
+            Work on a pattern
           </Link>
         </motion.div>
       </motion.div>

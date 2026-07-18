@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db";
+import { EXERCISE_TYPES, type Exercise, type Lesson, type NewLesson } from "./lessons-view";
 
 // Typed data layer for generated micro-lessons (E-6), in the lib/cards.ts /
 // lib/analysis/findings.ts style. Server-only. A lesson is one short grammar
@@ -8,28 +9,14 @@ import type { Db } from "../db";
 // re-generates or re-bills (WO criterion 4). Exercises are stored as a JSON blob
 // in the `exercises` column — a self-contained typed list, never queried
 // column-wise, so JSON is the simplest faithful representation.
+//
+// The `Exercise`/`Lesson` type shapes and `EXERCISE_TYPES` live in the client-safe
+// lib/lessons/lessons-view.ts so the lesson runner (E-6b) can share them without
+// pulling this node:crypto/better-sqlite3 module into the browser bundle. They are
+// re-exported here so every existing server importer keeps one source of truth.
 
-/** The three exercise kinds a lesson can carry (WO criterion 2). */
-export type Exercise =
-  | { type: "multiple_choice"; prompt: string; options: string[]; answerIndex: number }
-  | { type: "fill_in"; prompt: string; answer: string }
-  | { type: "rewrite"; prompt: string; target: string };
-
-export const EXERCISE_TYPES = ["multiple_choice", "fill_in", "rewrite"] as const;
-
-export interface Lesson {
-  id: string;
-  patternKey: string;
-  explanation: string;
-  exercises: Exercise[];
-  createdAt: string;
-}
-
-/** A validated lesson body ready to persist (no id/timestamp yet). */
-export interface NewLesson {
-  explanation: string;
-  exercises: Exercise[];
-}
+export { EXERCISE_TYPES };
+export type { Exercise, Lesson, NewLesson };
 
 interface LessonRow {
   id: string;
