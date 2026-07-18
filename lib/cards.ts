@@ -68,7 +68,7 @@ function toCard(r: CardRow): Card {
 
 /** A card reduced to the client-safe view the drill renders. */
 export function toCardView(c: Card): CardView {
-  return { id: c.id, front: c.front, back: c.back, category: c.category };
+  return { id: c.id, findingId: c.findingId, front: c.front, back: c.back, category: c.category };
 }
 
 /** A card reduced to the client-safe view the browser lists (adds due/suspended). */

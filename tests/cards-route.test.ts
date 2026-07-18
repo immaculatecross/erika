@@ -74,8 +74,9 @@ describe("GET /api/cards?due=1", () => {
     const body = await (await dueGET()).json();
     expect(body.dueCount).toBe(2);
     expect(body.cards).toHaveLength(2);
-    // The view carries only the drill fields — no SM-2/session plumbing leaks out.
-    expect(Object.keys(body.cards[0]).sort()).toEqual(["back", "category", "front", "id"]);
+    // The view carries the drill fields plus findingId (for the back's Compare
+    // control, E-21) — no SM-2/session plumbing leaks out.
+    expect(Object.keys(body.cards[0]).sort()).toEqual(["back", "category", "findingId", "front", "id"]);
   });
 });
 

@@ -124,19 +124,31 @@ export default function PracticeReviewPage() {
 
         {phase === "active" && current && (
           <>
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => setFlipped((f) => !f)}
+              onKeyDown={(e) => {
+                // Enter flips; Space is handled window-level (and stopped from
+                // scrolling there). The card back carries its own interactive
+                // Compare control, so the flip trigger must not be a real <button>
+                // wrapping it — a nested button is invalid and would double-fire.
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  setFlipped((f) => !f);
+                }
+              }}
               aria-label={flipped ? "Show the phrase" : "Show the correction"}
-              className="w-full max-w-xl focus-visible:outline-none"
+              className="w-full max-w-xl cursor-pointer focus-visible:outline-none"
             >
               <Flashcard
                 front={current.front}
                 back={current.back}
                 category={current.category}
                 flipped={flipped}
+                findingId={current.findingId}
               />
-            </button>
+            </div>
 
             <div data-grades className="flex flex-wrap items-center justify-center gap-2">
               {GRADES.map(({ grade: g, label, key }) => (

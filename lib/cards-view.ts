@@ -8,9 +8,12 @@ import type { Grade } from "./srs";
 
 export type { Grade } from "./srs";
 
-/** A card reduced to what the drill shows: its two faces and its category. */
+/** A card reduced to what the drill shows: its two faces and its category. The
+ *  `findingId` lets the card back's Compare control (E-21) render — the rendition
+ *  route resolves the finding's timing and correction from it server-side. */
 export interface CardView {
   id: string;
+  findingId: string;
   front: string;
   back: string;
   category: string;

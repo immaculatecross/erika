@@ -67,6 +67,34 @@ export async function ensureSessionDir(id: string): Promise<string> {
   return dir;
 }
 
+// Contrastive-playback renditions (E-21) live under a flat data/renditions/ dir,
+// keyed by finding id — one rendered correction clip per finding, cached forever.
+// Unlike the hash-keyed segment cache these are per-finding, so a session delete
+// removes them (the delete route unlinks the files after the FK cascade drops the
+// rows); playback is orphan-safe if a file is missing anyway.
+
+/** The renditions dir: data/renditions/. */
+export function renditionsDir(): string {
+  return path.join(dataDir(), "renditions");
+}
+
+/** On-disk path of a finding's rendered correction clip (mp3). */
+export function renditionPath(findingId: string): string {
+  return path.join(renditionsDir(), `${findingId}.mp3`);
+}
+
+/** Ensure data/renditions/ exists; returns its path. */
+export async function ensureRenditionsDir(): Promise<string> {
+  const dir = renditionsDir();
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+/** Remove one rendition file (idempotent — no error if absent). */
+export async function removeRenditionFile(filePath: string): Promise<void> {
+  await rm(filePath, { force: true });
+}
+
 /** Remove a session's whole directory (idempotent — no error if absent). */
 export async function removeSessionDir(id: string): Promise<void> {
   await rm(sessionDir(id), { recursive: true, force: true });

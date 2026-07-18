@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { SPRING } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { splitBack } from "@/lib/cards-view";
+import { CompareControl } from "@/components/compare-control";
 
 // The practice card and its signature moment: the 3D flip (DESIGN.md — "the
 // practice card's 3D flip"). Front is your phrase in context; back is Erika's
@@ -17,9 +18,11 @@ interface Props {
   back: string;
   category: string;
   flipped: boolean;
+  /** The finding this card is built from — powers the back's Compare control (E-21). */
+  findingId: string;
 }
 
-export function Flashcard({ front, back, category, flipped }: Props) {
+export function Flashcard({ front, back, category, flipped, findingId }: Props) {
   const reduced = usePrefersReducedMotion();
 
   if (reduced) {
@@ -41,7 +44,7 @@ export function Flashcard({ front, back, category, flipped }: Props) {
             transition={{ duration: 0.15 }}
             className="absolute inset-0"
           >
-            <Face>{flipped ? <Back category={category} back={back} /> : <Front category={category} front={front} />}</Face>
+            <Face>{flipped ? <Back category={category} back={back} findingId={findingId} /> : <Front category={category} front={front} />}</Face>
           </motion.div>
         </AnimatePresence>
       </div>
@@ -64,7 +67,7 @@ export function Flashcard({ front, back, category, flipped }: Props) {
           <Front category={category} front={front} />
         </Face>
         <Face face="back" className="[backface-visibility:hidden] [transform:rotateY(180deg)]">
-          <Back category={category} back={back} />
+          <Back category={category} back={back} findingId={findingId} />
         </Face>
       </motion.div>
     </div>
@@ -108,13 +111,14 @@ function Front({ category, front }: { category: string; front: string }) {
   );
 }
 
-function Back({ category, back }: { category: string; back: string }) {
+function Back({ category, back, findingId }: { category: string; back: string; findingId: string }) {
   const { recast, why } = splitBack(back);
   return (
     <>
       <CategoryLabel category={category} />
       <p className="text-[28px] font-semibold leading-tight tracking-tight text-ink">“{recast}”</p>
       {why && <p className="max-w-md text-[15px] leading-[1.47] text-secondary">{why}</p>}
+      <CompareControl findingId={findingId} />
     </>
   );
 }

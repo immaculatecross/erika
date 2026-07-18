@@ -373,4 +373,36 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-21 Contrastive playback: the correction of a finding can be rendered once
+    // in the audio model's voice (a TTS call) and kept forever, so the Compare
+    // control plays your clip then the native rendering without ever re-billing.
+    //
+    // `renditions` — one row per finding whose correction has been rendered. The
+    //   `finding_id` PK doubles as the cache key AND the INSERT-first concurrency
+    //   guard: a double-clicked Generate cannot double-bill because the second
+    //   INSERT hits the PK and the spend is recorded only by the transaction that
+    //   won the row (lib/render/engine.ts). `path` is the on-disk mp3 under
+    //   data/renditions/; `cost_usd` is the actual TTS charge, also ledgered once
+    //   into the shared spend_ledger. FK cascade on delete: removing a finding
+    //   (hence its session) drops the row — the file is cleaned up by the delete
+    //   route, and playback is orphan-safe if it isn't (no crash on a missing file).
+    //
+    // PARALLEL-BATCH NOTE: E-20 (slips/Focus) holds migration v11 in the same
+    // batch; this is numbered v12 as instructed and the dispatcher resolves final
+    // ordering at merge. If this branch's runner only sees v10 at build time, the
+    // number still stands — migrations are applied by ascending version, additive.
+    version: 12,
+    name: "renditions",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE renditions (
+          finding_id TEXT PRIMARY KEY REFERENCES findings(id) ON DELETE CASCADE,
+          path       TEXT NOT NULL,
+          cost_usd   REAL NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
