@@ -9,8 +9,10 @@ import { triageTempo } from "../ingest/render";
 import {
   type AudioModelClient,
   type DeepInput,
+  ModelParseError,
   ModelUnavailableError,
 } from "./audio-model";
+import { claimQueued, heartbeat, reclaimStale, workerId } from "../jobs/lease";
 import {
   getSegmentAnalysis,
   isSegmentComplete,
@@ -19,7 +21,7 @@ import {
   type NewFinding,
 } from "./findings";
 import { callCost, DEEP_MODELS, MINI_MODEL, type ModelId } from "./rates";
-import { wouldExceedBudget } from "./budget";
+import { recordSpend, wouldExceedBudget } from "./budget";
 
 /** One real billable call: recorded atomically with the segment it completes. */
 type SpendEntry = { model: ModelId; contentHash: string; costUsd: number };
@@ -98,25 +100,19 @@ function patchJob(db: Db, id: string, p: Partial<Pick<JobRow, "state" | "stage" 
   db.prepare(`UPDATE analysis_jobs SET ${cols.join(", ")} WHERE id = ?`).run(...vals, id);
 }
 
-/** Atomically claim the oldest queued analysis job, or null. */
-export function claimNextAnalysisJob(db: Db): string | null {
-  return db.transaction(() => {
-    const row = db
-      .prepare("SELECT id FROM analysis_jobs WHERE state = 'queued' ORDER BY created_at, id LIMIT 1")
-      .get() as { id: string } | undefined;
-    if (!row) return null;
-    patchJob(db, row.id, { state: "processing", stage: "analyzing" });
-    return row.id;
-  })();
+/** Atomically claim the oldest queued analysis job under a heartbeat lease, or null. */
+export function claimNextAnalysisJob(db: Db, worker: string = workerId()): string | null {
+  return claimQueued(db, "analysis_jobs", worker, "analyzing");
 }
 
-/** Ids of analysis jobs a crashed worker left mid-flight (state 'processing'). */
-export function reclaimStuckAnalysisJobs(db: Db): string[] {
-  return (
-    db.prepare("SELECT id FROM analysis_jobs WHERE state = 'processing' ORDER BY created_at, id").all() as {
-      id: string;
-    }[]
-  ).map((r) => r.id);
+/**
+ * Ids of analysis jobs a crashed worker left mid-flight — `processing` rows whose
+ * lease has gone stale. A job a live worker is still beating on is NOT returned:
+ * re-running it would re-triage and re-deep-listen segments already in flight,
+ * billing OpenAI a second time for the same audio (E-16 defect 2).
+ */
+export function reclaimStuckAnalysisJobs(db: Db, worker: string = workerId()): string[] {
+  return reclaimStale(db, "analysis_jobs", worker);
 }
 
 /** Internal signal: month-to-date + this call would breach the budget cap. */
@@ -144,6 +140,30 @@ function toTimeline(seg: Segment, f: NewFinding & { relStartMs?: number; relEndM
   };
 }
 
+/**
+ * Run one billable model call and guarantee the charge is ledgered the moment the
+ * call *resolves* — not only when its response parses (E-16 defect 4).
+ *
+ * A `ModelParseError` means OpenAI answered (and charged) but the body was not
+ * the shape we asked for. Recording nothing there let the retry bill again while
+ * the "hard cap" capped only *recorded* money — it understated spend precisely
+ * when things were going wrong. A `ModelUnavailableError` is the opposite case:
+ * a network failure or a non-2xx, no completion, no charge, so nothing is written.
+ *
+ * The success path is deliberately untouched: it returns without writing, and its
+ * spend is still committed by `persistSegmentFindings` in ONE transaction with the
+ * findings and the witness (E-4 criterion 5). The two guarantees are disjoint —
+ * this records only on the failure path, where there is no witness to commit with.
+ */
+async function billedCall<T>(db: Db, spend: SpendEntry, call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    if (err instanceof ModelParseError) recordSpend(db, spend);
+    throw err;
+  }
+}
+
 async function runDeep(
   db: Db,
   client: AudioModelClient,
@@ -156,13 +176,11 @@ async function runDeep(
     const cost = callCost(model, seg.durationMs);
     if (wouldExceedBudget(db, cost, budget)) throw new BudgetHalt();
     try {
-      const res = await client.deepListen(model, input);
+      const spend: SpendEntry = { model, contentHash: seg.contentHash, costUsd: cost };
+      const res = await billedCall(db, spend, () => client.deepListen(model, input));
       // Spend is not recorded here — it is committed atomically with the findings
       // and witness by the caller, so a crash between the two can never re-bill.
-      return {
-        findings: res.findings.map((f) => toTimeline(seg, f)),
-        spend: { model, contentHash: seg.contentHash, costUsd: cost },
-      };
+      return { findings: res.findings.map((f) => toTimeline(seg, f)), spend };
     } catch (err) {
       if (err instanceof ModelUnavailableError) {
         lastErr = err; // try the D-3 fallback model before giving up
@@ -207,10 +225,13 @@ export async function runAnalysisJob(
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i];
       const hash = seg.contentHash;
+      heartbeat(db, "analysis_jobs", jobId); // still alive — do not reclaim this job
       let analysis = getSegmentAnalysis(db, hash);
 
       if (isSegmentComplete(analysis)) {
-        reuseCachedFindings(db, job.sessionId, hash); // cache hit — zero API calls
+        // Cache hit — zero API calls. `seg` is the target segment the donor
+        // findings' timestamps get remapped onto (E-16 defect 1).
+        reuseCachedFindings(db, job.sessionId, hash, seg);
         patchJob(db, jobId, { progress: (i + 1) / segments.length });
         continue;
       }
@@ -220,7 +241,10 @@ export async function runAnalysisJob(
         const miniCost = callCost(MINI_MODEL, seg.durationMs / tempo);
         if (wouldExceedBudget(db, miniCost, budget)) throw new BudgetHalt();
         const rendition = await fileBase64(renditionCachePath(hash, tempo));
-        const triage = await client.triage({ audioBase64: rendition, format: "wav", targetLanguage });
+        const miniSpend: SpendEntry = { model: MINI_MODEL, contentHash: hash, costUsd: miniCost };
+        const triage = await billedCall(db, miniSpend, () =>
+          client.triage({ audioBase64: rendition, format: "wav", targetLanguage }),
+        );
         // Record the mini spend and its completion witness atomically, so a halt
         // (or crash) after the call can never re-bill this triage on resume.
         persistSegmentFindings(db, {
@@ -229,7 +253,7 @@ export async function runAnalysisJob(
           flagged: triage.flagged,
           deepDone: false,
           findings: [],
-          spend: { model: MINI_MODEL, contentHash: hash, costUsd: miniCost },
+          spend: miniSpend,
         });
         analysis = { contentHash: hash, flagged: triage.flagged, deepDone: false };
       }

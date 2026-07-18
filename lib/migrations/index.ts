@@ -237,4 +237,39 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-16 Hardening (defect 2): the heartbeat lease and the findings identity key.
+    //
+    // Both job tables gain `worker_id` (who holds the lease) and `heartbeat_at`
+    // (when that holder last proved it was alive). Before this, *every* row in
+    // `processing` was reclaimable by anyone, so a second worker re-ran a job the
+    // first was actively executing — double OpenAI spend and duplicate findings.
+    // A claim now stamps both columns and each checkpoint refreshes the heartbeat;
+    // reclaim only takes rows whose heartbeat is older than JOB_LEASE_STALE_MS
+    // (lib/jobs/lease.ts). Legacy rows carry NULL, which reads as "no live lease"
+    // and stays reclaimable — the pre-v8 behaviour for genuinely abandoned work.
+    //
+    // `idx_findings_identity` is the belt-and-braces guard: the same session +
+    // audio + timestamp + quote is one finding, no matter how many times a run is
+    // repeated. Writers use `ON CONFLICT DO NOTHING` against this index, which
+    // swallows only the duplicate — a CHECK violation (bad category/severity)
+    // still throws and still rolls its transaction back (E-4 atomicity). Existing
+    // duplicates are collapsed to their earliest row first so the index can build.
+    version: 8,
+    name: "job_lease_and_findings_identity",
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE ingest_jobs   ADD COLUMN worker_id    TEXT;
+        ALTER TABLE ingest_jobs   ADD COLUMN heartbeat_at TEXT;
+        ALTER TABLE analysis_jobs ADD COLUMN worker_id    TEXT;
+        ALTER TABLE analysis_jobs ADD COLUMN heartbeat_at TEXT;
+
+        DELETE FROM findings WHERE id NOT IN (
+          SELECT MIN(id) FROM findings GROUP BY session_id, content_hash, start_ms, quote
+        );
+        CREATE UNIQUE INDEX idx_findings_identity
+          ON findings (session_id, content_hash, start_ms, quote);
+      `);
+    },
+  },
 ];

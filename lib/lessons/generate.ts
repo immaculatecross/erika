@@ -4,7 +4,7 @@ import { recordSpend } from "../analysis/budget";
 import { TEXT_MODEL } from "../analysis/rates";
 import { extractJsonObject, TextModelParseError, type TextModelClient } from "./text-model";
 import { EXERCISE_TYPES, insertLesson, getLessonByPattern, type Exercise, type Lesson, type NewLesson } from "./lessons";
-import { runBilledTextCall } from "./billing";
+import { parseBilledResponse, runBilledTextCall } from "./billing";
 import type { Pattern } from "./patterns";
 
 // Lesson generation (E-6, WO criterion 2): turn a recurring error pattern into a
@@ -108,7 +108,11 @@ export async function generateLessonForPattern(
     prompt,
     maxOutputTokens: LESSON_MAX_OUTPUT_TOKENS,
   });
-  const parsed = parseLessonResponse(completion.text); // throws before any write on malformed
+  // The call resolved, so it was billed: a malformed reply still ledgers the
+  // charge (E-16 defect 4) before rethrowing. No lesson is persisted either way.
+  const parsed = parseBilledResponse(db, { contentHash: pattern.key, costUsd }, () =>
+    parseLessonResponse(completion.text),
+  );
 
   const lesson = db.transaction(() => {
     recordSpend(db, { model: TEXT_MODEL, contentHash: pattern.key, costUsd });

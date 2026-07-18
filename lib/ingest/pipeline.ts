@@ -11,6 +11,7 @@ import { getSegmentByIndex, listSegments, upsertSegment } from "../segments";
 import { normalize } from "./normalize";
 import { detectSpeech, type Interval } from "./vad";
 import { extractSegment, hashFile, renderRendition, triageTempo } from "./render";
+import { claimQueued, heartbeat, reclaimStale, workerId } from "../jobs/lease";
 
 // The heart of E-3 (D-10): drain a queued capture into stored, deduplicated,
 // pre-rendered speech segments — resumably and without ever holding a whole
@@ -124,12 +125,12 @@ export async function processJob(db: Db, jobId: string, opts: ProcessOpts = {}):
     const intervals = await detectSpeech(normalized);
 
     if (atOrBefore(from, "segmenting")) {
-      await segmentAll(db, session.id, normalized, intervals);
+      await segmentAll(db, jobId, session.id, normalized, intervals);
       if (checkpoint(db, jobId, "rendering", opts.stopAfter, "segmenting")) return getJob(db, jobId)!;
     }
 
     if (atOrBefore(from, "rendering")) {
-      await renderAll(db, session.id, tempo);
+      await renderAll(db, jobId, session.id, tempo);
       if (checkpoint(db, jobId, "done", opts.stopAfter, "rendering")) return getJob(db, jobId)!;
     }
 
@@ -141,10 +142,17 @@ export async function processJob(db: Db, jobId: string, opts: ProcessOpts = {}):
 }
 
 /** Extract + hash + persist each interval, skipping any already on disk. */
-async function segmentAll(db: Db, sessionId: string, normalized: string, intervals: Interval[]): Promise<void> {
+async function segmentAll(
+  db: Db,
+  jobId: string,
+  sessionId: string,
+  normalized: string,
+  intervals: Interval[],
+): Promise<void> {
   await ensureSegmentsDir(sessionId);
   for (let idx = 0; idx < intervals.length; idx++) {
     const iv = intervals[idx];
+    heartbeat(db, "ingest_jobs", jobId); // still alive — do not reclaim this job
     const file = segmentPath(sessionId, idx);
     if (getSegmentByIndex(db, sessionId, idx) && (await fileExists(file))) continue; // resume: skip done work
     await extractSegment(normalized, iv.startMs, iv.endMs, file);
@@ -154,15 +162,17 @@ async function segmentAll(db: Db, sessionId: string, normalized: string, interva
 }
 
 /** Render each segment's cached triage rendition (cache hit ⇒ no re-render). */
-async function renderAll(db: Db, sessionId: string, tempo: number): Promise<void> {
+async function renderAll(db: Db, jobId: string, sessionId: string, tempo: number): Promise<void> {
   for (const seg of listSegments(db, sessionId)) {
+    heartbeat(db, "ingest_jobs", jobId);
     await renderRendition(segmentPath(sessionId, seg.idx), seg.contentHash, tempo);
   }
 }
 
-/** Advance the checkpoint; return true if opts asked to stop after `justDid`. */
+/** Advance the checkpoint (beating the lease); true if opts asked to stop here. */
 function checkpoint(db: Db, jobId: string, next: Stage, stopAfter: Stage | undefined, justDid: Stage): boolean {
   patchJob(db, jobId, { stage: next, progress: STAGE_PROGRESS[justDid] });
+  heartbeat(db, "ingest_jobs", jobId);
   return stopAfter === justDid;
 }
 
@@ -179,24 +189,21 @@ async function fileExists(p: string): Promise<boolean> {
 }
 
 /**
- * Atomically claim the oldest queued job (queued → processing) and return its
- * id, or null if none. The transaction stops two workers grabbing one job.
+ * Atomically claim the oldest queued job (queued → processing) under a heartbeat
+ * lease and return its id, or null if none. The transaction stops two workers
+ * grabbing one queued row; the lease (E-16 defect 2) stops a second worker
+ * reclaiming it while this one is still running it.
  */
-export function claimNextJob(db: Db): string | null {
-  return db.transaction(() => {
-    const row = db
-      .prepare("SELECT id FROM ingest_jobs WHERE state = 'queued' ORDER BY created_at, id LIMIT 1")
-      .get() as { id: string } | undefined;
-    if (!row) return null;
-    patchJob(db, row.id, { state: "processing", stage: "normalizing" });
-    return row.id;
-  })();
+export function claimNextJob(db: Db, worker: string = workerId()): string | null {
+  return claimQueued(db, "ingest_jobs", worker, "normalizing");
 }
 
-/** Ids of jobs left mid-flight by a crashed worker (state 'processing'). */
-export function reclaimStuckJobs(db: Db): string[] {
-  const rows = db
-    .prepare("SELECT id FROM ingest_jobs WHERE state = 'processing' ORDER BY created_at, id")
-    .all() as { id: string }[];
-  return rows.map((r) => r.id);
+/**
+ * Ids of jobs a crashed worker left mid-flight — that is, `processing` rows whose
+ * lease has gone stale (no heartbeat for JOB_LEASE_STALE_MS). A job a live worker
+ * is actively beating on is NOT returned: reclaiming it would re-run work already
+ * in flight and bill OpenAI twice. Reclaiming transfers the lease to `worker`.
+ */
+export function reclaimStuckJobs(db: Db, worker: string = workerId()): string[] {
+  return reclaimStale(db, "ingest_jobs", worker);
 }

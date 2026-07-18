@@ -99,10 +99,16 @@ export function persistSegmentFindings(
     spend?: { model: ModelId; contentHash: string; costUsd: number };
   },
 ): void {
+  // `ON CONFLICT DO NOTHING` targets only the v8 identity index, so a re-run that
+  // re-derives the same finding inserts nothing instead of duplicating it (E-16
+  // defect 2's belt-and-braces guard). A CHECK violation — a bad category or
+  // severity — is NOT a uniqueness conflict: it still throws and still rolls the
+  // whole transaction back, spend included (E-4 criterion 5).
   const insert = db.prepare(
     `INSERT INTO findings
        (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (session_id, content_hash, start_ms, quote) DO NOTHING`,
   );
   db.transaction(() => {
     if (input.spend) recordSpend(db, input.spend);
@@ -214,23 +220,69 @@ function sessionHasHash(db: Db, sessionId: string, contentHash: string): boolean
   return !!r;
 }
 
+/** Where the segment carrying `contentHash` sits on `sessionId`'s timeline. */
+function donorSegmentStart(db: Db, sessionId: string, contentHash: string): number | null {
+  const r = db
+    .prepare("SELECT start_ms FROM segments WHERE session_id = ? AND content_hash = ? ORDER BY idx LIMIT 1")
+    .get(sessionId, contentHash) as { start_ms: number } | undefined;
+  return r ? r.start_ms : null;
+}
+
+/** The bounds a reused finding is remapped onto — the target session's segment. */
+export interface TargetSegment {
+  startMs: number;
+  endMs: number;
+}
+
+/**
+ * Remap one donor timestamp onto the target segment: take its offset *within the
+ * donor's segment* and re-anchor that offset at the target segment's start,
+ * clamped to the target's bounds. When the donor segment row is missing (its
+ * session was deleted out from under the findings), there is no offset to recover
+ * and clamping alone at least keeps the timestamp inside the target segment.
+ */
+function remap(absMs: number, donorStart: number | null, target: TargetSegment): number {
+  const rel = donorStart === null ? absMs : absMs - donorStart;
+  return Math.min(Math.max(target.startMs + rel, target.startMs), target.endMs);
+}
+
 /**
  * Reuse cached findings for a hash into `sessionId`, cloning the canonical rows
  * (from whichever session first produced them) under new ids. Idempotent and
  * billing-free: it makes no model calls and writes no ledger row. A no-op when
  * the hash produced no findings or the session already carries them.
+ *
+ * Timestamps are REMAPPED onto `target`, never copied (E-16 defect 1). A donor
+ * finding's `start_ms`/`end_ms` are absolute offsets on the *donor's* timeline:
+ * byte-identical audio at 10 s in one session and at 3600 s in another produced a
+ * clone reading 11 s — outside the target segment entirely, so jump-to-audio, the
+ * archive, and the session timeline all pointed at the wrong moment. What the two
+ * segments genuinely share is the offset *within* the segment, so that is what
+ * survives the clone; the anchor comes from the target.
  */
-export function reuseCachedFindings(db: Db, sessionId: string, contentHash: string): void {
+export function reuseCachedFindings(
+  db: Db,
+  sessionId: string,
+  contentHash: string,
+  target: TargetSegment,
+): void {
   if (sessionHasHash(db, sessionId, contentHash)) return;
   const canonical = findingsForHash(db, contentHash);
   if (canonical.length === 0) return;
   const insert = db.prepare(
     `INSERT INTO findings
        (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (session_id, content_hash, start_ms, quote) DO NOTHING`,
   );
+  const donorStarts = new Map<string, number | null>();
   db.transaction(() => {
     for (const f of canonical) {
+      if (!donorStarts.has(f.sessionId)) {
+        donorStarts.set(f.sessionId, donorSegmentStart(db, f.sessionId, contentHash));
+      }
+      const donorStart = donorStarts.get(f.sessionId)!;
+      const startMs = remap(f.startMs, donorStart, target);
       insert.run(
         randomUUID(),
         sessionId,
@@ -240,8 +292,8 @@ export function reuseCachedFindings(db: Db, sessionId: string, contentHash: stri
         f.category,
         f.explanation,
         f.severity,
-        f.startMs,
-        f.endMs,
+        startMs,
+        Math.max(remap(f.endMs, donorStart, target), startMs),
       );
     }
   })();
