@@ -49,3 +49,22 @@ What changed per area, the **exact commands** verifying each criterion (chronolo
 ## Exit report
 
 Append the `task.md` exit report block (RESULT / PR / Changed / Verified / Risks / Blocker) here and as your final message.
+
+---
+
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/16
+Changed:  lib/archive.ts — pure client-safe timeline core (buildEntries chronological build; filterEntries search×category×severity intersection; groupBySession)
+          lib/analysis/findings.ts — new listAllFindingsWithSession (findings joined to session created_at/filename)
+          app/api/archive/route.ts — GET /api/archive, read-only, serves the built timeline
+          app/archive/page.tsx — hand-rolled chronological rows grouped by session; search + category/severity chips; empty state (DESIGN-compliant)
+          app/sessions/[id]/page.tsx — reads ?t=<startMs> and seeks the reused player once metadata is ready (jump-to-audio deep link, consistent with the report's onJump)
+          components/sidebar.tsx — "Archive" added as the 6th nav item (before Settings)
+          tests/archive.test.ts, tests/archive-route.test.ts, e2e/archive.spec.ts — unit + route + e2e for all four criteria; e2e/shell.spec.ts nav count 5→6
+          FEATURES.md (E-11 done, E-6 next), STATE.md regenerated
+Verified: npm run test → 174 unit pass; archive.test.ts proves chronological order across two sessions (session createdAt newest-first, startMs ascending within a session) + the search×category×severity intersection (blank/category-only/severity-only/combined/no-match); archive-route.test.ts proves the session-joined accessor + the timeline route ordering + empty timeline.
+          npx playwright test archive.spec.ts shell.spec.ts → 11 e2e pass; proves grouped render newest-first, filters intersect, a row deep-links to /sessions/[id]?t=4000 and positions the player at ~4s, empty state, active sidebar item, nav count 6.
+          npm run build → compiles clean (/archive + /api/archive present); fixed a client-bundle node:crypto leak by defining a client-safe SEVERITY_ORDER instead of re-exporting the runtime SEVERITIES from findings.ts.
+          npm run lint / npm run typecheck → clean.
+Risks:    Sidebar now 6 items (fuller but calm) — the shared shell is intentionally NOT restructured into sections here (separate design decision, note for E-12's 7th item). Jump-to-audio autoplay may be blocked post-navigation but the seek still lands (matches existing report behavior). Grouping is by session; a by-day grouping (WO allows either) would be a pure change over the same buildEntries output.
+Blocker:  none
