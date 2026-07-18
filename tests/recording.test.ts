@@ -6,6 +6,8 @@ import {
   levelFromAnalyser,
   pickRecordingMime,
   recordingFilename,
+  TAKE_LOST_MESSAGE,
+  takeOutcome,
 } from "@/lib/recording";
 
 // The mic recorder's pure logic (E-2 part 2). Every acceptance criterion that
@@ -146,5 +148,21 @@ describe("recordingFilename", () => {
   it("builds a filesystem-safe name with a supported extension", () => {
     const at = new Date("2026-07-17T18:30:00.000Z");
     expect(recordingFilename("webm", at)).toBe("recording-2026-07-17T18-30-00.webm");
+  });
+});
+
+describe("takeOutcome (E-16b criterion 6)", () => {
+  // A take the browser cannot decode is GONE. It used to resolve null and the UI
+  // slid quietly back to idle, so the person never learned their recording had
+  // been discarded — the worst failure this app can have.
+  it("reports a lost take rather than returning nothing quietly", () => {
+    expect(takeOutcome(null)).toEqual({ take: null, lost: true });
+    expect(TAKE_LOST_MESSAGE).toMatch(/lost/i);
+    expect(TAKE_LOST_MESSAGE).toMatch(/record again/i);
+  });
+
+  it("passes a good take through as an uploadable wav", () => {
+    const blob = new Blob([new Uint8Array([1, 2, 3])]);
+    expect(takeOutcome(blob)).toEqual({ take: { blob, extension: "wav" }, lost: false });
   });
 });

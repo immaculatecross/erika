@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { categoryCounts, CATEGORY_ORDER } from "@/lib/analysis-view";
+import { categoryCounts, segmentTally, CATEGORY_ORDER } from "@/lib/analysis-view";
 import { formatUsd } from "@/lib/format";
 import type { Category } from "@/lib/analysis-view";
 
@@ -37,5 +37,19 @@ describe("formatUsd", () => {
     expect(formatUsd(1.2)).toBe("$1.20");
     expect(formatUsd(0)).toBe("$0.00");
     expect(formatUsd(-3)).toBe("$0.00"); // never a negative label
+  });
+});
+
+describe("segmentTally (E-16b criterion 4)", () => {
+  // "No errors found" over 14 of 15 segments is a different claim from the same
+  // words over all 15. A run that lost a segment has to say so.
+  it("stays silent when every segment was read", () => {
+    expect(segmentTally(15, 0)).toBeNull();
+    expect(segmentTally(0, 0)).toBeNull();
+  });
+
+  it("reports how many of how many were analysed", () => {
+    expect(segmentTally(15, 1)).toBe("14 of 15 segments analysed · 1 unreadable");
+    expect(segmentTally(3, 3)).toBe("0 of 3 segments analysed · 3 unreadable");
   });
 });

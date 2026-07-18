@@ -1,3 +1,4 @@
+import { loadEnvLocal, startupEnvError } from "../lib/env-file";
 import { getDb } from "../lib/db";
 import { claimNextJob, processJob, reclaimStuckJobs } from "../lib/ingest/pipeline";
 import {
@@ -16,6 +17,11 @@ import { openAiAudioModel } from "../lib/analysis/audio-model";
 // duplicated, or re-billed work). Set ERIKA_WORKER_ONCE=1 to exit once both
 // queues are empty (used for verification); otherwise it polls. All logging goes
 // to stderr — stdout clean.
+//
+// This is a plain Node process, not Next, so nothing loads `.env.local` for it
+// (E-16b criterion 1): the loader runs FIRST, before any module reads a secret,
+// and a missing OPENAI_API_KEY stops the worker at boot with the fix in the
+// message rather than failing obscurely at the first model call.
 
 const POLL_MS = Number(process.env.ERIKA_WORKER_POLL_MS ?? 1000);
 const ONCE = process.env.ERIKA_WORKER_ONCE === "1";
@@ -54,8 +60,14 @@ async function tick(db: ReturnType<typeof getDb>): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
+  const applied = loadEnvLocal();
+  const envError = startupEnvError();
+  if (envError) {
+    console.error(envError);
+    process.exit(1);
+  }
   const db = getDb();
-  console.error("[worker] started");
+  console.error(`[worker] started (${applied.length} var(s) from .env.local)`);
   for (;;) {
     const didWork = await tick(db);
     if (!didWork) {

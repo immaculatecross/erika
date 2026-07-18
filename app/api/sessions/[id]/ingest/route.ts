@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { getSession } from "@/lib/sessions";
 import { getJobBySession } from "@/lib/ingest/pipeline";
 import { listSegments } from "@/lib/segments";
+import { isWorkerAbsent } from "@/lib/jobs/liveness";
 import { summarizeSpeech, type IngestView } from "@/lib/ingest-view";
 
 // Read-only view of a session's ingest job for the detail page (E-3 part 2).
@@ -29,6 +30,7 @@ export async function GET(_request: Request, { params }: Ctx) {
     stage: job.stage,
     progress: job.progress,
     error: job.error,
+    workerAbsent: isWorkerAbsent(db, "ingest_jobs", job.id),
     summary: summarizeSpeech(segments, session.durationSeconds),
     segments: segments.map((s) => ({
       idx: s.idx,

@@ -164,6 +164,30 @@ async function billedCall<T>(db: Db, spend: SpendEntry, call: () => Promise<T>):
   }
 }
 
+/**
+ * Make one billable model call, and on an unreadable reply make EXACTLY one more
+ * with the stricter JSON-only instruction (E-16b criterion 4).
+ *
+ * Both attempts go through `billedCall`, because both are real completions OpenAI
+ * charges for — a retry that quietly escaped the ledger would understate spend
+ * precisely when the model is misbehaving. Exactly one retry: enough to recover
+ * the common case (a reply wrapped in prose or a fence), bounded so a model stuck
+ * in a bad mode cannot spend the budget arguing with itself. A truncation is
+ * retried too — the stricter instruction also asks for a shorter answer.
+ */
+async function withRepair<T>(
+  db: Db,
+  spend: SpendEntry,
+  call: (opts: { strictJson: boolean }) => Promise<T>,
+): Promise<T> {
+  try {
+    return await billedCall(db, spend, () => call({ strictJson: false }));
+  } catch (err) {
+    if (!(err instanceof ModelParseError)) throw err;
+    return billedCall(db, spend, () => call({ strictJson: true }));
+  }
+}
+
 async function runDeep(
   db: Db,
   client: AudioModelClient,
@@ -177,7 +201,7 @@ async function runDeep(
     if (wouldExceedBudget(db, cost, budget)) throw new BudgetHalt();
     try {
       const spend: SpendEntry = { model, contentHash: seg.contentHash, costUsd: cost };
-      const res = await billedCall(db, spend, () => client.deepListen(model, input));
+      const res = await withRepair(db, spend, (opts) => client.deepListen(model, input, opts));
       // Spend is not recorded here — it is committed atomically with the findings
       // and witness by the caller, so a crash between the two can never re-bill.
       return { findings: res.findings.map((f) => toTimeline(seg, f)), spend };
@@ -190,6 +214,32 @@ async function runDeep(
     }
   }
   throw lastErr ?? new ModelUnavailableError("No deep-listen model available.");
+}
+
+/**
+ * Record that this segment's audio could not be read, and let the run carry on.
+ *
+ * Before this, the ModelParseError escaped the segment loop and landed the whole
+ * job `failed`, throwing away every other segment's (already paid for) analysis.
+ * The witness keeps whatever the cascade did establish — an unreadable deep-listen
+ * still knows the mini flagged the segment — so a later run resumes at the failed
+ * call rather than re-billing the triage.
+ */
+function markUnreadable(
+  db: Db,
+  sessionId: string,
+  hash: string,
+  flagged: boolean,
+  err: ModelParseError,
+): void {
+  persistSegmentFindings(db, {
+    sessionId,
+    contentHash: hash,
+    flagged,
+    deepDone: false,
+    findings: [],
+    unreadable: { reason: err.message, shape: err.shape ?? null },
+  });
 }
 
 export interface RunOpts {
@@ -228,6 +278,11 @@ export async function runAnalysisJob(
       heartbeat(db, "analysis_jobs", jobId); // still alive — do not reclaim this job
       let analysis = getSegmentAnalysis(db, hash);
 
+      // An unreadable TRIAGE established nothing about this audio, so a new run
+      // starts it over. An unreadable DEEP kept its triage verdict and is resumed
+      // below at the deep call, without re-billing the mini.
+      if (analysis?.unreadable && !analysis.flagged) analysis = null;
+
       if (isSegmentComplete(analysis)) {
         // Cache hit — zero API calls. `seg` is the target segment the donor
         // findings' timestamps get remapped onto (E-16 defect 1).
@@ -236,47 +291,55 @@ export async function runAnalysisJob(
         continue;
       }
 
-      // Stage 1 — triage the time-compressed rendition with the mini.
-      if (analysis === null) {
-        const miniCost = callCost(MINI_MODEL, seg.durationMs / tempo);
-        if (wouldExceedBudget(db, miniCost, budget)) throw new BudgetHalt();
-        const rendition = await fileBase64(renditionCachePath(hash, tempo));
-        const miniSpend: SpendEntry = { model: MINI_MODEL, contentHash: hash, costUsd: miniCost };
-        const triage = await billedCall(db, miniSpend, () =>
-          client.triage({ audioBase64: rendition, format: "wav", targetLanguage }),
-        );
-        // Record the mini spend and its completion witness atomically, so a halt
-        // (or crash) after the call can never re-bill this triage on resume.
-        persistSegmentFindings(db, {
-          sessionId: job.sessionId,
-          contentHash: hash,
-          flagged: triage.flagged,
-          deepDone: false,
-          findings: [],
-          spend: miniSpend,
-        });
-        analysis = { contentHash: hash, flagged: triage.flagged, deepDone: false };
-      }
+      try {
+        // Stage 1 — triage the time-compressed rendition with the mini.
+        if (analysis === null) {
+          const miniCost = callCost(MINI_MODEL, seg.durationMs / tempo);
+          if (wouldExceedBudget(db, miniCost, budget)) throw new BudgetHalt();
+          const rendition = await fileBase64(renditionCachePath(hash, tempo));
+          const miniSpend: SpendEntry = { model: MINI_MODEL, contentHash: hash, costUsd: miniCost };
+          const triage = await withRepair(db, miniSpend, (opts) =>
+            client.triage({ audioBase64: rendition, format: "wav", targetLanguage }, opts),
+          );
+          // Record the mini spend and its completion witness atomically, so a halt
+          // (or crash) after the call can never re-bill this triage on resume.
+          persistSegmentFindings(db, {
+            sessionId: job.sessionId,
+            contentHash: hash,
+            flagged: triage.flagged,
+            deepDone: false,
+            findings: [],
+            spend: miniSpend,
+          });
+          analysis = getSegmentAnalysis(db, hash)!;
+        }
 
-      // Stage 2 — deep-listen the native-speed original, only if flagged.
-      if (analysis.flagged && !analysis.deepDone) {
-        const original = await fileBase64(segmentPath(job.sessionId, seg.idx));
-        const { findings, spend } = await runDeep(
-          db,
-          client,
-          seg,
-          { audioBase64: original, format: "wav", targetLanguage },
-          budget,
-        );
-        // Deep spend + findings + witness commit together (E-4 criterion 5).
-        persistSegmentFindings(db, {
-          sessionId: job.sessionId,
-          contentHash: hash,
-          flagged: true,
-          deepDone: true,
-          findings,
-          spend,
-        });
+        // Stage 2 — deep-listen the native-speed original, only if flagged.
+        if (analysis.flagged && !analysis.deepDone) {
+          const original = await fileBase64(segmentPath(job.sessionId, seg.idx));
+          const { findings, spend } = await runDeep(
+            db,
+            client,
+            seg,
+            { audioBase64: original, format: "wav", targetLanguage },
+            budget,
+          );
+          // Deep spend + findings + witness commit together (E-4 criterion 5).
+          persistSegmentFindings(db, {
+            sessionId: job.sessionId,
+            contentHash: hash,
+            flagged: true,
+            deepDone: true,
+            findings,
+            spend,
+          });
+        }
+      } catch (err) {
+        // One unreadable reply is a fact about ONE segment, not about the run: the
+        // job records it, reports it, and keeps going (E-16b criterion 4). Every
+        // other kind of failure — budget, network, auth — still stops the run.
+        if (!(err instanceof ModelParseError)) throw err;
+        markUnreadable(db, job.sessionId, hash, analysis?.flagged ?? false, err);
       }
 
       patchJob(db, jobId, { progress: (i + 1) / segments.length });

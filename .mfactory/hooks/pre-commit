@@ -1,6 +1,7 @@
 #!/bin/bash
 # mfactory pre-commit gate. Fast, deterministic, dependency-free.
-# Blocks: oversize source files, merge-conflict markers, tripwire patterns.
+# Blocks: oversize source files, raw NUL bytes in source, merge-conflict markers,
+# tripwire patterns.
 # Heavy checks (lint, types, tests, coverage) are CI's job — this hook stays fast.
 set -uo pipefail
 
@@ -21,6 +22,21 @@ while IFS= read -r f; do
           echo "BLOCKED [$f] $lines lines (cap $MAX_LINES)."
           echo "  Fix: extract cohesive pieces into new modules. The cap keeps every"
           echo "  file readable in one pass by a reviewer or a fresh agent session."
+        } >&2
+        FAIL=1
+      fi
+      # A raw NUL byte makes git treat the file as BINARY: `git diff` prints
+      # "Binary files differ" and the content bypasses diff review entirely, while
+      # every automated gate still passes. Demonstrated in RETRO-001. Counted with
+      # tr rather than grep -P, which BSD/macOS grep does not have.
+      bytes=$(git show ":$f" | wc -c | tr -d ' ')
+      nonnul=$(git show ":$f" | tr -d '\000' | wc -c | tr -d ' ')
+      if [ "$bytes" != "$nonnul" ]; then
+        {
+          echo "BLOCKED [$f] contains a raw NUL byte."
+          echo "  Fix: source must be text. git serves a NUL-bearing file as binary,"
+          echo "  so its contents never appear in a diff and no reviewer — human or"
+          echo "  agent — can see what was committed. Strip the NUL and re-stage."
         } >&2
         FAIL=1
       fi ;;

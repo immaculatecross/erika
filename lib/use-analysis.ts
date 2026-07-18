@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { pollAction } from "./poll";
 import type { AnalysisView } from "./analysis-view";
 
 // Client polling for the analysis report (E-4 part 2 criterion 2), mirroring
@@ -43,7 +44,14 @@ export function useAnalysis(id: string): AnalysisPoll {
       let next: AnalysisView | null = null;
       try {
         const res = await fetch(`/api/sessions/${id}/analysis`);
-        if (res.ok) next = (await res.json()) as AnalysisView;
+        const action = pollAction(res.status);
+        // A deleted session is a final answer, not a transient failure — stop
+        // rather than polling a 404 once a second for the life of the tab.
+        if (action === "stop") {
+          setPolling(false);
+          return;
+        }
+        if (action === "use") next = (await res.json()) as AnalysisView;
       } catch {
         next = null; // transient failure — try again on the next tick
       }

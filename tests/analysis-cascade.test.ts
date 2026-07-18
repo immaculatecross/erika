@@ -168,13 +168,15 @@ describe("findings persistence (criterion 2)", () => {
     db.close();
   });
 
-  it("a deep parse failure fails the job and writes no partial findings", async () => {
+  it("a deep parse failure writes no partial findings (and no longer kills the run)", async () => {
     const db = ws();
     seed(db, "s1", ["h0", "h1"]);
     const { client } = mockClient({ flag: new Set(["h1"]), deepThrows: new ModelParseError("garbage") });
     const job = await run(db, "s1", client);
-    expect(job.state).toBe("failed");
-    expect(job.error).toMatch(/garbage/);
+    // E-16b criterion 4 changed this from `failed`: the bad reply is a fact about
+    // one segment, recorded there (see analysis-unreadable.test.ts), not a verdict
+    // on the run. The no-partial-write guarantee is unchanged.
+    expect(job.state).toBe("done");
     expect(listFindings(db, "s1")).toEqual([]); // nothing half-written
     db.close();
   });
@@ -314,14 +316,15 @@ describe("spend is recorded when a call resolves, not after parsing (E-16 defect
     const { client } = mockClient({ flag: new Set(["h1"]), deepThrows: new ModelParseError("garbage") });
     const job = await run(db, "s1", client);
 
-    expect(job.state).toBe("failed");
+    expect(job.state).toBe("done"); // E-16b: one bad reply no longer kills the run
     expect(listFindings(db, "s1")).toEqual([]); // still nothing half-written
     const rows = db.prepare("SELECT model, cost_usd FROM spend_ledger ORDER BY model").all() as {
       model: string;
       cost_usd: number;
     }[];
-    // The mini triage (which parsed fine) AND the unparseable deep call.
-    expect(rows.map((r) => r.model)).toEqual(["gpt-audio-1.5", "gpt-audio-mini"]);
+    // The mini triage (which parsed fine) AND *both* unparseable deep calls — the
+    // first attempt and E-16b's single repair retry. Both resolved, both charged.
+    expect(rows.map((r) => r.model)).toEqual(["gpt-audio-1.5", "gpt-audio-1.5", "gpt-audio-mini"]);
     // 60 s of deep audio at $0.06/min = $0.06 — the real charge, not zero.
     expect(rows[0].cost_usd).toBeCloseTo(0.06, 9);
     db.close();

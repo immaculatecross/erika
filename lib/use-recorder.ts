@@ -7,7 +7,8 @@ import {
   encodeWav,
   levelFromAnalyser,
   pickRecordingMime,
-  UPLOAD_FORMAT,
+  TAKE_LOST_MESSAGE,
+  takeOutcome,
 } from "./recording";
 import type { AudioFormat } from "./session-types";
 
@@ -20,8 +21,9 @@ import type { AudioFormat } from "./session-types";
 export type RecorderStatus = "idle" | "requesting" | "recording" | "stopping";
 
 export interface RecorderError {
-  // 'denied' — the mic was blocked; 'unsupported' — no MediaRecorder/getUserMedia.
-  kind: "denied" | "unsupported";
+  // 'denied' — the mic was blocked; 'unsupported' — no MediaRecorder/getUserMedia;
+  // 'lost' — the take was recorded but could not be decoded/encoded for upload.
+  kind: "denied" | "unsupported" | "lost";
   message: string;
 }
 
@@ -176,10 +178,15 @@ export function useRecorder(): Recorder {
         // The live container has no duration ffprobe can read, so decode it and
         // re-encode to WAV, whose header states an exact, probeable length.
         const wav = recorded.size > 0 ? await toWav(recorded).catch(() => null) : null;
+        const { take, lost } = takeOutcome(wav);
         cleanup();
         setStatus("idle");
         setElapsedMs(0);
-        resolve(wav ? { blob: wav, extension: UPLOAD_FORMAT } : null);
+        // A take that cannot be encoded is GONE. Saying so is the whole point:
+        // resolving null silently returned the UI to idle and the person never
+        // learned their recording had been discarded (E-16b criterion 6).
+        if (lost) setError({ kind: "lost", message: TAKE_LOST_MESSAGE });
+        resolve(take);
       };
       recorder.stop();
     });

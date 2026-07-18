@@ -6,8 +6,10 @@ import { SPRING } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { formatUsd } from "@/lib/format";
 import { useAnalysis } from "@/lib/use-analysis";
+import { segmentTally, type AnalysisView } from "@/lib/analysis-view";
 import { AnalysisProgress } from "@/components/analysis-progress";
 import { AnalysisReport } from "@/components/analysis-report";
+import { WorkerAbsentNotice } from "@/components/worker-absent-notice";
 
 // The analysis section of the session detail page (E-4 part 2). It owns the whole
 // flow: pressing Analyze fetches the pre-run cost estimate and remaining budget
@@ -88,7 +90,9 @@ export function AnalysisPanel({ sessionId, onJump }: Props) {
 
       {view === null && <p className="text-[15px] text-secondary">Reading analysis…</p>}
 
-      {view && view.state === "idle" && (
+      {view && view.state === "idle" && view.segmentCount === 0 && <NotIngestedYet />}
+
+      {view && view.state === "idle" && view.segmentCount > 0 && (
         <IdleFlow
           phase={phase}
           starting={starting}
@@ -99,11 +103,14 @@ export function AnalysisPanel({ sessionId, onJump }: Props) {
       )}
 
       {view && (view.state === "queued" || view.state === "processing") && (
-        <AnalysisProgress
-          stage={view.stage}
-          progress={view.progress}
-          queued={view.state === "queued"}
-        />
+        <div className="flex flex-col gap-2">
+          <AnalysisProgress
+            stage={view.stage}
+            progress={view.progress}
+            queued={view.state === "queued"}
+          />
+          {view.workerAbsent && <WorkerAbsentNotice />}
+        </div>
       )}
 
       {view && view.state === "failed" && (
@@ -119,17 +126,62 @@ export function AnalysisPanel({ sessionId, onJump }: Props) {
             are below; raise the budget or wait for the month to roll over to finish.
           </p>
           {view.total > 0 && <AnalysisReport view={view} onJump={onJump} />}
+          <SegmentTally view={view} />
         </div>
       )}
 
-      {view && view.state === "done" && view.total === 0 && (
-        <p className="text-[15px] text-secondary">No errors found in this session&rsquo;s speech.</p>
-      )}
-
-      {view && view.state === "done" && view.total > 0 && (
-        <AnalysisReport view={view} onJump={onJump} />
+      {view && view.state === "done" && (
+        <div className="flex flex-col gap-3">
+          {view.total === 0 && (
+            <p className="text-[15px] text-secondary">
+              No errors found in this session&rsquo;s speech.
+            </p>
+          )}
+          {view.total > 0 && <AnalysisReport view={view} onJump={onJump} />}
+          <SegmentTally view={view} />
+        </div>
       )}
     </section>
+  );
+}
+
+/**
+ * The honest qualifier on a finished run. "No errors found" over 14 of 15 segments
+ * is a different claim from the same words over all 15, and before this the
+ * difference was invisible (E-16b criterion 4).
+ */
+function SegmentTally({ view }: { view: AnalysisView }) {
+  const line = segmentTally(view.segmentCount, view.unreadableCount);
+  if (!line) return null;
+  return (
+    <p className="tabular text-[13px] text-secondary" data-segment-tally>
+      {line}
+    </p>
+  );
+}
+
+/**
+ * A session whose speech has not been extracted yet has nothing to analyze. It
+ * used to offer Analyze anyway: the estimate came back $0, the run finished
+ * instantly, and it reported "no findings" — which reads as a clean bill of
+ * health on audio no model ever heard (E-16b criterion 5).
+ */
+function NotIngestedYet() {
+  return (
+    <div className="flex flex-col gap-3" data-analysis-blocked="no-segments">
+      <p className="text-[15px] text-secondary">
+        Nothing to analyze yet — this session&rsquo;s speech hasn&rsquo;t been extracted.
+      </p>
+      <button
+        type="button"
+        disabled
+        data-analyze
+        className="self-start rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink opacity-50"
+      >
+        Analyze
+      </button>
+      <WorkerAbsentNotice />
+    </div>
   );
 }
 

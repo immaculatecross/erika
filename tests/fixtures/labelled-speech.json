@@ -1,0 +1,13 @@
+{
+  "file": "labelled-speech.flac",
+  "generator": "make-labelled-speech.sh",
+  "totalMs": 17000,
+  "note": "Ground-truth speech spans (ms) for the D-13 VAD calibration sample. Each span is one synthesized utterance placed at a known offset; everything else is pink-noise room tone. Recall of these spans is asserted by tests/ingest-vad-calibration.test.ts.",
+  "speech": [
+    { "startMs": 800, "endMs": 3200 },
+    { "startMs": 4200, "endMs": 5800 },
+    { "startMs": 7000, "endMs": 10000 },
+    { "startMs": 11800, "endMs": 13000 },
+    { "startMs": 14600, "endMs": 16600 }
+  ]
+}

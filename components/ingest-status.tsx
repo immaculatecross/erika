@@ -2,6 +2,7 @@
 
 import { STAGE_LABELS, type IngestView, type TimelineSegment } from "@/lib/ingest-view";
 import { SegmentTimeline } from "@/components/segment-timeline";
+import { WorkerAbsentNotice } from "@/components/worker-absent-notice";
 
 // The ingest section of the session detail page (E-3 part 2). One component,
 // four truthful states: a restrained progress bar while the job is queued or
@@ -35,7 +36,10 @@ export function IngestStatus({ view, polling, pollCount, selectedIdx, onSelect }
       {view === null && <p className="text-[15px] text-secondary">Reading ingest…</p>}
 
       {view && (view.state === "queued" || view.state === "processing") && (
-        <Progress label={stageLabel(view)} progress={view.progress} />
+        <div className="flex flex-col gap-2">
+          <Progress label={stageLabel(view)} progress={view.progress} />
+          {view.workerAbsent && <WorkerAbsentNotice />}
+        </div>
       )}
 
       {view && view.state === "failed" && (

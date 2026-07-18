@@ -33,6 +33,12 @@ export interface IngestView {
   error: string | null;
   summary: SpeechSummary;
   segments: TimelineSegment[];
+  /**
+   * The job is queued or processing but no worker is behind it (E-16b criterion
+   * 2) — the state where an upload sat forever under a calm badge because nothing
+   * ever said the work happens in a separate `npm run worker` process.
+   */
+  workerAbsent: boolean;
 }
 
 /** Human labels for each pipeline stage (mirrors pipeline.ts STAGES). */
