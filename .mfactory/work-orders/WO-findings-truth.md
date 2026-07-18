@@ -88,3 +88,46 @@ Risks:    Behaviour changes where the surfaces contradicted each other, stated
           chosen semantics is what a real user would prefer.
 Blocker:  none
 ```
+
+---
+
+## Repair addendum (Full-tier review of PR #24)
+
+```
+RESULT: done
+Changed:  BLOCKING 1 — the session scopes now require per-session analysis
+          evidence, not hash-shared witnesses alone: `listAnalysedSessions` and
+          `sessionSegmentCounts` additionally demand ≥1 analysis run of the
+          session's OWN past `queued` (an EXISTS over ALL its jobs — never the
+          latest job's state, which was the pre-E-17 bug). A byte-identical
+          re-upload therefore contributes nothing anywhere — sessions list,
+          speech-hours denominators, Focus, letter, report tally — until its own
+          Analyze runs, at which point cache reuse materializes its findings
+          instantly (zero model calls) and it counts. The finding scopes are
+          unchanged: a `findings` row is only ever written by the session's own
+          run, so its existence is itself the per-session evidence. Halted runs,
+          failed runs' completed segments, and re-analyses in flight all count
+          exactly as before (the E-17 suites still pass unmodified, except one
+          route fixture that now seeds the completed first run its unreadable
+          witness always implied). Regression test: the exact cross-session
+          duplicate-hash scenario, before and after the copy's own run, asserting
+          sessions/hours/findings/rate/letter-week/report-tally at each step.
+          Advisory 1 — `parseEnvFile` now ends a quoted value at its closing
+          quote (dropping a trailing comment, quotes and all) and cuts an
+          unquoted value at a `#` that starts it or follows whitespace, so
+          `KEY="sk-abc" # note` → `sk-abc` and `KEY= # note` → empty; tests for
+          both shapes. Advisory 2 — STATE.md count trued to 310 (and its E-17
+          semantics sentence updated to the repaired scope).
+Verified: npx vitest run tests/findings-truth.test.ts tests/worker-env.test.ts —
+          the three new tests FAIL against the pre-repair code (listAnalysedSessions
+          returned [a, b]; '"sk-abc"'; '# note') and pass after. npm run lint
+          (clean) · npm run typecheck (clean) · npm run test (310 passed / 45
+          files, ffmpeg installed) · npm run build (exit 0) ·
+          .mfactory/hooks/run-tripwires.sh (exit 0).
+Risks:    A failed first run that died before reaching a segment whose hash is
+          shared with an analysed twin still counts that segment's speech (the
+          session has a run past `queued`, the witness exists) while its findings
+          are not yet materialized — a sliver of the old shape, bounded to
+          sessions that DID start their own run, gone on resume. A `processing`
+          run counts its evidence as it lands, as E-17 chose.
+```
