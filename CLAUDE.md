@@ -18,6 +18,8 @@ Next.js (App Router, TypeScript strict) + Tailwind + better-sqlite3. Database an
 - Source files stay under 500 lines — the pre-commit hook enforces it.
 - Conventional Commits on every first line — the commit-msg hook enforces it.
 - Never commit `.env*` (except `.env.example`) or anything under `data/`.
+- Adding a migration updates `docs/schema.md` in the same PR — `tests/migrations.test.ts` enforces it.
+- Read findings through `lib/findings-model.ts`; no feature carries its own gate over `findings` (E-17).
 - Hooks are armed via `git config core.hooksPath .mfactory/hooks`; re-arm after a fresh clone.
 
 ## Ritual
