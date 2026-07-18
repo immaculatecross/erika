@@ -27,3 +27,29 @@ Ask Erika (E-23), Targets, pagination, any model call, editing the segment extra
 ## PR + exit report
 
 Conventional-Commit title; body: what changed, exact verification commands, risks. Append the `task.md` exit block to this file. Token-efficient: read CLAUDE.md, DESIGN.md, and only the files this WO names plus immediate dependencies; no repo-wide sweep; terse report. Commit incrementally.
+
+## Exit report
+
+```
+RESULT: done
+PR:       feat/session-map
+Changed:  lib/session-map.ts — pure finding→segment mapping (marker placement, highlight set)
+          lib/slip-hours.ts — pure UTC hour-of-day bucketing of findings
+          lib/focus.ts — FocusPayload gains slipHours via listIncludedFindingsWithSession
+          components/segment-timeline.tsx — renders a severity-tinted marker per finding (SEVERITY_STYLES)
+          components/ingest-status.tsx — threads map props to the timeline
+          components/analysis-report.tsx — row highlight + scroll-into-view on selection
+          components/analysis-panel.tsx — analysis poll lifted to a prop; threads selection
+          app/sessions/[id]/page.tsx — lifts useAnalysis; shared segment↔finding selection; marker click plays
+          components/slip-hours.tsx + app/focus/page.tsx — quiet monochrome "when you slip" distribution
+Verified: npx tsc --noEmit (0); npx vitest run (60 files, 411 tests pass, incl. 4 new suites);
+          npx next lint (clean); npm run build (ok); run-tripwires.sh --all (exit 0).
+          End-to-end on a throwaway DB (ERIKA_DB_PATH): seeded session with 3 findings across 2 segments,
+          next start + curl proved /api/sessions/demo/analysis findings map to correct segments
+          (3000/6000→seg0, 24000→seg1), /api/focus slipHours bucketed all 3 at hour 9 (peak), pages 200.
+          data/erika.db never touched.
+Risks:    "When you slip" is UTC-based (consistent with SQLite UTC storage; no DST) and anchors each slip
+          at session capture time + recording offset — a proxy for wall-clock (upload time for uploads).
+          Marker click reuses the existing player seek; no playback engine changed.
+Blocker:  none
+```
