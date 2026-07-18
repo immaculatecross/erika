@@ -2,7 +2,7 @@
 
 SQLite (better-sqlite3) at `data/erika.db` (`ERIKA_DB_PATH` overrides). Applied by
 the runner in `lib/db.ts` from the append-only list in `lib/migrations/index.ts`;
-`_migrations` records the versions already applied. **Latest version: v9.**
+`_migrations` records the versions already applied. **Latest version: v10.**
 
 > **Ritual.** Adding a migration updates this file in the same PR. A schema doc
 > that lags the schema is worse than none — it is believed and it is wrong.
@@ -39,7 +39,7 @@ survive the deletion of any one session that happened to contain that audio.
 | `sessions` | 2 | `id` | One uploaded or recorded file: filename, format, bytes, duration, `created_at`. Deleting cascades to jobs, segments, findings. |
 | `ingest_jobs` | 2, 3, 8 | `id` | The speech-extraction run for a session: `state` (queued/processing/done/failed), `stage`, `progress`, `error`, and the v8 lease (`worker_id`, `heartbeat_at`). |
 | `segments` | 3 | `id`, unique `(session_id, idx)` | One kept speech interval: original-timeline `start_ms`/`end_ms`/`duration_ms` and its `content_hash`. |
-| `findings` | 4, 8 | `id`, unique `(session_id, content_hash, start_ms, quote, correction, category)` | One correction: `quote` → `correction`, `category`, `explanation`, `severity`, timestamps. The v8 identity index makes a replayed write idempotent — it is not a defence against a double run (the lease is). |
+| `findings` | 4, 8, 10 | `id`, unique `(session_id, content_hash, start_ms, quote, correction, category)` | One correction: `quote` → `correction`, `category`, `explanation`, `severity`, timestamps. The v8 identity index makes a replayed write idempotent — it is not a defence against a double run (the lease is). From v10, nullable `recurrence_of`: the speaker-profile entry (its correction text) the deep model marked this finding as recurring (`lib/analysis/profile.ts`); NULL everywhere the model made no such claim. |
 | `analysis_jobs` | 4, 8 | `id` | One cascade run: `state` (queued/processing/done/failed/**halted**), `stage`, `progress`, `error`, plus the v8 lease. `halted` = the budget cap stopped it. |
 | `segment_analyses` | 4, 9 | `content_hash` | The never-re-bill witness: `flagged` (triage's verdict), `deep_done`, and from v9 `unreadable` + `unreadable_reason` + `response_shape` (content-free). **This table is what "analysed" means** — see `lib/findings-model.ts`. |
 | `spend_ledger` | 4 | `id` | One row per real billable call: `month` ('YYYY-MM'), `model`, `content_hash`, `cost_usd`. No session FK — deleting a session must never erase spend history. |
@@ -75,6 +75,7 @@ re-upload contributes nothing anywhere until its own Analyze runs.
 | 7 | `lessons_and_mastery` | `lessons`, `lesson_mastery` |
 | 8 | `job_lease_and_findings_identity` | lease columns on both job tables; `idx_findings_identity` (dedupes existing rows first) |
 | 9 | `segment_unreadable` | `unreadable`, `unreadable_reason`, `response_shape` on `segment_analyses` |
+| 10 | `findings_recurrence` | nullable `recurrence_of` on `findings` — the profile-entry recurrence link (E-19) |
 
 Never edit a shipped migration — add the next one. `tests/migrations.test.ts`
 asserts a fresh database reaches the latest version and that re-running is a no-op.

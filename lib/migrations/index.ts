@@ -321,4 +321,22 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // E-19 Profile-primed analysis: the deep model's prompt now carries the
+    // speaker profile (lib/analysis/profile.ts), and its reply MAY cite one of
+    // the numbered profile entries as the recurrence a finding repeats.
+    //
+    // `recurrence_of` persists that link: the cited entry's correction text —
+    // stable across runs, unlike the run-local "R1" labels — or NULL. The field
+    // is optional END TO END (D-13): a reply without it, or citing an unknown
+    // entry, persists its finding with NULL exactly as every pre-v10 row reads.
+    // Additive only; every existing row is untouched and reads as "no link".
+    version: 10,
+    name: "findings_recurrence",
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE findings ADD COLUMN recurrence_of TEXT;
+      `);
+    },
+  },
 ];

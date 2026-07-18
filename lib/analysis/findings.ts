@@ -29,6 +29,9 @@ export interface Finding {
   severity: Severity;
   startMs: number;
   endMs: number;
+  /** The profile entry (its correction text) this finding recurs, or null —
+   *  written when the deep model cited a valid profile entry (E-19, v10). */
+  recurrenceOf?: string | null;
 }
 
 /** A validated finding ready to persist (no id/session yet). */
@@ -40,6 +43,8 @@ export interface NewFinding {
   severity: Severity;
   startMs: number;
   endMs: number;
+  /** Resolved recurrence link (the cited profile entry's correction), if any. */
+  recurrenceOf?: string | null;
 }
 
 /** The raw `findings` row shape — exported so lib/findings-model.ts, which owns
@@ -55,6 +60,7 @@ export interface FindingRow {
   severity: Severity;
   start_ms: number;
   end_ms: number;
+  recurrence_of: string | null;
 }
 
 export function toFinding(r: FindingRow): Finding {
@@ -69,6 +75,7 @@ export function toFinding(r: FindingRow): Finding {
     severity: r.severity,
     startMs: r.start_ms,
     endMs: r.end_ms,
+    recurrenceOf: r.recurrence_of ?? null,
   };
 }
 
@@ -121,8 +128,8 @@ export function persistSegmentFindings(
   // (E-4 criterion 5).
   const insert = db.prepare(
     `INSERT INTO findings
-       (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms, recurrence_of)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (session_id, content_hash, start_ms, quote, correction, category) DO NOTHING`,
   );
   db.transaction(() => {
@@ -139,6 +146,7 @@ export function persistSegmentFindings(
         f.severity,
         f.startMs,
         f.endMs,
+        f.recurrenceOf ?? null,
       );
     }
     db.prepare(
@@ -291,8 +299,8 @@ export function reuseCachedFindings(
   if (canonical.length === 0) return;
   const insert = db.prepare(
     `INSERT INTO findings
-       (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms, recurrence_of)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (session_id, content_hash, start_ms, quote, correction, category) DO NOTHING`,
   );
   const donorStarts = new Map<string, number | null>();
@@ -314,6 +322,7 @@ export function reuseCachedFindings(
         f.severity,
         startMs,
         Math.max(remap(f.endMs, donorStart, target), startMs),
+        f.recurrenceOf ?? null,
       );
     }
   })();

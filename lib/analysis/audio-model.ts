@@ -1,4 +1,5 @@
 import { isCategory, isSeverity, type NewFinding } from "./findings";
+import { profileBlock, type SpeakerProfile } from "./profile";
 import { MINI_MODEL, type ModelId } from "./rates";
 
 // The ONE module that talks to OpenAI's audio models (D-3, D-10). Everything
@@ -17,6 +18,9 @@ export interface TriageInput {
   /** Container format of the audio, e.g. "wav". */
   format: string;
   targetLanguage: string;
+  /** The speaker profile the prompt is primed with (E-19). Optional: absent
+   *  behaves exactly as before the profile existed. */
+  profile?: SpeakerProfile;
 }
 
 export interface TriageResult {
@@ -29,11 +33,17 @@ export interface DeepInput {
   audioBase64: string;
   format: string;
   targetLanguage: string;
+  /** The speaker profile the prompt is primed with (E-19). Optional: absent
+   *  behaves exactly as before the profile existed. */
+  profile?: SpeakerProfile;
 }
 
 export interface DeepResult {
-  /** Findings with offsets *relative to the segment start*, in ms. */
-  findings: (NewFinding & { relStartMs?: number; relEndMs?: number })[];
+  /** Findings with offsets *relative to the segment start*, in ms. `recurrenceId`
+   *  is the model's optional claim that a finding recurs a numbered profile entry
+   *  ("R1"…); it is advisory — the cascade resolves it, and an unknown id is
+   *  simply ignored (D-13). */
+  findings: (NewFinding & { relStartMs?: number; relEndMs?: number; recurrenceId?: string })[];
 }
 
 /** Per-call knobs the cascade uses for its one bounded repair retry. */
@@ -91,9 +101,15 @@ export function describeResponseShape(raw: string, finishReason: string | null):
 
 // ---- prompts -------------------------------------------------------------
 
-export function triagePrompt(targetLanguage: string): string {
+/** The profile block as prompt lines — empty when no profile was provided. */
+function profileLines(profile?: SpeakerProfile): string[] {
+  return profile ? [profileBlock(profile)] : [];
+}
+
+export function triagePrompt(targetLanguage: string, profile?: SpeakerProfile): string {
   return [
     `You are triaging a language learner's ${targetLanguage} speech. The audio is time-compressed.`,
+    ...profileLines(profile),
     "Focus ONLY on the dominant/primary speaker; ignore background or bystander voices.",
     "Decide whether the dominant speaker makes any notable non-native error (grammar, vocabulary,",
     "phrasing, idiom, or pronunciation) worth a detailed review.",
@@ -116,9 +132,16 @@ export const STRICT_JSON_INSTRUCTION =
 export const DOMINANT_SPEAKER_INSTRUCTION =
   "Focus ONLY on the dominant/primary speaker; ignore background or bystander voices (bystanders are never analyzed).";
 
-export function deepPrompt(targetLanguage: string): string {
+/** Asked only when the profile carries numbered entries the model can cite. */
+export const RECURRENCE_INSTRUCTION =
+  'If a finding repeats one of the numbered recurring errors above, add "recurrenceId" with' +
+  ' that entry\'s id (e.g. "R1") to that finding. Omit it otherwise.';
+
+export function deepPrompt(targetLanguage: string, profile?: SpeakerProfile): string {
+  const hasEntries = (profile?.entries.length ?? 0) > 0;
   return [
     `You are an expert ${targetLanguage} coach reviewing a learner's speech at native speed.`,
+    ...profileLines(profile),
     DOMINANT_SPEAKER_INSTRUCTION,
     "Identify each genuine error the dominant speaker makes. For each, give the quote, a correction,",
     "a category (one of: grammar, vocabulary, phrasing, idiom, pronunciation), a short explanation,",
@@ -127,6 +150,7 @@ export function deepPrompt(targetLanguage: string): string {
     'Respond with JSON only: {"findings": [{"quote": string, "correction": string,',
     '"category": string, "explanation": string, "severity": string, "relStartMs": number,',
     '"relEndMs": number}]}. Return an empty findings array if the speaker made no errors.',
+    ...(hasEntries ? [RECURRENCE_INSTRUCTION] : []),
   ].join(" ");
 }
 
@@ -189,6 +213,12 @@ export function parseDeepResponse(raw: string): DeepResult {
     if (!isSeverity(f.severity)) throw new ModelParseError(`Finding ${i} has an invalid \`severity\`.`);
     const relStartMs = numberOrUndefined(f.relStartMs);
     const relEndMs = numberOrUndefined(f.relEndMs);
+    // Optional everywhere (D-13): a missing, empty, or non-string recurrenceId is
+    // simply absent — it can never fail the finding, the segment, or the run.
+    const recurrenceId =
+      typeof f.recurrenceId === "string" && f.recurrenceId.trim() !== ""
+        ? f.recurrenceId.trim()
+        : undefined;
     return {
       quote: (f.quote as string).trim(),
       correction: (f.correction as string).trim(),
@@ -199,6 +229,7 @@ export function parseDeepResponse(raw: string): DeepResult {
       endMs: 0,
       relStartMs,
       relEndMs,
+      recurrenceId,
     };
   });
   return { findings };
@@ -293,11 +324,11 @@ const strict = (prompt: string, opts?: CallOpts): string =>
 /** The production client. Kept thin: build prompt → call → hand off to a parser. */
 export const openAiAudioModel: AudioModelClient = {
   async triage(input, opts) {
-    const prompt = strict(triagePrompt(input.targetLanguage), opts);
+    const prompt = strict(triagePrompt(input.targetLanguage, input.profile), opts);
     return interpret(MINI_MODEL, await callModel(MINI_MODEL, prompt, input), parseTriageResponse);
   },
   async deepListen(model, input, opts) {
-    const prompt = strict(deepPrompt(input.targetLanguage), opts);
+    const prompt = strict(deepPrompt(input.targetLanguage, input.profile), opts);
     return interpret(model, await callModel(model, prompt, input), parseDeepResponse);
   },
 };
