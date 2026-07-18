@@ -62,6 +62,22 @@ describe("parseEnvFile", () => {
     expect(parseEnvFile("A='a # b'\n")).toEqual({ A: "a # b" });
     expect(parseEnvFile("A=sk-ab#cd\n")).toEqual({ A: "sk-ab#cd" });
   });
+
+  // PR #24 review, advisory 1: two comment shapes still corrupted the value. A
+  // QUOTED value with a trailing comment failed the ends-with-quote test and fell
+  // into the comment-strip branch, keeping the quote characters ('"sk-abc"'); an
+  // EMPTY value with a comment kept the comment text itself ("# note").
+  it("strips a trailing comment after a quoted value, quotes and all", () => {
+    expect(parseEnvFile('OPENAI_API_KEY="sk-abc" # note\n')).toEqual({ OPENAI_API_KEY: "sk-abc" });
+    expect(parseEnvFile("A='v' # note\n")).toEqual({ A: "v" });
+    expect(parseEnvFile('A="a # b" # note\n')).toEqual({ A: "a # b" });
+  });
+
+  it("an empty value followed by a comment is empty, not the comment text", () => {
+    expect(parseEnvFile("KEY= # note\n")).toEqual({ KEY: "" });
+    expect(parseEnvFile("KEY=#note\n")).toEqual({ KEY: "" });
+    expect(parseEnvFile("KEY=\n")).toEqual({ KEY: "" });
+  });
 });
 
 describe("loadEnvLocal", () => {

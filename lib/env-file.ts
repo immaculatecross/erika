@@ -31,12 +31,15 @@ export const ENV_LOCAL = ".env.local";
  * value. No interpolation, no multi-line values — anything fancier belongs in a
  * real secrets store, not here.
  *
- * A trailing comment is stripped only from an UNQUOTED value: `KEY=sk-abc # note`
- * used to yield the literal `sk-abc # note`, which `startupEnvError` waved through
- * as non-empty and OpenAI then rejected as a 401 at the first model call — a
- * silently corrupted secret from a common dotenv habit (E-16 review, advisory 4).
- * Inside quotes a `#` is data (`KEY="a#b"` is `a#b`), which is why the quote strip
- * happens first and the comment strip only when no quotes were found.
+ * Comments next to a value (E-16 review advisory 4; PR #24 review advisory 1): a
+ * QUOTED value ends at its closing quote and anything after it — `KEY="sk-abc" #
+ * note` — is dropped; inside the quotes a `#` is data (`KEY="a#b"` is `a#b`). An
+ * UNQUOTED value is cut at a `#` that starts the value or follows whitespace —
+ * `KEY=sk-abc # note` is `sk-abc`, `KEY= # note` is empty — while a `#` inside a
+ * token is data (`sk-ab#cd`; a secret may legitimately contain one). Anything
+ * less yields a silently corrupted secret from a common dotenv habit, which
+ * `startupEnvError` waves through as non-empty and OpenAI rejects as a 401 at the
+ * first model call.
  */
 export function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -52,15 +55,15 @@ export function parseEnvFile(text: string): Record<string, string> {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
     let value = line.slice(eq + 1).trim();
     const quote = value[0];
-    if (
-      (quote === '"' || quote === "'") &&
-      value.endsWith(quote) &&
-      value.length > 1
-    ) {
-      value = value.slice(1, -1);
+    const close = quote === '"' || quote === "'" ? value.indexOf(quote, 1) : -1;
+    if (close > 0) {
+      // Quoted: the value is what sits inside the pair; a trailing comment (or
+      // any other stray text) after the closing quote is not part of it.
+      value = value.slice(1, close);
     } else {
-      // Unquoted: everything from a whitespace-preceded `#` onward is a comment.
-      value = value.replace(/\s+#.*$/, "").trim();
+      // Unquoted (or an unterminated quote, kept verbatim): a `#` at the start
+      // or after whitespace begins a comment; inside a token it is data.
+      value = value.replace(/(^|\s)#.*$/, "").trim();
     }
     out[key] = value;
   }
