@@ -6,7 +6,8 @@ import { openDatabase, type Db } from "@/lib/db";
 import { createSession } from "@/lib/sessions";
 import { upsertSegment } from "@/lib/segments";
 import { persistSegmentFindings, type Category, type NewFinding } from "@/lib/analysis/findings";
-import { enqueueAnalysis, type AnalysisState } from "@/lib/analysis/cascade";
+import { enqueueAnalysis, runAnalysisJob, type AnalysisState } from "@/lib/analysis/cascade";
+import type { AudioModelClient } from "@/lib/analysis/audio-model";
 import {
   listAnalysedSessions,
   listIncludedFindings,
@@ -180,6 +181,78 @@ describe("E-17 criterion 1 — one findings truth", () => {
     expect(listIncludedFindings(db)).toEqual([]);
     expect(buildFocusModel(db).speechHours).toBe(0);
     expect(buildLetter(db)).toBeNull();
+    db.close();
+  });
+});
+
+describe("PR #24 repair — a shared witness is not an analysis of the session", () => {
+  // `segment_analyses` is keyed by content hash ACROSS sessions (the never-re-bill
+  // cache), so a byte-identical file uploaded as a second session shares every
+  // witness with the first while no run of its own has committed any evidence and
+  // no finding was ever materialized for it. The hash-shared witnesses alone made
+  // `listAnalysedSessions` return the copy: analysed hours doubled, every rate
+  // halved, the trend flipped, and the letter counted the copy's week. The
+  // `seed` helper above cannot catch this — its hashes are session-unique.
+  const DUP = "dup-hash";
+
+  function seedCopy(db: Db, id: string, day: string): void {
+    createSession(db, { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
+    db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(`${day} 09:00:00`, id);
+    upsertSegment(db, { sessionId: id, idx: 0, startMs: 0, endMs: HOUR, contentHash: DUP });
+  }
+
+  /** The copy's run must be a pure cache hit — any model call is a test failure. */
+  const modelNeverCalled: AudioModelClient = {
+    triage: () => Promise.reject(new Error("triage called on fully cached audio")),
+    deepListen: () => Promise.reject(new Error("deepListen called on fully cached audio")),
+  };
+
+  it("a byte-identical upload contributes nothing until its own Analyze runs", async () => {
+    const db = freshDb();
+    // Session A: 1 h of speech, analysed for real, 4 findings, run done.
+    seedCopy(db, "a", WEEK);
+    persistSegmentFindings(db, {
+      sessionId: "a",
+      contentHash: DUP,
+      flagged: true,
+      deepDone: true,
+      findings: [0, 1, 2, 3].map((i) => finding(i)),
+    });
+    const jobA = enqueueAnalysis(db, "a");
+    db.prepare("UPDATE analysis_jobs SET state='done', progress=1 WHERE id=?").run(jobA.id);
+
+    // Session B: the same bytes uploaded again a week later. Analyze never pressed.
+    seedCopy(db, "b", "2026-07-20");
+
+    // B contributes nothing anywhere: not a session, not an hour, not a finding.
+    expect(listAnalysedSessions(db).map((s) => s.id)).toEqual(["a"]);
+    const before = buildFocusModel(db);
+    expect(before.analyzedSessions).toBe(1);
+    expect(before.speechHours).toBe(1);
+    expect(before.totalFindings).toBe(4);
+    expect(before.overallRatePerHour).toBe(4); // the copy must not halve this
+    expect(buildLetter(db)?.weekStart).toBe(WEEK); // not B's untouched week
+    expect(listSessionFindings(db, "b")).toEqual([]);
+    expect(sessionSegmentCounts(db, "b")).toEqual({ segmentCount: 1, analysedCount: 0, unreadableCount: 0 });
+
+    // Pressing Analyze alone (job still queued) changes nothing yet.
+    const jobB = enqueueAnalysis(db, "b");
+    expect(jobB.state).toBe("queued");
+    expect(listAnalysedSessions(db).map((s) => s.id)).toEqual(["a"]);
+
+    // B's own run: a pure cache hit, zero model calls, findings materialized
+    // instantly. NOW it counts — everywhere, at the same rate.
+    const doneB = await runAnalysisJob(db, jobB.id, modelNeverCalled);
+    expect(doneB.state).toBe("done");
+    expect(listAnalysedSessions(db).map((s) => s.id)).toEqual(["a", "b"]);
+    const after = buildFocusModel(db);
+    expect(after.analyzedSessions).toBe(2);
+    expect(after.speechHours).toBe(2);
+    expect(after.totalFindings).toBe(8);
+    expect(after.overallRatePerHour).toBe(4); // an identical hour cannot move the rate
+    expect(buildLetter(db)?.weekStart).toBe("2026-07-20");
+    expect(listSessionFindings(db, "b")).toHaveLength(4);
+    expect(sessionSegmentCounts(db, "b")).toEqual({ segmentCount: 1, analysedCount: 1, unreadableCount: 0 });
     db.close();
   });
 });

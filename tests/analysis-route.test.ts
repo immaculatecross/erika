@@ -175,6 +175,15 @@ describe("the report carries the unreadable tally and worker signal", () => {
       findings: [],
       unreadable: { reason: "cut off", shape: "finish_reason=length chars=4096 brace=unclosed" },
     });
+    // The unreadable witness above was written by a completed FIRST run; the
+    // hour-old queued job below is the re-run nothing is draining. The prior run
+    // matters: a session no run of its own has started on reports zero analysed /
+    // unreadable segments, however many witnesses its hashes carry (PR #24 repair).
+    getDb()
+      .prepare(
+        "INSERT INTO analysis_jobs (id, session_id, state, progress, created_at) VALUES ('tally-first', 'tally', 'done', 1, datetime('now','-2 hours'))",
+      )
+      .run();
     const job = enqueueAnalysis(getDb(), "tally");
     getDb().prepare("UPDATE analysis_jobs SET created_at = datetime('now','-1 hour'), updated_at = datetime('now','-1 hour') WHERE id=?").run(job.id);
 

@@ -26,22 +26,34 @@ import { toFinding } from "./analysis/findings";
 //     run that produced it committed it (findings and the witness are written in
 //     one transaction, lib/analysis/findings.ts), and no later process state
 //     un-says it.
-//   * An **analysed session** is a session with at least one analysed segment, and
-//     its **analysed speech** is the Σ duration of *those* segments only — never
-//     the whole session's speech. A rate's denominator must be what was listened
-//     to, not what was recorded.
+//   * An **analysed session** is a session an analysis run OF ITS OWN has run on
+//     (≥1 `analysis_jobs` row past `queued`) that has at least one analysed
+//     segment; its **analysed speech** is the Σ duration of *those* segments only
+//     — never the whole session's speech. A rate's denominator must be what was
+//     listened to, not what was recorded. The own-run requirement exists because
+//     the witness is keyed by content hash ACROSS sessions (the never-re-bill
+//     cache): a byte-identical file uploaded as a second session shares every
+//     witness with the first while nothing was ever done on it and no finding was
+//     ever materialized for it — counting it would double the analysed hours and
+//     halve every rate. A duplicate contributes nothing anywhere until its own
+//     Analyze runs; that run is a pure cache hit that materializes its findings
+//     instantly and free, and from that moment it counts.
 //
-// Analysis-job state is deliberately NOT a gate anywhere. A job row describes a
-// *process*; the witness describes *evidence*. Gating reads on process state is
-// precisely what produced the disagreement, and it produced it in the untruthful
-// direction — hiding work the user had already paid for. Concretely:
+// Analysis-job STATE never un-says committed evidence. A job row describes a
+// *process*; the witness describes *evidence*. Gating reads on the *latest* job's
+// state is precisely what produced the disagreement, and it produced it in the
+// untruthful direction — hiding work the user had already paid for. The session
+// scope above asks only whether ANY run of the session's own ever started, never
+// what state the latest one is in. Concretely:
 //
 //   * a **halted** run (budget cap) counts: the segments it reached were genuinely
 //     analysed, so its findings count and only its analysed speech is denominated.
-//     Nothing about "we stopped early" makes the errors it found less real.
+//     Nothing about "we stopped early" makes the errors it found less real. The
+//     completed segments of a **failed** run count the same way.
 //   * a **re-analysis in flight** changes nothing while it runs: the evidence from
-//     the previous run stands until the new run adds to it. Findings do not blink
-//     out of the Phrasebook, the letter, or Focus because a job was enqueued.
+//     the previous run stands until the new run adds to it (a new `queued` job
+//     cannot un-start the old run). Findings do not blink out of the Phrasebook,
+//     the letter, or Focus because a job was enqueued.
 //
 // Read-only: no writes, no model calls. All aggregation is done by SQL `GROUP BY`
 // over a fixed number of statements — never one query per session.
@@ -63,10 +75,28 @@ function hashIsAnalysed(hashColumn: string): string {
 }
 
 /**
+ * Predicate on a session id expression: an analysis run of THIS session's own has
+ * actually run — any job past `queued`, whatever its state ended up as. This is
+ * the per-session evidence gate for the session scopes: the witness alone is
+ * hash-shared across sessions, so without it a byte-identical re-upload would
+ * read as analysed without any run of its own ever committing anything. It is an
+ * EXISTS over ALL of the session's jobs, deliberately not a read of the latest
+ * one — gating on the latest job's state is the pre-E-17 bug.
+ */
+function sessionHasOwnRun(sessionIdExpr: string): string {
+  return `EXISTS (
+    SELECT 1 FROM analysis_jobs j
+     WHERE j.session_id = ${sessionIdExpr} AND j.state <> 'queued'
+  )`;
+}
+
+/**
  * SQL fragment: the included-finding scope, for any query over `findings f`. The
  * one gate every finding-reading surface uses — the session report, the
  * Phrasebook, the Archive, the lesson patterns, card generation, and (through
- * `findingTallies`) Focus and the letter.
+ * `findingTallies`) Focus and the letter. No own-run check is needed here: a
+ * `findings` row is only ever written by the session's own run (directly or by
+ * cache reuse), so the row's existence is itself the per-session evidence.
  */
 export const INCLUDED_FINDING_SCOPE = hashIsAnalysed("f.content_hash");
 
@@ -86,7 +116,9 @@ export interface AnalysedSessionRow {
 /**
  * Every analysed session with its analysed speech, oldest first — ONE query, the
  * per-session sums done by SQL `GROUP BY` rather than a `listSegments` call per
- * session. A session with speech but nothing analysed is absent, not zero-filled.
+ * session. A session with speech but nothing analysed is absent, not zero-filled —
+ * and so is a session no run of its own has started on, however many witnesses its
+ * hashes share with an already-analysed twin.
  */
 export function listAnalysedSessions(db: Db): AnalysedSessionRow[] {
   const rows = db
@@ -98,6 +130,7 @@ export function listAnalysedSessions(db: Db): AnalysedSessionRow[] {
          FROM sessions s
          JOIN segments sg ON sg.session_id = s.id
          LEFT JOIN segment_analyses a ON a.content_hash = sg.content_hash
+        WHERE ${sessionHasOwnRun("s.id")}
         GROUP BY s.id
        HAVING analysed_count > 0
         ORDER BY s.created_at, s.id`,
@@ -200,18 +233,24 @@ export interface SessionSegmentCounts {
  * The truthful per-session counts, in one query. `analysed` is counted from the
  * witnesses, NOT derived as `segmentCount − unreadableCount`: that subtraction is
  * exact only on a run that finished, and on a halted run it silently credited
- * every segment the run never reached ("5 of 6 analysed" when 1 had been).
+ * every segment the run never reached ("5 of 6 analysed" when 1 had been). And
+ * the witness counts apply only once a run of the SESSION'S OWN has started —
+ * witnesses are hash-shared across sessions, and a byte-identical re-upload no
+ * run has touched must not report its segments as analysed.
  */
 export function sessionSegmentCounts(db: Db, sessionId: string): SessionSegmentCounts {
   const r = db
     .prepare(
       `SELECT COUNT(sg.id) AS total,
               COALESCE(SUM(CASE WHEN ${WITNESS_COMPLETE} THEN 1 ELSE 0 END), 0) AS analysed,
-              COALESCE(SUM(CASE WHEN a.unreadable = 1 THEN 1 ELSE 0 END), 0) AS unreadable
+              COALESCE(SUM(CASE WHEN a.unreadable = 1 THEN 1 ELSE 0 END), 0) AS unreadable,
+              ${sessionHasOwnRun("?")} AS has_run
          FROM segments sg
          LEFT JOIN segment_analyses a ON a.content_hash = sg.content_hash
         WHERE sg.session_id = ?`,
     )
-    .get(sessionId) as { total: number; analysed: number; unreadable: number };
-  return { segmentCount: r.total, analysedCount: r.analysed, unreadableCount: r.unreadable };
+    .get(sessionId, sessionId) as { total: number; analysed: number; unreadable: number; has_run: number };
+  return r.has_run
+    ? { segmentCount: r.total, analysedCount: r.analysed, unreadableCount: r.unreadable }
+    : { segmentCount: r.total, analysedCount: 0, unreadableCount: 0 };
 }

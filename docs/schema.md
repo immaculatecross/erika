@@ -57,7 +57,10 @@ Do not query `findings` directly from a feature. `lib/findings-model.ts` defines
 the scope once — what an analysed segment, an analysed session, and an included
 finding are, and how a halted run and an in-flight re-analysis are treated — and
 every surface reads through it. Six surfaces once answered that question six ways
-and disagreed with each other (E-17).
+and disagreed with each other (E-17). Note that `segment_analyses` witnesses are
+hash-shared across sessions (the cache), so the session scopes additionally
+require an analysis run of the session's own past `queued`: a byte-identical
+re-upload contributes nothing anywhere until its own Analyze runs.
 
 ## Migration history
 
