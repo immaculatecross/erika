@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { AnalysisPanel } from "@/components/analysis-panel";
 import { WORKER_ABSENT_MESSAGE } from "@/lib/jobs/liveness";
 import type { AnalysisView } from "@/lib/analysis-view";
 
@@ -15,7 +16,8 @@ import type { AnalysisView } from "@/lib/analysis-view";
 //
 // Rendered with `renderToStaticMarkup`, which runs the component tree without a
 // DOM: the effects that need `window` (usePrefersReducedMotion) do not run, and
-// the polling hook is mocked, so this makes no fetch and needs no network.
+// the analysis poll is passed in as a prop (lifted to the page in E-22), so this
+// makes no fetch and needs no network.
 
 const view = (over: Partial<AnalysisView> = {}): AnalysisView => ({
   state: "idle",
@@ -32,15 +34,9 @@ const view = (over: Partial<AnalysisView> = {}): AnalysisView => ({
   ...over,
 });
 
-const mockView = vi.hoisted(() => ({ current: null as AnalysisView | null }));
-vi.mock("@/lib/use-analysis", () => ({
-  useAnalysis: () => ({ view: mockView.current, polling: false, pollCount: 0, refresh: () => {} }),
-}));
-
-async function render(v: AnalysisView): Promise<string> {
-  mockView.current = v;
-  const { AnalysisPanel } = await import("@/components/analysis-panel");
-  return renderToStaticMarkup(<AnalysisPanel sessionId="s1" onJump={() => {}} />);
+function render(v: AnalysisView): string {
+  const analysis = { view: v, polling: false, pollCount: 0, refresh: () => {} };
+  return renderToStaticMarkup(<AnalysisPanel sessionId="s1" analysis={analysis} onJump={() => {}} />);
 }
 
 /** The notice, by its data attribute — the same hook the e2e uses. */

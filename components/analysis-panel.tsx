@@ -5,8 +5,8 @@ import { motion } from "framer-motion";
 import { SPRING } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { formatUsd } from "@/lib/format";
-import { useAnalysis } from "@/lib/use-analysis";
-import { segmentTally, type AnalysisView } from "@/lib/analysis-view";
+import type { AnalysisPoll } from "@/lib/use-analysis";
+import { segmentTally, type AnalysisView, type FindingView } from "@/lib/analysis-view";
 import { AnalysisProgress } from "@/components/analysis-progress";
 import { AnalysisReport } from "@/components/analysis-report";
 import { WorkerAbsentNotice } from "@/components/worker-absent-notice";
@@ -36,12 +36,27 @@ type Phase =
 
 interface Props {
   sessionId: string;
+  /** The analysis poll, lifted to the page so the session map shares its findings. */
+  analysis: AnalysisPoll;
   /** Seek the reused audio player to a finding's start (ms). */
   onJump: (startMs: number) => void;
+  /** Findings to highlight — the session-map selection, shared with the timeline. */
+  highlightedFindingIds?: ReadonlySet<string>;
+  /** The single finding to scroll into view (a marker was clicked on the map). */
+  selectedFindingId?: string | null;
+  /** Select a finding from the report (highlight its segment on the map). */
+  onSelectFinding?: (finding: FindingView) => void;
 }
 
-export function AnalysisPanel({ sessionId, onJump }: Props) {
-  const { view, polling, pollCount, refresh } = useAnalysis(sessionId);
+export function AnalysisPanel({
+  sessionId,
+  analysis,
+  onJump,
+  highlightedFindingIds,
+  selectedFindingId,
+  onSelectFinding,
+}: Props) {
+  const { view, polling, pollCount, refresh } = analysis;
   const [phase, setPhase] = useState<Phase>({ kind: "cta" });
   const [starting, setStarting] = useState(false);
 
@@ -125,7 +140,13 @@ export function AnalysisPanel({ sessionId, onJump }: Props) {
             Analysis stopped — {view.error ?? "the monthly budget was reached."} The findings so far
             are below; raise the budget or wait for the month to roll over to finish.
           </p>
-          {view.total > 0 && <AnalysisReport view={view} onJump={onJump} />}
+          {view.total > 0 && <AnalysisReport
+              view={view}
+              onJump={onJump}
+              highlightedFindingIds={highlightedFindingIds}
+              selectedFindingId={selectedFindingId}
+              onSelect={onSelectFinding}
+            />}
           <SegmentTally view={view} />
         </div>
       )}
@@ -137,7 +158,13 @@ export function AnalysisPanel({ sessionId, onJump }: Props) {
               No errors found in this session&rsquo;s speech.
             </p>
           )}
-          {view.total > 0 && <AnalysisReport view={view} onJump={onJump} />}
+          {view.total > 0 && <AnalysisReport
+              view={view}
+              onJump={onJump}
+              highlightedFindingIds={highlightedFindingIds}
+              selectedFindingId={selectedFindingId}
+              onSelect={onSelectFinding}
+            />}
           <SegmentTally view={view} />
         </div>
       )}

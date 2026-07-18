@@ -9,6 +9,7 @@ import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
 import { Sparkline } from "@/components/sparkline";
 import { CategoryBars, TrendBadge } from "@/components/category-bars";
+import { SlipHours } from "@/components/slip-hours";
 import type { FocusPayload } from "@/lib/focus";
 
 // The Focus screen (E-7, v0.2): how often do I make each kind of mistake, is it
@@ -127,6 +128,28 @@ export default function FocusPage() {
           </div>
           <CategoryBars ranking={model.ranking} />
         </motion.section>
+
+        {model.slipHours.total > 0 && (
+          <motion.section variants={staggerItem(reduced)} className="flex flex-col gap-4">
+            <div>
+              <h2 className="text-[22px] font-semibold tracking-tight">When you slip</h2>
+              <p className="mt-1 text-[13px] text-secondary">
+                Findings by hour of day (UTC).
+                {model.slipHours.peakHour !== null && (
+                  <>
+                    {" "}
+                    Most fall around{" "}
+                    <span className="tabular text-ink">
+                      {String(model.slipHours.peakHour).padStart(2, "0")}:00
+                    </span>
+                    .
+                  </>
+                )}
+              </p>
+            </div>
+            <SlipHours distribution={model.slipHours} />
+          </motion.section>
+        )}
       </motion.div>
     </div>
   );
