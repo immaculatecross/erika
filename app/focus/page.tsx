@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { ArrowRight } from "lucide-react";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
@@ -56,8 +58,16 @@ export default function FocusPage() {
         animate="animate"
         className="flex flex-col gap-8"
       >
-        <motion.header variants={staggerItem(reduced)}>
+        <motion.header variants={staggerItem(reduced)} className="flex flex-wrap items-baseline justify-between gap-3">
           <h1 className="text-[34px] font-bold tracking-tight">Focus</h1>
+          <Link
+            href="/letter"
+            data-letter-link
+            className="inline-flex items-center gap-1 text-[15px] font-medium text-accent transition-opacity hover:opacity-70"
+          >
+            {"This week's letter"}
+            <ArrowRight size={16} strokeWidth={1.5} aria-hidden />
+          </Link>
         </motion.header>
 
         <motion.section
