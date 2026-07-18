@@ -120,7 +120,7 @@ export default function PracticeReviewPage() {
       <main className="flex flex-1 flex-col items-center justify-center gap-8">
         {phase === "loading" && <p className="text-[15px] text-secondary">Loading the due queue…</p>}
 
-        {phase === "done" && <DoneState reduced={reduced} />}
+        {phase === "done" && <DoneState reduced={reduced} reviewed={Math.min(index, cards.length)} />}
 
         {phase === "active" && current && (
           <>
@@ -164,18 +164,28 @@ export default function PracticeReviewPage() {
   );
 }
 
-function DoneState({ reduced }: { reduced: boolean }) {
+/**
+ * The finished state says what just happened (RETRO-001): a walked queue gets a
+ * recap of how many cards were reviewed; arriving with nothing due gets the
+ * quiet fact. Both offer the way back — a finished session never just vanishes.
+ */
+function DoneState({ reduced, reviewed }: { reduced: boolean; reviewed: number }) {
   return (
     <motion.div
       data-review-done
+      data-reviewed={reviewed}
       initial={reduced ? { opacity: 0 } : { opacity: 0, y: 8 }}
       animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
       transition={reduced ? { duration: 0.2 } : SPRING}
       className="flex max-w-md flex-col items-center gap-4 text-center"
     >
-      <h1 className="text-[34px] font-bold tracking-tight">Queue cleared</h1>
-      <p className="text-[17px] text-secondary">
-        Nothing more is due right now. Cards return when their next review comes around.
+      <h1 className="text-[34px] font-bold tracking-tight">
+        {reviewed > 0 ? "Queue cleared" : "Nothing due"}
+      </h1>
+      <p className="tabular text-[17px] text-secondary">
+        {reviewed > 0
+          ? `You reviewed ${reviewed} ${reviewed === 1 ? "card" : "cards"}. Nothing more is due right now — cards return when their next review comes around.`
+          : "Nothing is due right now. Cards return when their next review comes around."}
       </p>
       <Link
         href="/practice"

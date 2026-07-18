@@ -17,8 +17,8 @@ import {
   type ArchiveGroup,
   type CategoryFilter,
   type SeverityFilter,
-  type Severity,
 } from "@/lib/archive";
+import { SEVERITY_STYLES } from "@/lib/analysis-view";
 
 // The Speech archive (E-11, v0.2): your speaking life at a glance — every analyzed
 // moment in chronological order, newest session first, grouped by session, each
@@ -28,13 +28,9 @@ import {
 // meaning (severity), tabular numerals for timestamps; a plain search input and
 // quiet chips; one signature stagger on entry. Empty state until a session is analyzed.
 
-// Severity → its semantic tint (DESIGN.md D-8/D-14): red high, orange medium,
-// green low — 12% alpha fills, never saturated blocks. The only colour on a row.
-const SEVERITY: Record<Severity, { label: string; text: string; tint: string }> = {
-  high: { label: "High", text: "text-severe", tint: "bg-severe/[0.12]" },
-  medium: { label: "Medium", text: "text-medium", tint: "bg-medium/[0.12]" },
-  low: { label: "Low", text: "text-good", tint: "bg-good/[0.12]" },
-};
+// Severity styling comes whole from the shared SEVERITY_STYLES (D-14, E-18
+// criterion 6): red high, orange medium, low neutral — green is reserved for
+// resolved/mastered/improving, which no archived slip is.
 
 const CATEGORY_FILTERS: CategoryFilter[] = ["all", ...CATEGORY_ORDER];
 const SEVERITY_FILTERS: SeverityFilter[] = ["all", ...SEVERITY_ORDER];
@@ -75,8 +71,8 @@ export default function ArchivePage() {
       <EmptyState
         title="Archive"
         line="Every analyzed moment of your speech collects here in time order once Erika has analyzed a session. Nothing yet."
-        action="See your timeline"
-        disabled
+        action="Go to sessions"
+        href="/"
       />
     );
   }
@@ -176,7 +172,7 @@ function Group({ group, reduced }: { group: ArchiveGroup; reduced: boolean }) {
 }
 
 function Row({ entry, reduced }: { entry: ArchiveEntry; reduced: boolean }) {
-  const sev = SEVERITY[entry.severity];
+  const sev = SEVERITY_STYLES[entry.severity];
   return (
     <motion.li variants={staggerItem(reduced)}>
       <Link

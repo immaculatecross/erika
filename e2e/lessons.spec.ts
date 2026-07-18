@@ -107,7 +107,7 @@ test.describe("lessons under Practice", () => {
     await expect(page.locator("[data-lessons-list]")).toBeVisible();
     const pattern = page.locator('[data-pattern][data-key="category:grammar"]');
     await expect(pattern.locator("[data-count]")).toHaveText("3 findings");
-    await expect(pattern.locator("[data-mastery]")).toHaveText("0%");
+    await expect(pattern.locator("[data-mastery]")).toHaveText("Not started");
   });
 
   test("shows a quiet empty state when no pattern qualifies (criterion 1)", async ({ page }) => {

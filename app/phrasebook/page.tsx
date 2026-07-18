@@ -11,24 +11,20 @@ import {
   CATEGORY_ORDER,
   type CategoryFilter,
   type PhrasebookEntry,
-  type Severity,
 } from "@/lib/phrasebook";
+import { SEVERITY_STYLES } from "@/lib/analysis-view";
 
 // The Phrasebook (E-9, v0.2): a searchable library of every recast Erika built
 // from your findings — "you say X, natives say Y" — side by side, with the why,
 // category, and severity. Free-text search and a category segmented control
 // narrow it (pure filterEntries, client-side). Any entry pins into the flashcard
 // deck (clearing a prior deletion). DESIGN — calm two-column rows, ink accent,
-// green/red only as meaning (severity, the subtle "in deck" confirmation), a plain
-// search input and quiet category chips; one signature stagger on entry.
+// red/orange only as meaning (severity); "in deck" is a quiet neutral fact, not
+// an achievement; a plain search input and quiet chips; one stagger on entry.
 
-// Severity → its semantic tint (DESIGN.md D-8/D-14): red high, orange medium,
-// green low — 12% alpha fills, never saturated blocks. The only colour on a row.
-const SEVERITY: Record<Severity, { label: string; text: string; tint: string }> = {
-  high: { label: "High", text: "text-severe", tint: "bg-severe/[0.12]" },
-  medium: { label: "Medium", text: "text-medium", tint: "bg-medium/[0.12]" },
-  low: { label: "Low", text: "text-good", tint: "bg-good/[0.12]" },
-};
+// Severity styling comes whole from the shared SEVERITY_STYLES (D-14, E-18
+// criterion 6): red high, orange medium, low neutral — green is reserved for
+// resolved/mastered/improving, which no phrasebook row is.
 
 const FILTERS: CategoryFilter[] = ["all", ...CATEGORY_ORDER];
 
@@ -82,8 +78,8 @@ export default function PhrasebookPage() {
       <EmptyState
         title="Phrasebook"
         line="Your recasts collect here once Erika has analyzed a session — what you said beside how a native says it. Nothing yet."
-        action="See your recasts"
-        disabled
+        action="Go to sessions"
+        href="/"
       />
     );
   }
@@ -166,7 +162,7 @@ function Row({
   busy: boolean;
   onPin: () => void;
 }) {
-  const sev = SEVERITY[entry.severity];
+  const sev = SEVERITY_STYLES[entry.severity];
   return (
     <motion.li
       variants={staggerItem(reduced)}
@@ -199,7 +195,7 @@ function Row({
         {entry.inDeck ? (
           <span
             data-in-deck-marker
-            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-good"
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-secondary"
           >
             <Check size={16} strokeWidth={1.5} aria-hidden />
             In deck

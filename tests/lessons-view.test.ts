@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkFillIn,
   lessonScore,
+  masteryLabel,
   masteryPercent,
   normalizeAnswer,
 } from "@/lib/lessons/lessons-view";
@@ -40,5 +41,14 @@ describe("masteryPercent", () => {
     expect(masteryPercent(0.5)).toBe(50);
     expect(masteryPercent(0.756)).toBe(76);
     expect(masteryPercent(1)).toBe(100);
+  });
+});
+
+describe("masteryLabel (RETRO-001 polish)", () => {
+  it('says "Not started" instead of claiming a measured 0%', () => {
+    expect(masteryLabel(0)).toBe("Not started");
+    expect(masteryLabel(0.004)).toBe("Not started"); // still rounds to 0
+    expect(masteryLabel(0.5)).toBe("50%");
+    expect(masteryLabel(1)).toBe("100%");
   });
 });

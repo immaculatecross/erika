@@ -95,6 +95,27 @@ export function segmentTally(
   return unreadableCount > 0 ? `${line} · ${unreadableCount} unreadable` : line;
 }
 
+/**
+ * Severity badge styling, shared by every surface that shows a finding (the
+ * report, the letter, the Phrasebook, the Archive) so they can never disagree.
+ * Green is reserved for resolved/mastered/improving (DESIGN.md, D-14, E-18
+ * criterion 6): a LOW-severity mistake is still a mistake, so it reads neutral —
+ * only red and orange remain on severities, and only because they carry meaning.
+ */
+export const SEVERITY_STYLES: Record<
+  Severity,
+  { label: string; dot: string; text: string; tint: string }
+> = {
+  high: { label: "High", dot: "bg-severe", text: "text-severe", tint: "bg-severe/[0.12]" },
+  medium: { label: "Medium", dot: "bg-medium", text: "text-medium", tint: "bg-medium/[0.12]" },
+  low: {
+    label: "Low",
+    dot: "bg-secondary",
+    text: "text-secondary",
+    tint: "bg-black/[0.06] dark:bg-white/[0.08]",
+  },
+};
+
 /** Human labels for each analysis stage the orb shows while a run is in flight. */
 export const ANALYSIS_STAGE_LABELS: Record<string, string> = {
   analyzing: "Listening for errors",
