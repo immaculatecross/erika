@@ -1,6 +1,7 @@
 import type { Db } from "../db";
 import { readSettings } from "../settings";
 import { recordSpend } from "../analysis/budget";
+import { collectSpeakerProfile, profileBlock, type SpeakerProfile } from "../analysis/profile";
 import { TEXT_MODEL } from "../analysis/rates";
 import { extractJsonObject, TextModelParseError, type TextModelClient } from "./text-model";
 import { EXERCISE_TYPES, insertLesson, getLessonByPattern, type Exercise, type Lesson, type NewLesson } from "./lessons";
@@ -20,14 +21,19 @@ export const LESSON_MAX_OUTPUT_TOKENS = 1200;
 /** How many of a pattern's findings to feed the model as source material. */
 const MAX_SOURCE_FINDINGS = 8;
 
-/** Build the JSON-requesting prompt for a pattern, grounded in the user's own findings. */
-export function lessonPrompt(targetLanguage: string, pattern: Pattern): string {
+/**
+ * Build the JSON-requesting prompt for a pattern, grounded in the user's own
+ * findings and primed with their speaker profile (E-19) when one is given — the
+ * L1 line plus the bounded profile block, same as the audio prompts.
+ */
+export function lessonPrompt(targetLanguage: string, pattern: Pattern, profile?: SpeakerProfile): string {
   const examples = pattern.findings
     .slice(0, MAX_SOURCE_FINDINGS)
     .map((f, i) => `${i + 1}. said "${f.quote}" → should be "${f.correction}" (${f.explanation})`)
     .join("\n");
   return [
     `You are an expert ${targetLanguage} coach writing a short micro-lesson for an advanced learner.`,
+    ...(profile ? [profileBlock(profile)] : []),
     `The learner keeps making ${pattern.category} errors. Here are real examples from their own speech:`,
     examples,
     "",
@@ -103,7 +109,7 @@ export async function generateLessonForPattern(
   if (existing) return { lesson: existing, cached: true };
 
   const { targetLanguage } = readSettings(db);
-  const prompt = lessonPrompt(targetLanguage, pattern);
+  const prompt = lessonPrompt(targetLanguage, pattern, collectSpeakerProfile(db));
   const { completion, costUsd } = await runBilledTextCall(db, client, {
     prompt,
     maxOutputTokens: LESSON_MAX_OUTPUT_TOKENS,

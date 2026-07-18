@@ -22,6 +22,7 @@ import {
 } from "./findings";
 import { callCost, DEEP_MODELS, MINI_MODEL, type ModelId } from "./rates";
 import { recordSpend, wouldExceedBudget } from "./budget";
+import { collectSpeakerProfile, resolveRecurrence, type SpeakerProfile } from "./profile";
 
 /** One real billable call: recorded atomically with the segment it completes. */
 type SpendEntry = { model: ModelId; contentHash: string; costUsd: number };
@@ -137,6 +138,7 @@ function toTimeline(seg: Segment, f: NewFinding & { relStartMs?: number; relEndM
     severity: f.severity,
     startMs: seg.startMs + rs,
     endMs: seg.startMs + re,
+    recurrenceOf: f.recurrenceOf ?? null,
   };
 }
 
@@ -204,7 +206,15 @@ async function runDeep(
       const res = await withRepair(db, spend, (opts) => client.deepListen(model, input, opts));
       // Spend is not recorded here — it is committed atomically with the findings
       // and witness by the caller, so a crash between the two can never re-bill.
-      return { findings: res.findings.map((f) => toTimeline(seg, f)), spend };
+      // A recurrenceId citing a real profile entry is resolved to that entry's
+      // correction and persisted with the finding; anything else resolves to null
+      // and the finding persists exactly as before (E-19, D-13).
+      return {
+        findings: res.findings.map((f) =>
+          toTimeline(seg, { ...f, recurrenceOf: resolveRecurrence(input.profile, f.recurrenceId) }),
+        ),
+        spend,
+      };
     } catch (err) {
       if (err instanceof ModelUnavailableError) {
         lastErr = err; // try the D-3 fallback model before giving up
@@ -267,6 +277,11 @@ export async function runAnalysisJob(
   if (!session) throw new Error(`Job ${jobId} references missing session ${job.sessionId}.`);
 
   const { targetLanguage, monthlyBudgetUsd: budget } = readSettings(db);
+  // The speaker profile (E-19), built ONCE per run from data already on disk —
+  // no model call, read-only. It rides along in the prompt inputs only; it is
+  // deliberately NOT part of the segment cache identity (content_hash), so a
+  // profile that has grown since last month can never re-bill cached audio.
+  const profile: SpeakerProfile = collectSpeakerProfile(db);
   const tempo = opts.tempo ?? triageTempo();
   const segments = listSegments(db, job.sessionId);
   patchJob(db, jobId, { state: "processing", stage: "analyzing", error: null });
@@ -299,7 +314,7 @@ export async function runAnalysisJob(
           const rendition = await fileBase64(renditionCachePath(hash, tempo));
           const miniSpend: SpendEntry = { model: MINI_MODEL, contentHash: hash, costUsd: miniCost };
           const triage = await withRepair(db, miniSpend, (opts) =>
-            client.triage({ audioBase64: rendition, format: "wav", targetLanguage }, opts),
+            client.triage({ audioBase64: rendition, format: "wav", targetLanguage, profile }, opts),
           );
           // Record the mini spend and its completion witness atomically, so a halt
           // (or crash) after the call can never re-bill this triage on resume.
@@ -321,7 +336,7 @@ export async function runAnalysisJob(
             db,
             client,
             seg,
-            { audioBase64: original, format: "wav", targetLanguage },
+            { audioBase64: original, format: "wav", targetLanguage, profile },
             budget,
           );
           // Deep spend + findings + witness commit together (E-4 criterion 5).

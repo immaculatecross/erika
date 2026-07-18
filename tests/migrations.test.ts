@@ -68,6 +68,19 @@ describe("migrations runner", () => {
     db.close();
   });
 
+  it("v10 adds nullable recurrence_of to findings (E-19, additive only)", () => {
+    const db = openDatabase(tmpDbPath());
+    const cols = db.prepare("PRAGMA table_info(findings)").all() as {
+      name: string;
+      notnull: number;
+      dflt_value: string | null;
+    }[];
+    const col = cols.find((c) => c.name === "recurrence_of");
+    expect(col).toBeDefined();
+    expect(col!.notnull).toBe(0); // optional everywhere — a pre-v10 row reads NULL
+    db.close();
+  });
+
   it("v8 collapses pre-existing duplicate findings so the unique index can build", () => {
     // A database written before the lease landed may already carry duplicates
     // from a double-run. Migrating must dedupe rather than fail to apply.
