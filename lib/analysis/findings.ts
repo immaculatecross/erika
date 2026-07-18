@@ -99,16 +99,27 @@ export function persistSegmentFindings(
     spend?: { model: ModelId; contentHash: string; costUsd: number };
   },
 ): void {
-  // `ON CONFLICT DO NOTHING` targets only the v8 identity index, so a re-run that
-  // re-derives the same finding inserts nothing instead of duplicating it (E-16
-  // defect 2's belt-and-braces guard). A CHECK violation — a bad category or
-  // severity — is NOT a uniqueness conflict: it still throws and still rolls the
-  // whole transaction back, spend included (E-4 criterion 5).
+  // `ON CONFLICT DO NOTHING` targets only the v8 identity index, so replaying the
+  // *exact same* write inserts nothing instead of duplicating it. Scope is narrow
+  // and deliberate: it makes a repeated write idempotent, and that is all. It does
+  // NOT prevent the double-run race — two independent model replies about the same
+  // speech disagree on offsets and wording, producing different keys, so both
+  // persist. The heartbeat lease (lib/jobs/lease.ts) is what stops a second worker
+  // re-running a live job.
+  //
+  // The key includes `correction` and `category` because `quote` names the
+  // erroneous span, not the finding: one utterance can carry both a grammar and a
+  // pronunciation finding, and `relStartMs` is optional in the deep-response
+  // contract (defaulting to 0), so a narrower key would silently drop the second.
+  //
+  // A CHECK violation — a bad category or severity — is NOT a uniqueness conflict:
+  // it still throws and still rolls the whole transaction back, spend included
+  // (E-4 criterion 5).
   const insert = db.prepare(
     `INSERT INTO findings
        (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (session_id, content_hash, start_ms, quote) DO NOTHING`,
+     ON CONFLICT (session_id, content_hash, start_ms, quote, correction, category) DO NOTHING`,
   );
   db.transaction(() => {
     if (input.spend) recordSpend(db, input.spend);
@@ -273,7 +284,7 @@ export function reuseCachedFindings(
     `INSERT INTO findings
        (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (session_id, content_hash, start_ms, quote) DO NOTHING`,
+     ON CONFLICT (session_id, content_hash, start_ms, quote, correction, category) DO NOTHING`,
   );
   const donorStarts = new Map<string, number | null>();
   db.transaction(() => {

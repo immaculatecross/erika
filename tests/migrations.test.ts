@@ -96,13 +96,23 @@ describe("migrations runner", () => {
        VALUES (?, 's1', 'h', 'dup', 'fix', 'grammar', 'why', 'low', 1000, 2000)`,
     );
     ins.run("a");
-    ins.run("b"); // the duplicate a double-run would have written
-    expect((legacy.prepare("SELECT COUNT(*) AS n FROM findings").get() as { n: number }).n).toBe(2);
+    ins.run("b"); // the byte-identical row a replayed write would have left
+    // Same span, genuinely different finding — must SURVIVE the dedupe, because
+    // `quote` names the erroneous span, not the finding.
+    legacy
+      .prepare(
+        `INSERT INTO findings (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
+         VALUES ('c', 's1', 'h', 'dup', 'other fix', 'pronunciation', 'why', 'low', 1000, 2000)`,
+      )
+      .run();
+    expect((legacy.prepare("SELECT COUNT(*) AS n FROM findings").get() as { n: number }).n).toBe(3);
     legacy.close();
 
     const migrated = openDatabase(p); // applies v8
-    const rows = migrated.prepare("SELECT id FROM findings").all() as { id: string }[];
-    expect(rows).toEqual([{ id: "a" }]); // earliest row kept, duplicate collapsed
+    const rows = migrated.prepare("SELECT id FROM findings ORDER BY id").all() as { id: string }[];
+    // Oldest created_at wins, ties broken by id — deterministic, and 'c' is not a
+    // duplicate under the widened key so it is untouched.
+    expect(rows).toEqual([{ id: "a" }, { id: "c" }]);
     migrated.close();
   });
 });

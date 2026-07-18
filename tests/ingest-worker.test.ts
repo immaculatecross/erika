@@ -103,8 +103,11 @@ describe("worker job selection", () => {
   });
 });
 
+// Scope note: this guard makes a REPLAYED write idempotent. It does not prevent
+// the double-run race — two independent model replies disagree on offsets and
+// wording, so both persist. The heartbeat lease above is what prevents that.
 describe("findings identity guard (defect 2, belt-and-braces)", () => {
-  it("a double-run of the same segment yields exactly one set of findings", () => {
+  it("re-writing the identical finding inserts it once, not twice", () => {
     const db = freshDb();
     createSession(db, { id: "s1", originalFilename: "t.wav", format: "wav", sizeBytes: 1, durationSeconds: 60 });
     const findings: NewFinding[] = [
@@ -129,7 +132,7 @@ describe("findings identity guard (defect 2, belt-and-braces)", () => {
       });
 
     write();
-    write(); // the racing second worker re-derives the identical finding
+    write(); // the exact same write, replayed
 
     // The finding is not duplicated...
     expect(listFindings(db, "s1")).toHaveLength(1);

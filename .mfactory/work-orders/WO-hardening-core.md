@@ -106,3 +106,59 @@ Risks:
 
 Blocker:  none
 ```
+
+## Repair note — review finding on PR #21 (identity key too narrow)
+
+An independent review of PR #21 found that the belt-and-braces guard this PR
+introduced could **silently drop a real finding** — a defect this PR created, not
+one it inherited.
+
+**The defect.** `idx_findings_identity` keyed on `(session_id, content_hash,
+start_ms, quote)`, and both writers used `ON CONFLICT DO NOTHING` against it. But
+`quote` names the erroneous *span*, not the finding, and `relStartMs` is OPTIONAL
+in the shipped deep-response contract — `toTimeline` defaults it to `0`. So a
+deep reply that `parseDeepResponse` accepts as fully valid (two findings on
+"I have 25 years": one `grammar`, one `pronunciation`, different corrections, no
+offsets) persisted only 1 of 2. Silently: the job landed `done` and the call was
+billed in full. The guard was also weaker than the PR claimed in the other
+direction — it does NOT catch the double-run race it was written for, since two
+independent model replies disagree on offsets and produce different keys. The
+heartbeat lease is what prevents that.
+
+**The repair.**
+- Identity key widened to `(session_id, content_hash, start_ms, quote,
+  correction, category)` in the index and in both writers' `ON CONFLICT` target.
+  Still a *targeted* `ON CONFLICT`, never `INSERT OR IGNORE` — a CHECK violation
+  must keep throwing so E-4's rollback holds.
+- Migration **v8 amended in place** (it has not shipped — PR #21 is still open;
+  no v9 to patch an unmerged migration). Its dedupe step now partitions on the
+  same widened key as the index it builds.
+- v8's "earliest row" claim made true: it deduped on `MIN(id)`, which is
+  lexicographic over random UUID text and unrelated to insert time. Now
+  `ROW_NUMBER() OVER (PARTITION BY <widened key> ORDER BY created_at, id)` —
+  genuinely oldest-first, deterministic tiebreak, and documented as such.
+- Guard scope made truthful in `findings.ts`, in migration v8's comment, at the
+  existing test site, and in the PR body: it makes a *replayed write* idempotent,
+  nothing wider. No fencing token, no broader race fix — out of scope.
+
+**Verified.** New regression test
+`tests/analysis-cascade.test.ts > "keeps two distinct findings that share a quote
+and a start_ms"` — builds its two findings by running the real
+`parseDeepResponse` over a raw reply with no offsets (asserting both
+`relStartMs === undefined`), then drives the full `runAnalysisJob` cascade.
+Failed against the pre-repair branch code (`git stash` of `findings.ts` +
+`migrations/index.ts` only):
+
+```
+× keeps two distinct findings that share a quote and a start_ms
+  → AssertionError: expected [ { …(10) } ] to have a length of 2 but got 1
+```
+
+Stash popped, test green. The v8 migration test additionally plants a
+same-span/different-category row and asserts it SURVIVES the dedupe.
+
+`npm run lint` / `typecheck` / `test` / `build` and
+`.mfactory/hooks/run-tripwires.sh --all` (exit 0) all green; **235 tests pass**
+(was 234 — one added, none removed or weakened).
+`tests/analysis-atomicity.test.ts` is untouched and passing. The two
+previously-inverted tests are untouched. No network in any test.

@@ -249,12 +249,27 @@ export const migrations: Migration[] = [
     // (lib/jobs/lease.ts). Legacy rows carry NULL, which reads as "no live lease"
     // and stays reclaimable — the pre-v8 behaviour for genuinely abandoned work.
     //
-    // `idx_findings_identity` is the belt-and-braces guard: the same session +
-    // audio + timestamp + quote is one finding, no matter how many times a run is
-    // repeated. Writers use `ON CONFLICT DO NOTHING` against this index, which
-    // swallows only the duplicate — a CHECK violation (bad category/severity)
-    // still throws and still rolls its transaction back (E-4 atomicity). Existing
-    // duplicates are collapsed to their earliest row first so the index can build.
+    // `idx_findings_identity` guards ONE narrow case: re-inserting the *exact
+    // same finding* — same session, audio, timestamp, quote, correction and
+    // category. It does NOT prevent the double-run race; the heartbeat lease does
+    // that. Two independent model replies about the same speech routinely disagree
+    // on the offset by a few hundred ms, which is a different key, so both would
+    // persist. Read this as idempotence for a replayed write, nothing wider.
+    //
+    // `correction` and `category` are part of the key because `quote` names the
+    // erroneous SPAN, not the finding: one utterance can legitimately carry a
+    // grammar finding and a pronunciation finding with different corrections. A
+    // narrower key would silently drop the second — and `relStartMs` is optional
+    // in the deep-response contract (it defaults to 0), so a reply that omits
+    // offsets collapses every finding in the segment onto the same `start_ms`.
+    //
+    // Writers use `ON CONFLICT DO NOTHING` against this index, which swallows only
+    // the duplicate — a CHECK violation (bad category/severity) still throws and
+    // still rolls its transaction back (E-4 atomicity). Existing duplicates are
+    // collapsed before the index builds: the survivor is the oldest `created_at`,
+    // ties broken by `id`, so the choice is deterministic across re-runs and
+    // across machines. (`MIN(id)` alone would NOT be "earliest" — ids are random
+    // UUID text, so its ordering is lexicographic and unrelated to insert time.)
     version: 8,
     name: "job_lease_and_findings_identity",
     up: (db) => {
@@ -265,10 +280,16 @@ export const migrations: Migration[] = [
         ALTER TABLE analysis_jobs ADD COLUMN heartbeat_at TEXT;
 
         DELETE FROM findings WHERE id NOT IN (
-          SELECT MIN(id) FROM findings GROUP BY session_id, content_hash, start_ms, quote
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (
+              PARTITION BY session_id, content_hash, start_ms, quote, correction, category
+              ORDER BY created_at, id
+            ) AS rn
+            FROM findings
+          ) WHERE rn = 1
         );
         CREATE UNIQUE INDEX idx_findings_identity
-          ON findings (session_id, content_hash, start_ms, quote);
+          ON findings (session_id, content_hash, start_ms, quote, correction, category);
       `);
     },
   },

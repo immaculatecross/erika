@@ -15,6 +15,7 @@ import {
   type DeepResult,
   ModelParseError,
   ModelUnavailableError,
+  parseDeepResponse,
 } from "@/lib/analysis/audio-model";
 
 // The cascade against a MOCK client + dummy on-disk audio (no network, no
@@ -109,6 +110,50 @@ describe("cascade shape (criterion 1)", () => {
 });
 
 describe("findings persistence (criterion 2)", () => {
+  // Regression for the identity key: `quote` names the erroneous SPAN, not the
+  // finding, and `relStartMs` is OPTIONAL in the deep-response contract — the
+  // parser accepts a reply without offsets and toTimeline anchors it at the
+  // segment start. So two genuinely different findings on one utterance share a
+  // (session, hash, start_ms, quote) key. A key that narrow drops the second
+  // silently: the job still lands `done` and the call is still billed in full.
+  it("keeps two distinct findings that share a quote and a start_ms", async () => {
+    const db = ws();
+    seed(db, "s1", ["h0"]);
+    // A deep reply the SHIPPED parser accepts as fully valid — same quote, two
+    // categories, two corrections, no offsets at all.
+    const { findings } = parseDeepResponse(
+      JSON.stringify({
+        findings: [
+          {
+            quote: "I have 25 years",
+            correction: "I am 25 years old",
+            category: "grammar",
+            explanation: "age takes 'to be' in English",
+            severity: "high",
+          },
+          {
+            quote: "I have 25 years",
+            correction: "I am twenty-five years old",
+            category: "pronunciation",
+            explanation: "the numeral is clipped",
+            severity: "medium",
+          },
+        ],
+      }),
+    );
+    expect(findings.every((f) => f.relStartMs === undefined)).toBe(true);
+
+    const { client } = mockClient({ flag: new Set(["h0"]), deepFindings: findings });
+    const job = await run(db, "s1", client);
+    expect(job.state).toBe("done");
+
+    const persisted = listFindings(db, "s1");
+    expect(persisted).toHaveLength(2); // both, not one
+    expect(persisted.map((f) => f.category).sort()).toEqual(["grammar", "pronunciation"]);
+    expect(new Set(persisted.map((f) => f.startMs))).toEqual(new Set([0])); // same span
+    db.close();
+  });
+
   it("persists parsed findings with timeline-absolute timestamps", async () => {
     const db = ws();
     seed(db, "s1", ["h0", "h1"]); // h1 at segment start 60_000ms
