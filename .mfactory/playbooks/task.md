@@ -9,8 +9,8 @@ Read, in order: the work order, then the target repo's own instructions (`CLAUDE
 ## Execute
 
 1. Branch `feat/<slug>` from the default branch.
-2. Implement **with tests in the same commits**. Every acceptance criterion becomes at least one test that would fail if the code were wrong. An untestable criterion is a blocker to report, not a thing to skip.
-3. **Verify for real, not by proxy.** Run the full build (`npm run build` or equivalent — typecheck alone misses bundler errors) and exercise the changed behavior end to end: hit the route, run the CLI, load the page. Green unit tests with a dead feature is v1's canonical failure.
+2. Implement **with tests in the same commits**. Every acceptance criterion becomes at least one test that would fail if the code were wrong. An untestable criterion is a blocker to report, not a thing to skip. Commit coherent increments and push early — an interruption must leave durable branch progress, not an uncommitted tree (RUN-001/003: two spend-limit kills lost everything uncommitted).
+3. **Verify for real, not by proxy.** Run the full build (`npm run build` or equivalent — typecheck alone misses bundler errors) and exercise the changed behavior end to end: hit the route, run the CLI, load the page. Green unit tests with a dead feature is v1's canonical failure. **Verify against disposable state:** throwaway paths, temp databases, sandboxed config — never the product's default data path, a real account, or a live external side effect unless the work order says so. Durable state touched during verification is state you have corrupted or been fooled by (RUN-003: an unmerged migration reached the operator's real database this way).
 4. Respect the repo's contracts and boundaries absolutely. If the work order conflicts with the codebase or itself, stop and report `blocked` — never improvise around a conflict.
 5. Run the repo's own gate commands (lint, typecheck, test) before pushing. If a gate blocks you, fix the cause; waivers are a last resort and carry their reason on the same line.
 6. Push and open a PR: title in Conventional Commit form; body = what changed, how it was verified (exact commands), and risks.
@@ -28,6 +28,7 @@ RESULT: done | blocked | split
 PR:       <url or branch>
 Changed:  <one line per meaningful change>
 Verified: <exact commands run and what they proved>
+Tests changed/removed: <each existing test modified or deleted, and why — or "none">
 Risks:    <what could bite later, or "none identified">
 Blocker:  <only if blocked/split — the precise question or proposed split>
 ```

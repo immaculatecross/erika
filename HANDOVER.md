@@ -12,7 +12,7 @@
 
 ⚠️ **Both repos have a `D-16` and they are different things.** Erika's D-16 ratifies the v0.3 scope; mfactory's D-16 is the throughput decision. Cite the repo when you reference either.
 
-**If the pinned kit lags mfactory, re-sync it** (`playbooks/`, `templates/work-order.md`) as a small docs PR before dispatching — otherwise fresh workers and reviewers boot from stale discipline.
+**If the pinned kit lags mfactory, re-sync it** (`playbooks/`, `templates/`, `hooks/`) as a small docs PR before dispatching — otherwise fresh workers and reviewers boot from stale discipline. Last synced **2026-07-21** against mfactory `D-01…D-17` (see below).
 
 ## Environment (a fresh sandbox will not have these)
 
@@ -38,14 +38,20 @@ The previous run was measured at **74% worker time, 100% sequential**; that was 
 - **Pipeline** — dispatch worker N+1 while review N runs, unless N+1 depends on N's output.
 - **Declare a review tier** in every work order: **Full** (never skippable — money/billing, migrations/schema, data deletion, secrets, concurrency/leases, the ingest or analysis correctness path, external contracts), **Light** (timeboxed fidelity + obvious harm), **None** (gates only; the automated gates always run). A worker may **raise** a tier, never lower it.
 - **Price findings; don't obey them (D-15).** A BLOCKING verdict is a demonstrated harm handed to you — weigh it against deployment context and either require one repair, accept it as a recorded limitation and merge, or defer it. One repair cycle, then decide. **Never waivable:** real-user-data loss, secret exposure, unrecorded spend.
+- **Don't nurse a failing session (mfactory D-17 wave).** Correcting a live session is capped at two attempts per problem; after the second failed correction, kill it and dispatch fresh with an amended brief naming the failure. Infrastructure deaths (spend limit, network) don't count against this — re-dispatch the same brief.
+- **Cold-start walkthrough before closing a version (mfactory D-17 wave).** Dispatch a fresh, no-context session: clean clone, only the repo's own written instructions, drive Erika's core promise (upload real speech → reach findings) with one real input, once. Its entire output is `PASS`, or `FAIL` plus the first broken step, quoted. ~20 min, judges nothing else. A FAIL is a defect of the *closing* version — fix before declaring it closed. This is the direct answer to the three field failures below: the seam class they lived in (env loading, silent stalls, a path never once run) now has an owner.
+- **The errand lane (`.mfactory/playbooks/errand.md`, new).** A bounded standalone task from the operator — PR triage, a diagnosis, a small fix on a Light/None surface — doesn't need a work order or a dispatcher: one session, strongest model, real verification, full platform gates. It structurally cannot touch a Full-tier surface or exist inside a mission; anything bigger routes to `dispatch.md` as normal.
+- **Run reports carry a Signals block now** (`templates/run-report.md`) — sessions, outcomes, routing misses, hook blocks, wall clock/tokens per role, a pass ledger. Fill every row; "n/a" is an answer, blank is not.
+- **mfactory's `runs/` is the permanent cross-product archive (mfactory D-17).** Before declaring a mission closed, sync the filed run report back into `mfactory-v2/runs/` and push it there — this is part of filing, not optional housekeeping. It feeds `factory-retro.md`, mfactory's own self-improvement checkpoint (advisory only, operator-ratified — it never edits Erika or itself).
 
 ## Context a cold session cannot infer
 
 - **The dev database is disposable.** Delete `data/` freely; it regenerates. Do **not** do migration archaeology to preserve test rows — that mistake cost a full repair cycle and an escalation.
 - **"Shipped" is not a git property.** A migration is shipped once *applied anywhere*, because the runner reads `_migrations` on disk, not git. Amend-before-merge is only safe while every database holding it is disposable.
 - **Fixtures prove mechanism, not judgment (D-13).** Where a criterion pins a threshold or parses another system's output, demand a real *labelled* sample or an explicit "uncalibrated" note plus truthful degradation. Two production bugs reached the operator through fixtures built to be easy.
-- **A real test can still assert the wrong contract (D-14).** Two shipped tests encoded defects *as* the contract and ~20 reviews passed them. Read assertions as specifications — especially any test a diff changed or deleted.
-- Open, deliberately unencoded: verification runs should never target the product's default data path (`data/erika.db` — an agent did, and pushed an unmerged migration onto the operator's real database); and no work order has ever covered "a new user, from a clean checkout, reaches findings."
+- **A real test can still assert the wrong contract (D-14).** Two shipped tests encoded defects *as* the contract and ~20 reviews passed them. Read assertions as specifications — especially any test a diff changed or deleted; this reading now applies at every review tier, including Light.
+- **Verify against disposable state, always (`task.md`, generalized from the lesson below).** Throwaway paths, temp databases, sandboxed config — never the product's default data path, a real account, or a live external side effect unless the work order says so.
+- **Encoded, formerly OPEN:** verification runs targeting the product's default data path (`data/erika.db` — an agent did, and pushed an unmerged migration onto the operator's real database) and the missing "new user, clean checkout, reaches findings" path are both now covered — the first by the disposable-state rule above, the second by the cold-start walkthrough. Watch one version to confirm the walkthrough actually catches this class before treating it as closed for good.
 
 ## Operator-owed
 

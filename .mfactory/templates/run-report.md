@@ -2,7 +2,7 @@
 
 Date: __DATE__ · Mode: direct | relay | rehearsal (dry run against a scratch target) · Dispatcher: __who/what__ · Target: __repo__
 
-Every mission files one of these into `runs/` in the mfactory repo — including aborted runs. This is the factory's feedback loop: a run that leaves no report taught nothing.
+Every mission files one of these into `runs/` in the mfactory repo — including aborted runs. This is the factory's feedback loop: a run that leaves no report taught nothing. A run report records process facts only — never keys, tokens, or confidential payloads: it is synced to the mfactory archive and pushed (D-17).
 
 ## Preflight (dispatch.md step 4: check every box before the first dispatch)
 
@@ -36,6 +36,19 @@ Every mission files one of these into `runs/` in the mfactory repo — including
 | Dispatch loop (`dispatch.md`) | | |
 | Hooks & gates | | |
 | Artifacts (STATE/LOG/FEATURES fidelity) | | |
+
+## Signals (countable facts, filled from the timeline — the factory's cross-run data)
+
+| Signal | Value |
+|---|---|
+| Sessions: workers / reviews / other | |
+| Outcomes: first-pass approvals / repairs / escalations | |
+| Routing misses · hook blocks · interruptions | |
+| Cold-start walkthrough | PASS / FAIL / n-a |
+| Wall clock per role (workers / reviews / dispatcher) | |
+| Tokens per role, where the harness reports them | |
+
+Pass ledger — one line per dispatched unit: `WO-<slug>: first-pass | repaired | escalated`.
 
 ## Lessons (D-09: each names its encoding, or is marked OPEN)
 
