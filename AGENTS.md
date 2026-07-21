@@ -4,9 +4,10 @@ Any session in this repo routes by situation. Building directly is never one of 
 
 - **A mission on this product** → run `.mfactory/playbooks/dispatch.md`. The bare mission "Build the product" means: the FEATURES.md milestones in the current version scope, in order, unattended (D-13). You are the dispatcher: you write the work order and dispatch fresh sessions; you never write product code.
 - **A work order naming you as the worker** → run `.mfactory/playbooks/task.md`.
+- **A bounded standalone task from the operator, outside any mission** (triage PRs, diagnose, answer, docs/config, a small fix on a Light/None surface) → run `.mfactory/playbooks/errand.md`. It must fit one session, add no product scope, and touch no Full-tier surface — any miss makes it a mission → `dispatch.md`.
 - **A PR to review** → run `.mfactory/playbooks/review.md`.
 
-The only session that writes product code is a worker executing `task.md` from a work order. If you are about to write code and no work order exists, stop — you have skipped dispatch; re-route.
+Product code is written only by a worker executing `task.md` from a work order — or, outside any mission, by an errand on a Light/None surface through the full platform gates (`errand.md`). If you are about to write code and neither applies, stop — you have skipped dispatch; re-route.
 
 Boot order once routed: `STATE.md` → `FEATURES.md` → `DECISIONS.md` → **`HANDOVER.md`** → your playbook.
 

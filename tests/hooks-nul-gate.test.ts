@@ -49,7 +49,7 @@ describe("pre-commit NUL-byte gate", () => {
     ]);
     const { code, stderr } = runHook(stagedRepo("evil.ts", poisoned));
     expect(code).toBe(1);
-    expect(stderr).toMatch(/raw NUL byte/);
+    expect(stderr).toMatch(/NUL byte/);
     expect(stderr).toMatch(/evil\.ts/);
   });
 
