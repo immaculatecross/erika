@@ -40,3 +40,25 @@ A day-scale dump analyzes in wall-clock minutes, not hours, without ever billing
      the concurrency/atomicity test output) / Tests changed-removed (read as specs, D-14) /
      Risks / Blocker. Verify against DISPOSABLE state. If the cap can be overshot under any
      race you can construct, that is a blocker, not a risk. -->
+
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/new/feat/parallel-cascade (branch feat/parallel-cascade)
+Changed:
+  - lib/analysis/budget.ts: reserve-before-call API — reserveSpend (atomic committed+pending<=cap check-and-insert of a pending row), finalizeReservation (pending->committed at actual cost; re-inserts if the row was swept, so a charge is never lost), releaseReservation, sweepStaleReservations (TTL 15min); monthToDateSpend/wouldExceedBudget now count committed ONLY (display + other-biller guard).
+  - lib/analysis/cascade.ts: serial for-loop -> bounded pool (runPool, ANALYSIS_CONCURRENCY default 6); reserve/finalize/release wiring via reservedCall/withRepair; interval heartbeat for the whole run (HEARTBEAT_INTERVAL_MS = lease/5, cleared in finally); progress counts completions; startup sweep at job start.
+  - lib/analysis/audio-model.ts: bounded jittered 429 retry honoring Retry-After (retryOnRateLimit + backoffDelay + parseRetryAfter + ModelRateLimitError); exhaustion -> ModelUnavailableError (no charge, D-3 fallback). Retries transparent to billing.
+  - lib/analysis/findings.ts: persistSegmentFindings finalizes a reservation in the same txn as findings+witness (E-4 c5); legacy `spend` path kept for fixtures/other billers.
+  - lib/jobs/pool.ts (new): reusable fail-fast bounded-concurrency pool.
+  - lib/migrations/v15-spend-reservations.ts (new) + index.ts: migration v15 — spend_ledger.state (pending|committed, DEFAULT committed) + reserved_at + idx_spend_ledger_pending. docs/schema.md updated (latest v15).
+  - scripts/worker.ts: startup sweep of abandoned reservations.
+  - tests: analysis-budget (reservation lifecycle + concurrent-race oracle + sweep), analysis-concurrency (pool bound/overlap, end-to-end cap-under-race halt, interval heartbeat freshness), analysis-retry (429 retry, honored Retry-After, exhaustion, one-charge-per-call).
+Verified:
+  - npm run lint -> no warnings/errors. npm run typecheck -> clean. npm run build -> compiled, all routes/middleware built.
+  - npx vitest run -> 70 files, 495 tests pass (was 428 at v0.3 close; migration v15 asserted by migrations.test.ts + schema-doc bind).
+  - Atomicity/concurrency PROOF (disposable temp DBs, ERIKA_DATA_DIR): analysis-budget "concurrent reservations against a tight cap" — 40 racers, cap 1.0 / cost 0.1, EXACTLY 10 admitted, held sum <= cap, display=0 while reserved, committed=10*cost after finalize, one committed row per charge. analysis-concurrency end-to-end — 8 workers race 20 all-clear segments at a $0.02 cap: exactly 5 model calls, committed == $0.02 (never over), zero lingering pending. Pool bound: maxInFlight <= N and >= 2 (overlap). Heartbeat: a 2.5s call under a 1.5s stale probe is never reclaimed. 429: retried then success = one committed charge; exhaustion = ModelUnavailableError.
+Tests changed/removed: none removed; none rewritten. Only additive (new suites + import additions in analysis-budget.test.ts). All prior money-path specs (analysis-atomicity E-4 c5, analysis-cascade E-16 d4, analysis-unreadable, analysis-recurrence, ingest-worker ledger counts) pass unchanged — reservations finalize to the same one-row-per-charge shape.
+Risks:
+  - The parse-failure repair retry (E-16 d4) reserves a SECOND time; if the cap can't afford it the run halts (BudgetHalt) rather than marking the segment unreadable — cap-hard wins over the retry, which is the safe direction and never overshoots. Documented; no test regressed.
+  - Sweep TTL (15min) and concurrency (6) are conservative tunable knobs (D-13); the atomicity tests, not the numbers, are the oracle.
+  - better-sqlite3 is synchronous so reserveSpend transactions never truly interleave; the race tests still exercise the committed+pending accounting (exactly-what-fits), which is the property that matters.
+Blocker:  none
