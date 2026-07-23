@@ -45,3 +45,70 @@ The sandbox egress proxy **blocks `curl`/`wget` to non-allowlisted hosts (403)**
      Tests changed-removed (read each as a spec — D-14) / Risks / Blocker. Run lint + typecheck
      + test + the full build before pushing. If morph-it cannot be sourced or a criterion is
      untestable, report `blocked` with specifics — do not fake validation or skip a test. -->
+
+RESULT: done
+PR:       feat/knowledge-core → master (see PR link in exit message)
+Changed:
+  - Migration v14 (`lib/migrations/v14-knowledge.ts`, wired in `lib/migrations/index.ts`
+    which was split to stay under the 500-line hook): `knowledge_items` (derived,
+    rebuildable SRS cache), append-only `evidence` (BEFORE UPDATE/DELETE triggers
+    RAISE(ABORT)), `spill_queue` (table only — composer is v0.5), and a nullable
+    `cards.item_id` FK. `docs/schema.md` updated in the same PR (v14, three tables +
+    the cards note + the migration-history row).
+  - morph-it validator: `lib/lexicon/pos.ts` (the coarse UD-style POS scheme +
+    morph-it tag→POS map), `lib/lexicon/morphit.ts` (loader + `attestsLemma`),
+    `lib/lexicon/morphit-lemmas.tsv.gz` (the committed, license-clean reduced asset —
+    37,701 distinct (lemma, POS) pairs, 128 KB, from 505,074 raw rows; 86 malformed/
+    non-word rows skipped), `lib/lexicon/NOTICE.md` (CC BY-SA attribution + share-alike),
+    `scripts/build-morphit-lemmas.ts` (the provenance generator; raw 19 MB file NOT committed).
+  - `lib/srs.ts`: SM-2 core replaced by a thin `ts-fsrs` (FSRS-6) wrapper; same
+    `SrsState → Grade → SrsResult` shape and export names, so `lib/cards.ts` call
+    sites are unchanged. Existing cards are state-seeded each grade (S≈interval,
+    ease 1.3–3.0 ↔ difficulty 10→1, due kept); adds `retrievability(S,t)` — the one
+    strength scalar. Default FSRS-6 params, marked uncalibrated in-code (D-13).
+  - `lib/knowledge/` — `types.ts` (mode weights, audio discount), `items.ts` (the
+    morph-it gate: only an attested lemma mints an item), `evidence.ts`
+    (`recordEvidence` append + re-derive; `bridgeFinding` reads ONLY through
+    `getIncludedFinding` — E-17), `derive.ts` (the FSRS fold over real elapsed time +
+    the D-19 status gate; `rebuildAllDerived`), `index.ts` (barrel).
+  - `lib/cards.ts`: `gradeCard` appends a cued review evidence row when the card is
+    linked to a knowledge item (grade→polarity), inside one transaction with the
+    schedule update; unlinked cards (all until E-28) log nothing.
+Verified: (throwaway ERIKA_DB_PATH temp dirs only — never data/erika.db, which does not exist)
+  - `npm run typecheck` → clean.
+  - `npm run lint` → No ESLint warnings or errors.
+  - `npm run test` → 68 files, 479 tests passing (incl. the new knowledge/lexicon
+    suites, v14 migration + append-only trigger assertions, and the linked-card
+    review-evidence + rebuild-identical tests).
+  - `npm run build` → Compiled successfully; 14 static pages generated.
+  - Exercised the changed drill path: `gradeCard`/grade-route tests seed a card,
+    grade it end-to-end (FSRS schedules it out of the due queue), and confirm the
+    evidence append; the derivation test wipes every `srs_*`/`status` column and
+    rebuilds them identically from the evidence log alone.
+Tests changed/removed:
+  - `tests/srs.test.ts` — rewritten: it asserted exact SM-2 numbers (ease deltas,
+    interval 1 on first pass) that FSRS does not reproduce. New spec keeps the
+    drill-facing invariants (Again resets + returns this session, a pass schedules
+    ≥1 day out, Easy > Good > Hard, ease stays in bounds) and adds the seed-mapping
+    round-trip + retrievability curve. No coverage dropped.
+  - `tests/cards.test.ts` / `tests/cards-route.test.ts` — one exact-interval
+    assertion each (`intervalDays === 1` on first Good) relaxed to the drill/route
+    contract (`>= 1`, and the card leaves the due queue). FSRS's first-Good interval
+    is 3 days, not 1; the intent (a pass advances the card) is preserved and still
+    asserted. Nothing else changed or removed.
+Risks:
+  - FSRS parameters are the uncalibrated defaults (per spec) — scheduling intervals
+    will shift once the optimizer runs on accrued reviews; FSRS self-corrects, so no
+    action needed now (D-13 degradation path). Card FSRS state is projected onto the
+    integer `interval_days` column, so between reviews stability is quantised to whole
+    days (same granularity SM-2 used); the un-quantised triple lives on
+    `knowledge_items`, where per-event precision matters.
+  - Audio-derived-ness of an evidence row is recovered from (mode, weight) rather than
+    a dedicated column (the spike-2 schema has none) — safe because the ×0.7 discounted
+    weights never collide with the undiscounted ones; if a future caller passes a
+    non-canonical weight this inference would misread, so `recordEvidence` computes
+    weight itself and never takes it on trust.
+  - The finding→item link (`cards.item_id`, and the lemma a finding carries) is wired
+    but unpopulated: E-25 makes zero model calls, so in production no card is linked and
+    no findings are bridged yet — that is E-28's job. The plumbing and its tests exist.
+Blocker: none.
