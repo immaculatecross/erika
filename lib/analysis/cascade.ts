@@ -162,6 +162,7 @@ function toTimeline(seg: Segment, f: NewFinding & { relStartMs?: number; relEndM
     startMs: seg.startMs + rs,
     endMs: seg.startMs + re,
     recurrenceOf: f.recurrenceOf ?? null,
+    notes: f.notes ?? null,
   };
 }
 

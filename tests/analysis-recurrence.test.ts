@@ -91,7 +91,9 @@ function mockClient(opts: { flag: Set<string>; deepFindings?: DeepResult["findin
 
 function run(db: Db, sessionId: string, client: AudioModelClient) {
   const job = enqueueAnalysis(db, sessionId);
-  return runAnalysisJob(db, job.id, client, { tempo: TEMPO });
+  // Pin the cascade path — these tests assert the cascade's call/ledger shape, which
+  // a short session would otherwise change under E-28's full-deep path (D-20).
+  return runAnalysisJob(db, job.id, client, { tempo: TEMPO, deepFullMaxMinutes: 0 });
 }
 
 const deepFinding = (extra: Partial<DeepResult["findings"][number]>) => [

@@ -85,8 +85,11 @@ function mockClient(bad: Set<string>, error: () => ModelParseError) {
   return { client, deep };
 }
 
+// Pin the cascade path (`deepFullMaxMinutes: 0`): these tests assert the cascade's
+// triage→deep resume + re-bill semantics, which E-28's full-deep path (no triage)
+// would otherwise change for a short session (D-20).
 const run = (db: Db, sessionId: string, client: AudioModelClient) =>
-  runAnalysisJob(db, enqueueAnalysis(db, sessionId).id, client, { tempo: TEMPO });
+  runAnalysisJob(db, enqueueAnalysis(db, sessionId).id, client, { tempo: TEMPO, deepFullMaxMinutes: 0 });
 
 const truncated = () => {
   const err = new ModelTruncatedError("gpt-audio-1.5 reply was cut off at the token limit.");
