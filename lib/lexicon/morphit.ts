@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 import { isPos, type Pos } from "./pos";
 
@@ -17,7 +17,9 @@ import { isPos, type Pos } from "./pos";
 // (D-13). The lookup is case-sensitive on the lemma (morph-it lemmas are lower-case
 // citation forms; a caller lower-cases if it must) and exact on the POS.
 
-/** Repo-relative path to the committed gzipped asset (one `lemma\tPOS` per line). */
+/** Repo-relative path to the committed gzipped asset (one `lemma\tPOS` per line).
+ *  Kept for documentation/diagnostics; the load resolves the file relative to
+ *  THIS module, not the process cwd (see `assetFile`). */
 export const ASSET_PATH = "lib/lexicon/morphit-lemmas.tsv.gz";
 
 let cache: Set<string> | null = null;
@@ -26,12 +28,25 @@ function key(lemma: string, pos: string): string {
   return `${lemma}\t${pos}`;
 }
 
+/**
+ * Absolute path to the committed asset, resolved RELATIVE TO THIS MODULE FILE
+ * (`import.meta.url`), never `process.cwd()` (E-28 criterion 5a). E-28 is the
+ * first milestone to run the validator on a real analysis path, and a Next.js
+ * standalone/production build runs from a server root where `process.cwd()` is not
+ * the repo — a cwd-relative read would `ENOENT` in production. A module-relative
+ * `new URL(..., import.meta.url)` also lets Next's file tracer (nft) follow the
+ * reference and bundle the asset into the standalone output. The asset sits beside
+ * this file, so the relative name is just its basename.
+ */
+function assetFile(): string {
+  return fileURLToPath(new URL("./morphit-lemmas.tsv.gz", import.meta.url));
+}
+
 /** Load and memoise the attested (lemma, POS) set from the committed asset. Built
  *  at first use so importing this module is cheap; the ~38k-entry Set is small. */
 function attestedSet(): Set<string> {
   if (cache) return cache;
-  const file = path.join(process.cwd(), ASSET_PATH);
-  const raw = zlib.gunzipSync(fs.readFileSync(file)).toString("utf8");
+  const raw = zlib.gunzipSync(fs.readFileSync(assetFile())).toString("utf8");
   const set = new Set<string>();
   for (const line of raw.split("\n")) {
     if (line === "") continue;

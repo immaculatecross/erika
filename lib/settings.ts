@@ -16,7 +16,13 @@ export const DEFAULT_SETTINGS: Settings = {
   targetLanguage: "Italian",
   nativeLanguage: "English",
   modelTier: "standard",
-  monthlyBudgetUsd: 25,
+  // E-28 raises the default cap 25 → 50 to match the richness dial's posture
+  // (D-20): short captures are now 100% deep-listened and day dumps triage
+  // looser, so the app spends more for the richest picture of the user's speech.
+  // A day dump ≈ $1.77 and a 10-min capture ≈ $0.22 (D-20), so $50/mo comfortably
+  // covers roughly a dump a day plus short captures. Still user-editable in
+  // Settings; the hard cap (E-27 reserve-before-call) makes the spend safe.
+  monthlyBudgetUsd: 50,
 };
 
 /** Read all four preferences, filling any unset key from DEFAULT_SETTINGS. */

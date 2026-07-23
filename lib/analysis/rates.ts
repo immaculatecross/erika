@@ -19,23 +19,50 @@ export interface ModelRate {
   usdPerAudioMinute: number;
 }
 
-// Rough founding-era figures — the mini triages short, time-compressed audio and
-// is an order of magnitude cheaper than the deep models it gates (D-10).
+// Per-minute audio prices (D-10, recalibrated by E-28 toward D-20's figures).
+//
+// D-20 (the richness dial) recalibrated the deep model against real pricing: it
+// truly costs ~$0.02/audio-minute audio-in, ~$0.03/audio-minute ALL-IN with the
+// text output it returns — roughly HALF the $0.06 the founding era ledgered. So
+// `gpt-audio-1.5` drops 0.06 → 0.03 and the `gpt-audio` fallback 0.10 → 0.05
+// (same ~½ move). The mini triages short, time-compressed audio and stays an
+// order of magnitude cheaper than the deep leg it gates. These remain the single
+// price knob and an explicit approximation — a real-API smoke run against actual
+// `usage` is OWED once a key exists (no live key at E-28; mirrors E-4's smoke).
 export const RATES: Record<ModelId, ModelRate> = {
   "gpt-audio-mini": { usdPerAudioMinute: 0.006 },
-  "gpt-audio-1.5": { usdPerAudioMinute: 0.06 },
-  "gpt-audio": { usdPerAudioMinute: 0.1 },
+  "gpt-audio-1.5": { usdPerAudioMinute: 0.03 },
+  "gpt-audio": { usdPerAudioMinute: 0.05 },
 };
 
 /**
  * Assumed fraction of triaged segments the mini flags for deep-listening, used
  * only by the pre-run estimator (the real run bills the actual flagged set).
  * Configurable via ANALYSIS_FLAG_RATE for tuning.
+ *
+ * E-28 LOOSENED the triage (D-20): more borderline speech reaches the deep model,
+ * so this estimator companion rises 0.3 → 0.5 (~50% flagged on a day dump). It is
+ * a conservative default — a tunable knob to re-tune against real `usage` (D-13),
+ * paired with the loosened wording of the triage prompt (lib/analysis/audio-model.ts).
  */
 export function assumedFlagRate(raw: string | undefined = process.env.ANALYSIS_FLAG_RATE): number {
-  if (raw === undefined || raw === "") return 0.3;
+  if (raw === undefined || raw === "") return 0.5;
   const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 0.3;
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 0.5;
+}
+
+/**
+ * The short-capture threshold (D-20): a session whose analysed speech is ≤ this
+ * many minutes SKIPS triage and is deep-listened 100% at native speed with the
+ * enriched prompt — the mini's job was to save money on long day dumps, and a
+ * short, deliberate recording does not need saving. Above it, the cascade runs
+ * (triage → deep only on flags). Default 30 min, a conservative knob tunable via
+ * DEEP_FULL_MAX_MINUTES and to re-tune against real `usage` (D-13).
+ */
+export function deepFullMaxMinutes(raw: string | undefined = process.env.DEEP_FULL_MAX_MINUTES): number {
+  if (raw === undefined || raw === "") return 30;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 30;
 }
 
 /** USD to send `durationMs` of audio to `model`, per the rates table. */

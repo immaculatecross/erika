@@ -47,6 +47,9 @@ export interface KnowledgeItem {
   srsDifficulty: number | null;
   srsLastEventAt: string | null;
   status: KnowledgeStatus;
+  /** Produced correctly in a recording (E-28) — the daily composer (E-31) excludes
+   *  these from new-item selection. Derived, rebuildable from the evidence log. */
+  recordingAttested: boolean;
 }
 
 /** A validated observation ready to append to the log. */

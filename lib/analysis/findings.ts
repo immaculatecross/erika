@@ -18,6 +18,26 @@ export type Category = (typeof CATEGORIES)[number];
 export const SEVERITIES = ["high", "medium", "low"] as const;
 export type Severity = (typeof SEVERITIES)[number];
 
+/**
+ * The enriched observation channel on a finding (E-28, D-20). The deep prompt now
+ * also asks — per finding — for a pronunciation-suspect note, an italiano-colto
+ * register-upgrade suggestion, and a disfluency note. These are annotations ON the
+ * finding, orthogonal to its `category`, so rather than widen the closed category
+ * vocabulary they ride here as a small JSON object persisted in `findings.notes`.
+ * Every field is optional; a finding the model returned no enrichment for stores
+ * `null` (not an empty object). Deliberately no free-form keys — only the three the
+ * prompt asks for are kept, so the column can never accumulate arbitrary model prose.
+ */
+export interface FindingNotes {
+  /** A flagged pronunciation suspect (gemination, vowel aperture, stress — D-21).
+   *  A TEXT FLAG only; scoring is Azure PA on scripted drills (E-37), never here. */
+  pronunciation?: string;
+  /** An italiano-colto register upgrade the speaker could have reached (D-23). */
+  register?: string;
+  /** A disfluency note (filler, false start, hesitation). */
+  disfluency?: string;
+}
+
 export interface Finding {
   id: string;
   sessionId: string;
@@ -32,6 +52,9 @@ export interface Finding {
   /** The profile entry (its correction text) this finding recurs, or null —
    *  written when the deep model cited a valid profile entry (E-19, v10). */
   recurrenceOf?: string | null;
+  /** The enriched observation channel (E-28, v16), or null when the model
+   *  returned no enrichment for this finding. */
+  notes?: FindingNotes | null;
 }
 
 /** A validated finding ready to persist (no id/session yet). */
@@ -45,6 +68,36 @@ export interface NewFinding {
   endMs: number;
   /** Resolved recurrence link (the cited profile entry's correction), if any. */
   recurrenceOf?: string | null;
+  /** Enriched observations (E-28), or null/absent for a plain finding. */
+  notes?: FindingNotes | null;
+}
+
+/**
+ * Keep only the three known enrichment fields, each a non-empty string — so a
+ * malformed or over-generous `notes` object can never persist arbitrary keys or
+ * junk (E-16 defensive parsing, D-13). Returns null when nothing survives, so an
+ * absent enrichment stays a clean NULL column rather than `{}`.
+ */
+export function sanitizeNotes(raw: unknown): FindingNotes | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const out: FindingNotes = {};
+  for (const key of ["pronunciation", "register", "disfluency"] as const) {
+    const v = r[key];
+    if (typeof v === "string" && v.trim() !== "") out[key] = v.trim();
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** Parse a stored `notes` JSON column back to a `FindingNotes` (or null). Tolerant:
+ *  a corrupt string never throws, it reads as no enrichment. */
+export function parseNotesColumn(raw: string | null): FindingNotes | null {
+  if (!raw) return null;
+  try {
+    return sanitizeNotes(JSON.parse(raw));
+  } catch {
+    return null;
+  }
 }
 
 /** The raw `findings` row shape — exported so lib/findings-model.ts, which owns
@@ -61,6 +114,7 @@ export interface FindingRow {
   start_ms: number;
   end_ms: number;
   recurrence_of: string | null;
+  notes: string | null;
 }
 
 export function toFinding(r: FindingRow): Finding {
@@ -76,6 +130,7 @@ export function toFinding(r: FindingRow): Finding {
     startMs: r.start_ms,
     endMs: r.end_ms,
     recurrenceOf: r.recurrence_of ?? null,
+    notes: parseNotesColumn(r.notes ?? null),
   };
 }
 
@@ -138,14 +193,15 @@ export function persistSegmentFindings(
   // (E-4 criterion 5).
   const insert = db.prepare(
     `INSERT INTO findings
-       (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms, recurrence_of)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms, recurrence_of, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (session_id, content_hash, start_ms, quote, correction, category) DO NOTHING`,
   );
   db.transaction(() => {
     if (input.spend) recordSpend(db, input.spend);
     if (input.reservation) finalizeReservation(db, input.reservation);
     for (const f of input.findings) {
+      const notes = sanitizeNotes(f.notes);
       insert.run(
         randomUUID(),
         input.sessionId,
@@ -158,6 +214,7 @@ export function persistSegmentFindings(
         f.startMs,
         f.endMs,
         f.recurrenceOf ?? null,
+        notes ? JSON.stringify(notes) : null,
       );
     }
     db.prepare(
@@ -310,8 +367,8 @@ export function reuseCachedFindings(
   if (canonical.length === 0) return;
   const insert = db.prepare(
     `INSERT INTO findings
-       (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms, recurrence_of)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms, recurrence_of, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (session_id, content_hash, start_ms, quote, correction, category) DO NOTHING`,
   );
   const donorStarts = new Map<string, number | null>();
@@ -322,6 +379,7 @@ export function reuseCachedFindings(
       }
       const donorStart = donorStarts.get(f.sessionId)!;
       const startMs = remap(f.startMs, donorStart, target);
+      const notes = sanitizeNotes(f.notes);
       insert.run(
         randomUUID(),
         sessionId,
@@ -334,6 +392,7 @@ export function reuseCachedFindings(
         startMs,
         Math.max(remap(f.endMs, donorStart, target), startMs),
         f.recurrenceOf ?? null,
+        notes ? JSON.stringify(notes) : null,
       );
     }
   })();

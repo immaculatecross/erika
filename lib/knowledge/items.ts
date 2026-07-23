@@ -63,6 +63,7 @@ interface ItemRow {
   srs_difficulty: number | null;
   srs_last_event_at: string | null;
   status: KnowledgeStatus;
+  recording_attested: number;
 }
 
 function toItem(r: ItemRow): KnowledgeItem {
@@ -79,6 +80,7 @@ function toItem(r: ItemRow): KnowledgeItem {
     srsDifficulty: r.srs_difficulty,
     srsLastEventAt: r.srs_last_event_at,
     status: r.status,
+    recordingAttested: !!r.recording_attested,
   };
 }
 

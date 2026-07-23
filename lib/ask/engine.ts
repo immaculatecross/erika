@@ -1,7 +1,7 @@
 import type { Db } from "../db";
 import type { Finding } from "../analysis/findings";
 import { readSettings } from "../settings";
-import { recordSpend, wouldExceedBudget } from "../analysis/budget";
+import { reserveSpend, finalizeReservation, releaseReservation } from "../analysis/budget";
 import { collectSpeakerProfile } from "../analysis/profile";
 import { ASK_MODEL, ASK_MAX_OUTPUT_TOKENS, textCallCost } from "../analysis/rates";
 import { BudgetExceededError } from "../lessons/billing";
@@ -102,35 +102,46 @@ export async function askFinding(
   const won = claimNote(db, { findingId: finding.id, costUsd: estCost });
   if (!won) return { note: getCompletedNote(db, finding.id), generated: false };
 
+  // RESERVE-BEFORE-CALL (E-28 criterion 5b): reserve the worst-case cost as a PENDING
+  // ledger row atomically (committed + pending ≤ cap) so a concurrent cascade cannot
+  // commit on top of this in-flight ask and overshoot the cap. A refused reservation
+  // is a budget halt: release the claim, no call, no surviving row.
+  const reservation = reserveSpend(db, { model: ASK_MODEL, contentHash: finding.id, costUsd: estCost }, monthlyBudgetUsd);
+  if (!reservation) {
+    deleteNote(db, finding.id);
+    throw new BudgetExceededError();
+  }
+
   let completion;
   try {
-    if (wouldExceedBudget(db, estCost, monthlyBudgetUsd)) throw new BudgetExceededError();
     completion = await client.complete({ prompt, maxOutputTokens: ASK_MAX_OUTPUT_TOKENS });
   } catch (err) {
-    // Budget refusal or a failed call — NOTHING has been billed yet: release the
-    // claim so a legitimate retry can re-lease and generate.
+    // A failed call — NOTHING has been billed: release the reservation and the claim
+    // so a legitimate retry can re-lease and generate.
+    releaseReservation(db, reservation);
     deleteNote(db, finding.id);
     throw err;
   }
 
-  // The provider was charged. From here the money MUST be ledgered. Recompute the
-  // actual cost from the reply's token usage.
+  // The provider was charged. From here the money MUST be committed. Recompute the
+  // actual cost from the reply's token usage (≤ the reserved estimate).
   const costUsd = textCallCost(ASK_MODEL, completion.promptTokens, completion.completionTokens);
   let parsed;
   try {
     parsed = parseAskResponse(completion.text, candidates);
   } catch (err) {
-    // Billed but unreadable: ledger the charge (never understate spend) THEN release
-    // the empty claim so no half-note persists. A retry is a new, separately-billed call.
-    recordSpend(db, { model: ASK_MODEL, contentHash: finding.id, costUsd });
+    // Billed but unreadable: finalize the reservation to the ACTUAL charge (never
+    // understate spend, E-16 d4) THEN release the empty claim so no half-note
+    // persists. A retry is a new, separately-billed call.
+    finalizeReservation(db, reservation, costUsd);
     deleteNote(db, finding.id);
     throw err;
   }
 
-  // Complete the note and record its spend in ONE transaction — a note is never
+  // Complete the note and finalize its charge in ONE transaction — a note is never
   // stored without its charge, nor charged without being stored.
   const note = db.transaction(() => {
-    recordSpend(db, { model: ASK_MODEL, contentHash: finding.id, costUsd });
+    finalizeReservation(db, reservation, costUsd);
     return completeNote(db, {
       findingId: finding.id,
       note: parsed.note,
