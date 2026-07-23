@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db";
-import { recordSpend } from "./budget";
+import { finalizeReservation, recordSpend, type SpendReservation } from "./budget";
 import type { ModelId } from "./rates";
 
 // Typed data layer for analysis findings and the never-re-bill segment cache
@@ -95,6 +95,13 @@ export function isSeverity(v: unknown): v is Severity {
  * its findings: the money record and the completion record commit together or not
  * at all. `flagged`/`deepDone` record how far the cascade got: an unflagged
  * segment is complete with no deep call.
+ *
+ * The call's spend is committed here in one of two ways, both inside this same
+ * transaction: `reservation` (E-27) FINALIZES a pending reserve-before-call row to
+ * its actual cost — the racing cascade's path, so the charge that was already
+ * counted against the cap becomes committed exactly once with the witness; `spend`
+ * records a fresh committed row directly — the legacy path other billers and test
+ * fixtures use, where nothing was reserved. At most one is given.
  */
 export function persistSegmentFindings(
   db: Db,
@@ -106,6 +113,9 @@ export function persistSegmentFindings(
     findings: NewFinding[];
     /** The real billable call this write completes — recorded in the same txn. */
     spend?: { model: ModelId; contentHash: string; costUsd: number };
+    /** The reserve-before-call reservation this write finalizes (E-27), in the same
+     *  txn — pending → committed at the actual cost. */
+    reservation?: SpendReservation;
     /** Set when the model's reply could not be read even after the repair retry. */
     unreadable?: { reason: string; shape: string | null };
   },
@@ -134,6 +144,7 @@ export function persistSegmentFindings(
   );
   db.transaction(() => {
     if (input.spend) recordSpend(db, input.spend);
+    if (input.reservation) finalizeReservation(db, input.reservation);
     for (const f of input.findings) {
       insert.run(
         randomUUID(),

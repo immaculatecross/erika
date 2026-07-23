@@ -65,6 +65,21 @@ export interface AudioModelClient {
 /** Thrown when a model/endpoint is unavailable or unauthorized (a real blocker). */
 export class ModelUnavailableError extends Error {}
 /**
+ * A 429 / rate-limit response (E-27 criterion 5). Internal to this module: the
+ * client retries it a bounded number of times with jittered backoff honoring any
+ * `Retry-After`, and only if the retries are exhausted does it surface — as a
+ * `ModelUnavailableError`, so the cascade tries the D-3 fallback and, having
+ * received no completion, reserves and charges nothing. `retryAfterMs` is the
+ * server's requested wait, when it sent one.
+ */
+export class ModelRateLimitError extends Error {
+  retryAfterMs?: number;
+  constructor(message: string, retryAfterMs?: number) {
+    super(message);
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+/**
  * Thrown when a model response cannot be parsed into the expected shape.
  *
  * `shape` is a structural, content-free description of what came back
@@ -249,13 +264,79 @@ function apiKey(): string {
   return key;
 }
 
+// ---- bounded, jittered 429 retry (E-27 criterion 5) ----------------------
+
+/** How many times a 429 is retried before it surfaces as ModelUnavailableError. */
+export const RATE_LIMIT_RETRIES = 4;
+const RATE_LIMIT_BASE_MS = 500;
+const RATE_LIMIT_MAX_MS = 20_000;
+/** Fraction of the base delay added as random jitter, so a fleet of racing pool
+ *  workers that all got 429'd do not retry in lockstep (thundering herd). */
+const RATE_LIMIT_JITTER = 0.5;
+
+/** Parse a `Retry-After` header (delta-seconds or an HTTP-date) into ms, or undefined. */
+export function parseRetryAfter(header: string | null, now: number = Date.now()): number | undefined {
+  if (!header) return undefined;
+  const secs = Number(header.trim());
+  if (Number.isFinite(secs)) return Math.max(0, Math.round(secs * 1000));
+  const when = Date.parse(header);
+  return Number.isFinite(when) ? Math.max(0, when - now) : undefined;
+}
+
+/** The backoff for attempt `n` (0-based): exponential, capped, never below a
+ *  server-requested `Retry-After`, plus jitter. */
+export function backoffDelay(
+  attempt: number,
+  retryAfterMs: number | undefined,
+  opts: { baseMs?: number; maxMs?: number; random?: () => number } = {},
+): number {
+  const baseMs = opts.baseMs ?? RATE_LIMIT_BASE_MS;
+  const maxMs = opts.maxMs ?? RATE_LIMIT_MAX_MS;
+  const random = opts.random ?? Math.random;
+  const capped = Math.min(maxMs, baseMs * 2 ** attempt);
+  const floor = Math.max(capped, retryAfterMs ?? 0);
+  return Math.round(floor + floor * RATE_LIMIT_JITTER * random());
+}
+
+export interface RateLimitRetryOpts {
+  retries?: number;
+  baseMs?: number;
+  maxMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+}
+
+/**
+ * Run `fn`, retrying only `ModelRateLimitError` up to `retries` times with jittered
+ * backoff that honors any `Retry-After`. Any other error propagates immediately.
+ * Exhausting the retries throws `ModelUnavailableError` — no completion was ever
+ * received, so the caller (the cascade) reserves and charges nothing and tries the
+ * D-3 fallback. `sleep`/`random` are injectable so tests are deterministic and
+ * never wait on a real clock.
+ */
+export async function retryOnRateLimit<T>(fn: () => Promise<T>, opts: RateLimitRetryOpts = {}): Promise<T> {
+  const retries = opts.retries ?? RATE_LIMIT_RETRIES;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!(err instanceof ModelRateLimitError)) throw err;
+      if (attempt >= retries) {
+        throw new ModelUnavailableError(`Rate limited: exhausted ${retries} retries. ${err.message}`);
+      }
+      await sleep(backoffDelay(attempt, err.retryAfterMs, opts));
+    }
+  }
+}
+
 interface RawReply {
   content: string;
   /** OpenAI's stop reason — "length" means the reply was cut off, not finished. */
   finishReason: string | null;
 }
 
-async function callModel(model: ModelId, prompt: string, input: TriageInput | DeepInput): Promise<RawReply> {
+async function callModelOnce(model: ModelId, prompt: string, input: TriageInput | DeepInput): Promise<RawReply> {
   let res: Response;
   try {
     res = await fetch(OPENAI_URL, {
@@ -281,10 +362,15 @@ async function callModel(model: ModelId, prompt: string, input: TriageInput | De
   } catch (err) {
     throw new ModelUnavailableError(`Network error calling ${model}: ${(err as Error).message}`);
   }
+  // A 429 is transient: surface it as a retryable rate-limit error carrying any
+  // server-requested wait, so the retry wrapper backs off rather than giving up.
+  if (res.status === 429) {
+    throw new ModelRateLimitError(`${model} rate limited (429).`, parseRetryAfter(res.headers.get("retry-after")));
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     const msg = `${model} call failed: ${res.status} ${res.statusText} ${body}`.trim();
-    // 4xx around auth/model are legitimate "stop, don't retry-thrash" blockers.
+    // Other 4xx around auth/model are legitimate "stop, don't retry-thrash" blockers.
     throw new ModelUnavailableError(msg);
   }
   const json = (await res.json()) as {
@@ -295,6 +381,14 @@ async function callModel(model: ModelId, prompt: string, input: TriageInput | De
   const finishReason = choice?.finish_reason ?? null;
   if (typeof content !== "string") throw new ModelParseError(`${model} returned no message content.`);
   return { content, finishReason };
+}
+
+/** One model call, transparently retrying a 429 with jittered, Retry-After-honoring
+ *  backoff (E-27 criterion 5). The retries are invisible to the cascade — one call
+ *  in, one completion out — so a call reserves and bills exactly once regardless of
+ *  how many 429s it weathered. */
+async function callModel(model: ModelId, prompt: string, input: TriageInput | DeepInput): Promise<RawReply> {
+  return retryOnRateLimit(() => callModelOnce(model, prompt, input));
 }
 
 /**
