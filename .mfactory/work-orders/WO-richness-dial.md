@@ -42,3 +42,34 @@ Spend where the signal is (D-20). A **short capture (≤ configurable minutes, d
 <!-- Append per playbooks/task.md: RESULT / PR / Changed / Verified (exact commands) /
      Tests changed-removed (read as specs, D-14) / Risks / Blocker. Verify against DISPOSABLE
      state. If opening spend can overshoot the cap on any path, that is a blocker. -->
+
+RESULT: done
+PR:       feat/richness-dial → master (immaculatecross/erika)
+Changed:
+- lib/analysis/rates.ts — deep recalibrated $0.06→$0.03 (gpt-audio $0.10→$0.05, ~half per D-20); assumedFlagRate 0.3→0.5 (loosened-triage companion); new deepFullMaxMinutes() knob (default 30, DEEP_FULL_MAX_MINUTES).
+- lib/settings.ts — default monthlyBudgetUsd 25→50 (richer posture, D-20).
+- lib/analysis/cascade.ts — short-vs-long branch (isFullDeepSession over total speech, decided once/run); full-deep path skips triage and deep-listens 100%; deepListenSegment persists then records produced-lemma evidence; toTimeline carries notes. Money helpers extracted to reserved-call.ts (500-line hook).
+- lib/analysis/reserved-call.ts (new) — BudgetHalt + reservedCall + withRepair (unchanged E-27 logic, moved out).
+- lib/analysis/prompts.ts (new) — triage/deep prompt builders moved out (500-line hook), re-exported from audio-model; triage bar loosened; deep prompt gains pronunciation-suspect / colto-register / disfluency notes + a produced-lemma list.
+- lib/analysis/audio-model.ts — DeepResult gains optional produced + per-finding notes; parseProduced (defensive); max_completion_tokens wired (DEEP_MAX_OUTPUT_TOKENS 4000, TRIAGE 400).
+- lib/analysis/findings.ts — FindingNotes type; sanitizeNotes/parseNotesColumn; notes column threaded through persist + cache-reuse.
+- lib/analysis/produced-lemmas.ts (new) — morph-it-validated produced lemmas → ×0.7 spontaneous-correct finding-sourced evidence via E-25 write path.
+- lib/analysis/cost.ts — estimateCost full-deep mode (0 mini, 100% deep).
+- lib/knowledge/{derive,items,types,index}.ts — derived recording_attested mark (rebuildable from the log).
+- lib/lexicon/morphit.ts — deploy-safe module-relative asset load (import.meta.url, not process.cwd()).
+- lib/render/engine.ts, lib/ask/engine.ts, lib/lessons/{billing,generate,grade}.ts — reserve-before-call so cross-biller spend counts committed+pending (criterion 5b).
+- lib/migrations/v16-richness-dial.ts + index — findings.notes, knowledge_items.recording_attested; docs/schema.md updated (v16).
+- app/api/sessions/[id]/analysis/estimate/route.ts — full-deep-aware estimate + fullDeep flag.
+- Enriched persistence choice: a NOTES CHANNEL (findings.notes JSON) over new categories — enrichment is orthogonal to the error category, and widening the closed CHECK would touch every category-switching surface (Focus/slips/lessons/cards); a nullable JSON column is additive and isolated.
+Verified (all against throwaway ERIKA_DATA_DIR/ERIKA_DB_PATH — never data/erika.db):
+- npm run test → 71 files / 512 passed (incl. new tests/richness-dial.test.ts, 17). Money proof: "full-deep estimate equals the run's real billed set" (estimate.totalUsd ≈ monthToDateSpend, miniUsd=0) and cached re-run bills nothing; "cross-biller pending-aware cap" (a pending cascade reservation makes a concurrent render refuse; committed stays ≤ cap; reverse direction too); concurrency cap-hard test still halts at exactly the cap. Validated-lemma-evidence: attested→one 0.7 spontaneous row + recording_attested; unattested→none. Deploy-safe load proven cwd-independent (process.chdir away from repo).
+- npm run lint (clean), npm run typecheck (clean), npm run build (Compiled successfully).
+Tests changed/removed:
+- tests/analysis-cascade.test.ts, analysis-recurrence.test.ts, analysis-unreadable.test.ts, analysis-concurrency.test.ts — run helpers pinned to deepFullMaxMinutes:0 so their CASCADE specs still exercise triage→deep (a short test session would otherwise take the new full-deep path). No assertion weakened; full-deep gets its own tests.
+- tests/analysis-cascade.test.ts — deep cost assertion 0.06→0.03 (recalibrated rate).
+- tests/analysis-route.test.ts, honest-home-routes.test.ts — default cap 25→50 (D-20). No tests deleted.
+Risks:
+- Produced-lemma evidence is written AFTER the findings+witness txn commits (recordEvidence runs its own txn + rebuild), so a crash in that narrow window loses that segment's positive evidence (findings/spend/witness are safe; a re-run is a cache hit that does not re-emit it). Enrichment is best-effort, not money (D-13).
+- Rates are an approximation (no live key): a real-API smoke run against actual `usage` is OWED once a key exists, mirroring E-4's documented smoke — the mock covers parsing/shape only.
+- morph-it deploy-safety uses module-relative resolution (import.meta.url); for a future Next standalone build the nft tracer must copy the asset — verified cwd-independent here, not yet in a standalone bundle (laptop era, E-40).
+Blocker: none.
