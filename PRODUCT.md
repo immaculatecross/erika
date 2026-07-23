@@ -26,3 +26,7 @@ Day-long recordings capture other people. Erika is local-first: everything lives
 ## Non-goals (v1)
 
 Multi-user accounts and OAuth, hosting, native mobile apps, live streaming ingestion — all deferred until the local web app proves the loop: speak → see your mistakes → drill them → stop making them.
+
+## The Learn era (addendum, 2026-07 · D-17)
+
+The loop proved out, so Erika grows a second tab. **Record** stays the spine: your real speech, the richest extraction we can buy. **Learn** turns what Record hears into a daily course — micro-lessons on the grammar, vocabulary, and pronunciation you actually miss, readings from the Italian canon, and a spoken conversation with a tutor who knows exactly what you should practice today — scheduled by a knowledge model that tracks every word, rule, and sound you have shown you know or miss. Corrections are taught correction-first (your error itself is never drilled), the register aims at italiano colto, and the day ends with one quiet completion moment. The trajectory is mobile-first: web in a phone viewport now, hosted later, then a native iOS app over the same API. Still one language — Italian, done properly, before any other.

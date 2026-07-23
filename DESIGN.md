@@ -37,6 +37,17 @@ Library: Motion (framer-motion). Transform and opacity only, 60fps, `prefers-red
 
 Hand-rolled — no UI component framework. Icons: Lucide, 1.5px stroke, 20px default. Primary button: accent fill (black in light, white in dark), inverse-color text, pill. Secondary: neutral tint fill, no border. Tertiary: bare accent text. Mode switches are segmented controls. Empty states: one quiet sentence and one action — no illustrations.
 
+## The daily ritual (Learn) — D-24
+
+The habit layer is geometry and numbers, never a character. Binding for every Learn surface:
+
+- **Goal ring:** one ring, accent ink on a hairline track, closed with the standard spring. No second ring, no color fill.
+- **Completion:** one factual sentence, once per day — "Done for today. 9 cards, one lesson." The ring closing is the day's single celebratory beat.
+- **Streak:** a number and a word ("Day 14"), caption style; repairs shown factually ("repaired Tue"). No flames, no guilt copy on a broken streak.
+- **Knowledge map:** category cells tint toward green only through resolved-slip semantics — green remains mastery, never mere activity.
+- **The tutor surface:** a quiet field of small accent-colored dots breathing with the tutor's voice — no avatar, no face, no waveform theatrics; numbers appear as tabular numerals and move gently.
+- **Banned, here and everywhere:** confetti, mascots, XP/points/levels, leaderboards, badges, purchasable streak repair, more than one celebratory beat per day.
+
 ## Copy
 
-Quiet and exact. Erika speaks like a good editor: never cheerleads, no exclamation marks, sentence case everywhere, always specific — "3 grammar slips in 12 minutes", not "Great job!".
+Quiet and exact. Erika speaks like a good editor: never cheerleads, no exclamation marks, sentence case everywhere, always specific — "3 grammar slips in 12 minutes", not "Great job!". Completion may be acknowledged factually, in numbers, once per day — "Day 14. Goal met." is information; acknowledgment is not cheerleading.
