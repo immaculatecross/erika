@@ -53,7 +53,20 @@ export default function LetterPage() {
     let alive = true;
     fetch("/api/letter")
       .then((r) => r.json())
-      .then((b: { letter: Letter | null }) => alive && setLetter(b.letter))
+      .then((b: { letter: Letter | null }) => {
+        if (!alive) return;
+        setLetter(b.letter);
+        // Record the read only AFTER showing the letter — the GET no longer
+        // writes (E-24), so this explicit POST is what flips the plan's
+        // `letterUnread`. Fire-and-forget; the week defaults to the one shown.
+        if (b.letter) {
+          void fetch("/api/letter/viewed", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ week: b.letter.weekStart }),
+          }).catch(() => {});
+        }
+      })
       .catch(() => alive && setLetter(null));
     return () => {
       alive = false;

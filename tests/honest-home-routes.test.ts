@@ -8,7 +8,8 @@ import type { Db } from "@/lib/db";
 //   * GET /api/sessions serves each session WITH its yield (criterion 2);
 //   * GET /api/settings reports month-to-date spend from spend_ledger (criterion 4);
 //   * GET /api/lessons/patterns prices an ungenerated lesson (criterion 5);
-//   * GET /api/letter records the letter as opened (criterion 1's viewed marker);
+//   * POST /api/letter/viewed records the letter as opened; GET /api/letter does
+//     not (the read/write split of E-24, closing E-18's read-that-wrote);
 //   * GET /api/plan serves the composed daily plan (criterion 1).
 // Env points the DB at the throwaway dir before any getDb(); route modules are
 // imported after that in beforeAll. No network, no model calls.
@@ -19,6 +20,7 @@ let GET_SESSIONS: typeof import("@/app/api/sessions/route").GET;
 let GET_SETTINGS: typeof import("@/app/api/settings/route").GET;
 let GET_PATTERNS: typeof import("@/app/api/lessons/patterns/route").GET;
 let GET_LETTER: typeof import("@/app/api/letter/route").GET;
+let VIEWED_POST: typeof import("@/app/api/letter/viewed/route").POST;
 let GET_PLAN: typeof import("@/app/api/plan/route").GET;
 
 const HOUR = 3_600_000;
@@ -32,6 +34,7 @@ beforeAll(async () => {
   GET_SETTINGS = (await import("@/app/api/settings/route")).GET;
   GET_PATTERNS = (await import("@/app/api/lessons/patterns/route")).GET;
   GET_LETTER = (await import("@/app/api/letter/route")).GET;
+  VIEWED_POST = (await import("@/app/api/letter/viewed/route")).POST;
   GET_PLAN = (await import("@/app/api/plan/route")).GET;
   db = (await import("@/lib/db")).getDb();
 
@@ -127,15 +130,26 @@ describe("GET /api/lessons/patterns — lesson ready vs priced (criterion 5)", (
 });
 
 describe("the plan and the letter-viewed marker (criterion 1)", () => {
-  it("the plan carries the unread letter until GET /api/letter serves it", async () => {
+  it("the plan carries the unread letter through a GET, and clears only on POST viewed", async () => {
     const before = (await (await GET_PLAN()).json()) as { letterWeek: string; letterUnread: boolean };
     expect(before.letterWeek).toBe(WEEK);
     expect(before.letterUnread).toBe(true);
 
+    // A GET serves the letter but must NOT mark it read (E-24 read/write split).
     const res = await GET_LETTER(new Request("http://localhost/api/letter"));
     const { letter } = (await res.json()) as { letter: { weekStart: string } };
     expect(letter.weekStart).toBe(WEEK);
+    const stillUnread = (await (await GET_PLAN()).json()) as { letterUnread: boolean };
+    expect(stillUnread.letterUnread).toBe(true);
 
+    // The explicit POST is what flips it — as the screen fires after rendering.
+    await VIEWED_POST(
+      new Request("http://localhost/api/letter/viewed", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ week: WEEK }),
+      }),
+    );
     const after = (await (await GET_PLAN()).json()) as { letterUnread: boolean };
     expect(after.letterUnread).toBe(false);
   });
