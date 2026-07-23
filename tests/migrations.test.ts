@@ -100,6 +100,30 @@ describe("migrations runner", () => {
     db.close();
   });
 
+  it("v14 adds the knowledge core: items, append-only evidence, spill, cards.item_id (E-25)", () => {
+    const db = openDatabase(tmpDbPath());
+    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(
+      (r) => r.name,
+    );
+    for (const t of ["knowledge_items", "evidence", "spill_queue"]) expect(tables).toContain(t);
+
+    // cards gains a nullable item_id FK to knowledge_items.
+    const cardCols = (db.prepare("PRAGMA table_info(cards)").all() as { name: string; notnull: number }[]).find(
+      (c) => c.name === "item_id",
+    );
+    expect(cardCols).toBeDefined();
+    expect(cardCols!.notnull).toBe(0);
+
+    // evidence is append-only: UPDATE and DELETE are rejected by triggers.
+    db.prepare(`INSERT INTO knowledge_items (id, kind, lemma, pos) VALUES ('lemma:casa#NOUN', 'lemma', 'casa', 'NOUN')`).run();
+    db.prepare(
+      `INSERT INTO evidence (id, item_id, source, polarity, mode, weight) VALUES ('e1', 'lemma:casa#NOUN', 'exercise', 1, 'cued', 0.6)`,
+    ).run();
+    expect(() => db.prepare("UPDATE evidence SET polarity = 0 WHERE id = 'e1'").run()).toThrow(/append-only/);
+    expect(() => db.prepare("DELETE FROM evidence WHERE id = 'e1'").run()).toThrow(/append-only/);
+    db.close();
+  });
+
   it("v8 collapses pre-existing duplicate findings so the unique index can build", () => {
     // A database written before the lease landed may already carry duplicates
     // from a double-run. Migrating must dedupe rather than fail to apply.
