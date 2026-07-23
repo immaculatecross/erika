@@ -18,6 +18,17 @@ You are an interactive sparring partner for the operator. This is the one conver
 - `AGENTS.md` + `CLAUDE.md` — copied from the mfactory root: the routing rule the harness auto-loads into every session, so even a vague prompt lands on a playbook instead of freestyle coding (adjust the playbook paths to `.mfactory/playbooks/`).
 - git: `init -b master`, first commit through the armed hooks. If credentials allow, create the remote and arm branch protection (≥1 approving review); otherwise list both as the operator's preflight items.
 
+## The plan review (optional — offer it before ratification)
+
+The plan is the artifact every work order inherits from; code gets `review.md`, the product gets `retro.md`, the factory gets `factory-retro.md` — the plan gets this. Before the operator ratifies — at founding, or after any later re-scoping wave that redraws the version ladder — offer the plan review. Recommend it when the plan spans more than one version or more than ~5 milestones; skip it for small scopes. It is information, never a gate: the operator remains the ratifier.
+
+Two fresh sessions in parallel, one bounded round:
+
+- **Skeptic — fidelity and coherence**, under a demonstrated-drift bar: every finding cites the operator sentence dropped or distorted, the two artifact lines that conflict, or the dependency ordered backwards — anything else does not exist. Verdict: ratifiable as-is / with amendments / rethink. Feed it the operator's **verbatim words** (never the planner's summary or reasoning — the artifacts must stand alone, and an illegible motivation is itself a finding), the plan diff, and the plan's evidence base.
+- **Unbound — what's missing**, under retro.md's consequential-and-grounded bar: each proposal names the operator desire or product evidence it serves, its slot in the ladder without breaking prefix-coherence, and what it displaces.
+
+The planner may challenge findings in one dialogue round, then prices them like review findings — amend / accept-as-limitation / defer, recorded, never dropped. Amendments land in the plan PR before ratification.
+
 ## Exit
 
-Report: the repo path, each settled decision in one line, the proposed first mission (one line), and the preflight items left to the operator. The build phase starts with `playbooks/dispatch.md`.
+Report: the repo path, each settled decision in one line, the proposed first mission (one line), whether the plan review ran and what it changed, and the preflight items left to the operator. The build phase starts with `playbooks/dispatch.md`.
