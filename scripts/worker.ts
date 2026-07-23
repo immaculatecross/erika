@@ -6,6 +6,7 @@ import {
   reclaimStuckAnalysisJobs,
   runAnalysisJob,
 } from "../lib/analysis/cascade";
+import { sweepStaleReservations } from "../lib/analysis/budget";
 import { openAiAudioModel } from "../lib/analysis/audio-model";
 
 // `npm run worker`: a thin loop around processJob (E-3 ingest) and runAnalysisJob
@@ -67,6 +68,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const db = getDb();
+  // Startup sweep (E-27 criterion 3): release spend reservations a crashed run
+  // abandoned between reserve and finalize, so stale pending rows stop counting
+  // against the budget cap. Mirrors the per-tick job-lease reclaim below.
+  const swept = sweepStaleReservations(db);
+  if (swept > 0) console.error(`[worker] swept ${swept} stale spend reservation(s)`);
   console.error(`[worker] started (${applied.length} var(s) from .env.local)`);
   for (;;) {
     const didWork = await tick(db);

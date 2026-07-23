@@ -2,7 +2,7 @@
 
 SQLite (better-sqlite3) at `data/erika.db` (`ERIKA_DB_PATH` overrides). Applied by
 the runner in `lib/db.ts` from the append-only list in `lib/migrations/index.ts`;
-`_migrations` records the versions already applied. **Latest version: v14.**
+`_migrations` records the versions already applied. **Latest version: v15.**
 
 > **Ritual.** Adding a migration updates this file in the same PR. A schema doc
 > that lags the schema is worse than none — it is believed and it is wrong.
@@ -49,7 +49,7 @@ survive the deletion of any one session that happened to contain that audio.
 | `findings` | 4, 8, 10 | `id`, unique `(session_id, content_hash, start_ms, quote, correction, category)` | One correction: `quote` → `correction`, `category`, `explanation`, `severity`, timestamps. The v8 identity index makes a replayed write idempotent — it is not a defence against a double run (the lease is). From v10, nullable `recurrence_of`: the CLIPPED (≤60-char, ellipsis-terminated) correction text of the speaker-profile entry the deep model marked this finding as recurring (`lib/analysis/profile.ts` clips it for the prompt, so the stored link is a prefix of the full correction, never equal to it); NULL everywhere the model made no such claim. |
 | `analysis_jobs` | 4, 8 | `id` | One cascade run: `state` (queued/processing/done/failed/**halted**), `stage`, `progress`, `error`, plus the v8 lease. `halted` = the budget cap stopped it. |
 | `segment_analyses` | 4, 9 | `content_hash` | The never-re-bill witness: `flagged` (triage's verdict), `deep_done`, and from v9 `unreadable` + `unreadable_reason` + `response_shape` (content-free). **This table is what "analysed" means** — see `lib/findings-model.ts`. |
-| `spend_ledger` | 4 | `id` | One row per real billable call: `month` ('YYYY-MM'), `model`, `content_hash`, `cost_usd`. No session FK — deleting a session must never erase spend history. |
+| `spend_ledger` | 4, 15 | `id` | One row per billable call: `month` ('YYYY-MM'), `model`, `content_hash`, `cost_usd`. No session FK — deleting a session must never erase spend history. From v15, `state` ∈ {pending, committed} (DEFAULT committed — every pre-v15 row is a real finalized charge) + `reserved_at`: the E-27 reserve-before-call machinery so the cap stays hard under the concurrency pool. A call inserts a **pending** row for its estimated cost *before* it fires (`reserveSpend`, atomic: committed + pending + cost ≤ cap or refused), then **finalizes** it to committed on resolve (`finalizeReservation`, in the same txn as findings + witness) or **releases** it on a no-charge failure. The cap counts committed + pending; `monthToDateSpend`/`wouldExceedBudget` (display + the other billers' guard) count committed only. A crash between reserve and finalize leaves a pending row the startup sweep (`sweepStaleReservations`, TTL 15 min) releases. |
 | `cards` | 5, 14 | `id`, unique `finding_id` | The drill card and its scheduler state (`ease`, `interval_days`, `repetitions`, `due`, `last_grade`, `suspended`). From v14 those columns are the FSRS-6 state projected back onto the SM-2 shape (`lib/srs.ts`), and a nullable `item_id` links the card to the knowledge item its reviews are evidence for — NULL until E-28 attaches a lemma; a graded linked card appends cued review evidence. |
 | `deleted_findings` | 6 | `finding_id` | Tombstone so a deliberately deleted card is not regenerated. Pinning from the Phrasebook clears it. |
 | `lessons` | 7 | `id`, unique `pattern_key` | One generated lesson per recurring pattern (`category:<category>`, `lib/lessons/patterns.ts`); `exercises` is JSON. Unique = generated once, re-opened free. |
@@ -94,6 +94,7 @@ re-upload contributes nothing anywhere until its own Analyze runs.
 | 12 | `renditions` | `renditions` — the render-once contrastive-playback cache, one row per finding (E-21) |
 | 13 | `ask_notes` | `ask_notes` — the ask-once deeper-note cache, one row per finding, citing ≥1 other finding (E-23) |
 | 14 | `knowledge_evidence_spill` | `knowledge_items`, append-only `evidence` (+ its no-UPDATE/no-DELETE triggers), `spill_queue`; nullable `item_id` on `cards` — the D-19 knowledge core (E-25) |
+| 15 | `spend_reservations` | `state` (pending/committed, DEFAULT committed) + `reserved_at` on `spend_ledger`, and `idx_spend_ledger_pending` — reserve-before-call so the budget cap stays hard when the cascade runs through a concurrency pool (E-27) |
 
 Never edit a shipped migration — add the next one. `tests/migrations.test.ts`
 asserts a fresh database reaches the latest version and that re-running is a no-op.

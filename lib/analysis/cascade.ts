@@ -13,6 +13,8 @@ import {
   ModelUnavailableError,
 } from "./audio-model";
 import { claimQueued, heartbeat, reclaimStale, workerId } from "../jobs/lease";
+import { JOB_LEASE_STALE_MS } from "../jobs/lease-config";
+import { runPool } from "../jobs/pool";
 import {
   getSegmentAnalysis,
   isSegmentComplete,
@@ -21,11 +23,38 @@ import {
   type NewFinding,
 } from "./findings";
 import { callCost, DEEP_MODELS, MINI_MODEL, type ModelId } from "./rates";
-import { recordSpend, wouldExceedBudget } from "./budget";
+import {
+  reserveSpend,
+  releaseReservation,
+  finalizeReservation,
+  sweepStaleReservations,
+  type SpendReservation,
+} from "./budget";
 import { collectSpeakerProfile, resolveRecurrence, type SpeakerProfile } from "./profile";
 
-/** One real billable call: recorded atomically with the segment it completes. */
-type SpendEntry = { model: ModelId; contentHash: string; costUsd: number };
+/**
+ * Bounded per-segment concurrency (E-27). The pool runs at most this many model
+ * calls in flight at once, turning a serial day-scale walk into a wall-clock-minutes
+ * one. Default ~6, floored to ≥1; tunable via ANALYSIS_CONCURRENCY (D-13). At N=6
+ * a 12 h dump — VAD leaves ~1–2 h of speech, ~50% flagged (D-20), so a few hundred
+ * ~10-min deep-listens of a few seconds each — completes in ~10–20 min instead of
+ * hours, the constant-wall-clock property E-28's richness dial needs.
+ */
+export function analysisConcurrency(raw: string | undefined = process.env.ANALYSIS_CONCURRENCY): number {
+  const n = Number(raw);
+  if (raw === undefined || raw === "" || !Number.isFinite(n)) return 6;
+  return Math.max(1, Math.floor(n));
+}
+
+/**
+ * How often the job's lease is refreshed while the pool runs (E-27 criterion 4).
+ * Well under JOB_LEASE_STALE_MS (a fifth of it), so a long parallel batch beats
+ * many times inside the stale window and is never mistaken for a crashed worker and
+ * reclaimed mid-flight (the E-16 defect-2 double-billing guard). A single heartbeat
+ * at the *start* of each segment (the old serial code) was fine when one segment ran
+ * at a time; a pool must beat on a wall-clock interval instead.
+ */
+export const HEARTBEAT_INTERVAL_MS = Math.max(1000, Math.floor(JOB_LEASE_STALE_MS / 5));
 
 // The two-stage cascade (D-10, D-3): for each speech segment, `gpt-audio-mini`
 // triages the time-compressed rendition; only a *flagged* segment is deep-listened
@@ -142,26 +171,55 @@ function toTimeline(seg: Segment, f: NewFinding & { relStartMs?: number; relEndM
   };
 }
 
+/** A resolved successful call, plus the still-pending reservation the caller must
+ *  finalize atomically with the findings + witness (E-4 criterion 5). */
+interface ReservedResult<T> {
+  result: T;
+  reservation: SpendReservation;
+}
+
 /**
- * Run one billable model call and guarantee the charge is ledgered the moment the
- * call *resolves* — not only when its response parses (E-16 defect 4).
+ * Reserve one billable call's estimated cost, make the call, and settle the
+ * reservation by outcome (E-27 criteria 2 & 5).
  *
- * A `ModelParseError` means OpenAI answered (and charged) but the body was not
- * the shape we asked for. Recording nothing there let the retry bill again while
- * the "hard cap" capped only *recorded* money — it understated spend precisely
- * when things were going wrong. A `ModelUnavailableError` is the opposite case:
- * a network failure or a non-2xx, no completion, no charge, so nothing is written.
+ * Reserve-before-call is what keeps the cap hard with the whole pool racing: the
+ * reservation is a *pending* ledger row inserted atomically only if committed +
+ * pending + this cost stays within the budget, so two racers can never both pass
+ * and overshoot. If the cap refuses the reservation, no call is made — a BudgetHalt.
  *
- * The success path is deliberately untouched: it returns without writing, and its
- * spend is still committed by `persistSegmentFindings` in ONE transaction with the
- * findings and the witness (E-4 criterion 5). The two guarantees are disjoint —
- * this records only on the failure path, where there is no witness to commit with.
+ * On the call resolving:
+ *   * SUCCESS — the reservation is returned still pending; the caller finalizes it
+ *     inside the findings+witness transaction, so the charge commits exactly once
+ *     with the completion record.
+ *   * `ModelParseError` — OpenAI answered and CHARGED but the body was unreadable;
+ *     the reservation is FINALIZED to its charged cost right here (never released):
+ *     a parse-failed reply still bills (E-16 defect 4).
+ *   * anything else (`ModelUnavailableError` / network — no completion, no charge)
+ *     — the reservation is RELEASED, committing nothing.
  */
-async function billedCall<T>(db: Db, spend: SpendEntry, call: () => Promise<T>): Promise<T> {
+async function reservedCall<T>(
+  db: Db,
+  model: ModelId,
+  contentHash: string,
+  costUsd: number,
+  budget: number,
+  call: (opts: { strictJson: boolean }) => Promise<T>,
+  strictJson: boolean,
+): Promise<ReservedResult<T>> {
+  const reservation = reserveSpend(db, { model, contentHash, costUsd }, budget);
+  if (!reservation) throw new BudgetHalt();
   try {
-    return await call();
+    const result = await call({ strictJson });
+    return { result, reservation }; // pending — the caller finalizes it with the witness
   } catch (err) {
-    if (err instanceof ModelParseError) recordSpend(db, spend);
+    if (err instanceof ModelParseError) {
+      // Resolved and charged; commit the reservation as its charged cost, then rethrow
+      // so the caller's repair/unreadable handling runs (E-16 defect 4). No findings
+      // and no witness ride with it — `markUnreadable` writes those separately.
+      finalizeReservation(db, reservation);
+    } else {
+      releaseReservation(db, reservation); // no completion, no charge
+    }
     throw err;
   }
 }
@@ -170,23 +228,27 @@ async function billedCall<T>(db: Db, spend: SpendEntry, call: () => Promise<T>):
  * Make one billable model call, and on an unreadable reply make EXACTLY one more
  * with the stricter JSON-only instruction (E-16b criterion 4).
  *
- * Both attempts go through `billedCall`, because both are real completions OpenAI
- * charges for — a retry that quietly escaped the ledger would understate spend
- * precisely when the model is misbehaving. Exactly one retry: enough to recover
- * the common case (a reply wrapped in prose or a fence), bounded so a model stuck
- * in a bad mode cannot spend the budget arguing with itself. A truncation is
- * retried too — the stricter instruction also asks for a shorter answer.
+ * Each attempt reserves before it fires (the cap counts committed + pending), so no
+ * attempt is ever made over the cap, and each attempt that RESOLVED-but-unreadable
+ * bills exactly once (E-16 defect 4). On success the winning reservation is returned
+ * pending for the caller to finalize with the findings+witness. Exactly one retry:
+ * enough to recover the common case (a reply wrapped in prose or a fence), bounded so
+ * a model stuck in a bad mode cannot spend the budget arguing with itself; a
+ * truncation is retried too, since the stricter instruction also asks for less.
  */
 async function withRepair<T>(
   db: Db,
-  spend: SpendEntry,
+  model: ModelId,
+  contentHash: string,
+  costUsd: number,
+  budget: number,
   call: (opts: { strictJson: boolean }) => Promise<T>,
-): Promise<T> {
+): Promise<ReservedResult<T>> {
   try {
-    return await billedCall(db, spend, () => call({ strictJson: false }));
+    return await reservedCall(db, model, contentHash, costUsd, budget, call, false);
   } catch (err) {
     if (!(err instanceof ModelParseError)) throw err;
-    return billedCall(db, spend, () => call({ strictJson: true }));
+    return reservedCall(db, model, contentHash, costUsd, budget, call, true);
   }
 }
 
@@ -196,15 +258,17 @@ async function runDeep(
   seg: Segment,
   input: DeepInput,
   budget: number,
-): Promise<{ findings: NewFinding[]; spend: SpendEntry }> {
+): Promise<{ findings: NewFinding[]; reservation: SpendReservation }> {
   let lastErr: Error | undefined;
   for (const model of DEEP_MODELS as readonly ModelId[]) {
     const cost = callCost(model, seg.durationMs);
-    if (wouldExceedBudget(db, cost, budget)) throw new BudgetHalt();
     try {
-      const spend: SpendEntry = { model, contentHash: seg.contentHash, costUsd: cost };
-      const res = await withRepair(db, spend, (opts) => client.deepListen(model, input, opts));
-      // Spend is not recorded here — it is committed atomically with the findings
+      // The reservation (committed + pending ≤ cap, atomically) IS the pre-call
+      // budget guard now — a refused reservation is a BudgetHalt inside withRepair.
+      const { result: res, reservation } = await withRepair(db, model, seg.contentHash, cost, budget, (opts) =>
+        client.deepListen(model, input, opts),
+      );
+      // The reservation is left PENDING and finalized atomically with the findings
       // and witness by the caller, so a crash between the two can never re-bill.
       // A recurrenceId citing a real profile entry is resolved to that entry's
       // correction and persisted with the finding; anything else resolves to null
@@ -213,11 +277,11 @@ async function runDeep(
         findings: res.findings.map((f) =>
           toTimeline(seg, { ...f, recurrenceOf: resolveRecurrence(input.profile, f.recurrenceId) }),
         ),
-        spend,
+        reservation,
       };
     } catch (err) {
       if (err instanceof ModelUnavailableError) {
-        lastErr = err; // try the D-3 fallback model before giving up
+        lastErr = err; // try the D-3 fallback model before giving up (its reservation was released)
         continue;
       }
       throw err;
@@ -255,6 +319,95 @@ function markUnreadable(
 export interface RunOpts {
   /** Override the triage tempo (else from TRIAGE_TEMPO); must match E-3's. */
   tempo?: number;
+  /** Max model calls in flight at once (else ANALYSIS_CONCURRENCY, ~6). */
+  concurrency?: number;
+  /** Lease heartbeat interval in ms (else HEARTBEAT_INTERVAL_MS). Tests set it small. */
+  heartbeatMs?: number;
+}
+
+/** The read-only per-run context threaded to each concurrent segment worker. */
+interface RunContext {
+  jobId: string;
+  sessionId: string;
+  targetLanguage: string;
+  budget: number;
+  profile: SpeakerProfile;
+  tempo: number;
+}
+
+/**
+ * Process ONE segment: a cache hit (zero calls), or triage (+ deep-listen if the
+ * mini flags it). This is the body the pool runs concurrently. A single unreadable
+ * reply is isolated here (`markUnreadable`) so one bad segment never fails the run
+ * (E-16 criterion 4); every other failure — a refused reservation (BudgetHalt),
+ * network, auth — throws out to halt or fail the whole run. Each real call reserves
+ * before it fires and is finalized (or released) by outcome, so the cap stays hard
+ * with the whole pool racing (E-27 criterion 2).
+ */
+async function processSegment(db: Db, client: AudioModelClient, ctx: RunContext, seg: Segment): Promise<void> {
+  const hash = seg.contentHash;
+  let analysis = getSegmentAnalysis(db, hash);
+
+  // An unreadable TRIAGE established nothing about this audio, so a new run starts
+  // it over. An unreadable DEEP kept its triage verdict and is resumed below at the
+  // deep call, without re-billing the mini.
+  if (analysis?.unreadable && !analysis.flagged) analysis = null;
+
+  if (isSegmentComplete(analysis)) {
+    // Cache hit — zero API calls. `seg` is the target segment the donor findings'
+    // timestamps get remapped onto (E-16 defect 1).
+    reuseCachedFindings(db, ctx.sessionId, hash, seg);
+    return;
+  }
+
+  try {
+    // Stage 1 — triage the time-compressed rendition with the mini.
+    if (analysis === null) {
+      const miniCost = callCost(MINI_MODEL, seg.durationMs / ctx.tempo);
+      const rendition = await fileBase64(renditionCachePath(hash, ctx.tempo));
+      const { result: triage, reservation } = await withRepair(db, MINI_MODEL, hash, miniCost, ctx.budget, (opts) =>
+        client.triage({ audioBase64: rendition, format: "wav", targetLanguage: ctx.targetLanguage, profile: ctx.profile }, opts),
+      );
+      // Finalize the mini reservation with its completion witness atomically, so a
+      // halt (or crash) after the call can never re-bill this triage on resume.
+      persistSegmentFindings(db, {
+        sessionId: ctx.sessionId,
+        contentHash: hash,
+        flagged: triage.flagged,
+        deepDone: false,
+        findings: [],
+        reservation,
+      });
+      analysis = getSegmentAnalysis(db, hash)!;
+    }
+
+    // Stage 2 — deep-listen the native-speed original, only if flagged.
+    if (analysis.flagged && !analysis.deepDone) {
+      const original = await fileBase64(segmentPath(ctx.sessionId, seg.idx));
+      const { findings, reservation } = await runDeep(
+        db,
+        client,
+        seg,
+        { audioBase64: original, format: "wav", targetLanguage: ctx.targetLanguage, profile: ctx.profile },
+        ctx.budget,
+      );
+      // Deep reservation finalized + findings + witness commit together (E-4 c5).
+      persistSegmentFindings(db, {
+        sessionId: ctx.sessionId,
+        contentHash: hash,
+        flagged: true,
+        deepDone: true,
+        findings,
+        reservation,
+      });
+    }
+  } catch (err) {
+    // One unreadable reply is a fact about ONE segment, not about the run: the job
+    // records it, reports it, and keeps going (E-16b criterion 4). Every other kind
+    // of failure — budget, network, auth — still stops the run.
+    if (!(err instanceof ModelParseError)) throw err;
+    markUnreadable(db, ctx.sessionId, hash, analysis?.flagged ?? false, err);
+  }
 }
 
 /**
@@ -262,6 +415,11 @@ export interface RunOpts {
  * budget breach lands `halted` (findings so far kept, cap never exceeded); on any
  * other failure lands `failed` with a truthful message. Cached segments make zero
  * model calls and record nothing. Does not throw on run failure — it is recorded.
+ *
+ * Segments run through a bounded concurrency pool (E-27) so a day-scale dump lands
+ * in wall-clock minutes; the cap stays hard because every call reserves before it
+ * fires (committed + pending ≤ budget, atomically). The lease is refreshed on an
+ * interval for the whole run so a long parallel batch is never reclaimed mid-flight.
  */
 export async function runAnalysisJob(
   db: Db,
@@ -276,6 +434,11 @@ export async function runAnalysisJob(
   const session = getSession(db, job.sessionId);
   if (!session) throw new Error(`Job ${jobId} references missing session ${job.sessionId}.`);
 
+  // Release reservations a crashed run abandoned between reserve and finalize, so
+  // they stop counting against the cap for this run (E-27 criterion 3). Only rows
+  // older than the TTL are swept — never a live in-flight reservation.
+  sweepStaleReservations(db);
+
   const { targetLanguage, monthlyBudgetUsd: budget } = readSettings(db);
   // The speaker profile (E-19), built ONCE per run from data already on disk —
   // no model call, read-only. It rides along in the prompt inputs only; it is
@@ -284,82 +447,29 @@ export async function runAnalysisJob(
   const profile: SpeakerProfile = collectSpeakerProfile(db);
   const tempo = opts.tempo ?? triageTempo();
   const segments = listSegments(db, job.sessionId);
+  const ctx: RunContext = { jobId, sessionId: job.sessionId, targetLanguage, budget, profile, tempo };
   patchJob(db, jobId, { state: "processing", stage: "analyzing", error: null });
 
+  // Refresh the lease on an interval for the whole run, not once per segment: a long
+  // parallel batch beats many times inside the stale window so it is never reclaimed
+  // mid-flight (E-16 defect 2 / E-27 criterion 4). Cleared in `finally`.
+  const beat = () => heartbeat(db, "analysis_jobs", jobId);
+  beat();
+  const timer = setInterval(beat, opts.heartbeatMs ?? HEARTBEAT_INTERVAL_MS);
+  (timer as unknown as { unref?: () => void }).unref?.();
+
+  // Progress counts COMPLETIONS (E-27 criterion 6): a shared counter incremented as
+  // each segment settles, monotonic under concurrency (JS is single-threaded, so ++
+  // never interleaves).
+  let completed = 0;
+  const total = segments.length;
+
   try {
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i];
-      const hash = seg.contentHash;
-      heartbeat(db, "analysis_jobs", jobId); // still alive — do not reclaim this job
-      let analysis = getSegmentAnalysis(db, hash);
-
-      // An unreadable TRIAGE established nothing about this audio, so a new run
-      // starts it over. An unreadable DEEP kept its triage verdict and is resumed
-      // below at the deep call, without re-billing the mini.
-      if (analysis?.unreadable && !analysis.flagged) analysis = null;
-
-      if (isSegmentComplete(analysis)) {
-        // Cache hit — zero API calls. `seg` is the target segment the donor
-        // findings' timestamps get remapped onto (E-16 defect 1).
-        reuseCachedFindings(db, job.sessionId, hash, seg);
-        patchJob(db, jobId, { progress: (i + 1) / segments.length });
-        continue;
-      }
-
-      try {
-        // Stage 1 — triage the time-compressed rendition with the mini.
-        if (analysis === null) {
-          const miniCost = callCost(MINI_MODEL, seg.durationMs / tempo);
-          if (wouldExceedBudget(db, miniCost, budget)) throw new BudgetHalt();
-          const rendition = await fileBase64(renditionCachePath(hash, tempo));
-          const miniSpend: SpendEntry = { model: MINI_MODEL, contentHash: hash, costUsd: miniCost };
-          const triage = await withRepair(db, miniSpend, (opts) =>
-            client.triage({ audioBase64: rendition, format: "wav", targetLanguage, profile }, opts),
-          );
-          // Record the mini spend and its completion witness atomically, so a halt
-          // (or crash) after the call can never re-bill this triage on resume.
-          persistSegmentFindings(db, {
-            sessionId: job.sessionId,
-            contentHash: hash,
-            flagged: triage.flagged,
-            deepDone: false,
-            findings: [],
-            spend: miniSpend,
-          });
-          analysis = getSegmentAnalysis(db, hash)!;
-        }
-
-        // Stage 2 — deep-listen the native-speed original, only if flagged.
-        if (analysis.flagged && !analysis.deepDone) {
-          const original = await fileBase64(segmentPath(job.sessionId, seg.idx));
-          const { findings, spend } = await runDeep(
-            db,
-            client,
-            seg,
-            { audioBase64: original, format: "wav", targetLanguage, profile },
-            budget,
-          );
-          // Deep spend + findings + witness commit together (E-4 criterion 5).
-          persistSegmentFindings(db, {
-            sessionId: job.sessionId,
-            contentHash: hash,
-            flagged: true,
-            deepDone: true,
-            findings,
-            spend,
-          });
-        }
-      } catch (err) {
-        // One unreadable reply is a fact about ONE segment, not about the run: the
-        // job records it, reports it, and keeps going (E-16b criterion 4). Every
-        // other kind of failure — budget, network, auth — still stops the run.
-        if (!(err instanceof ModelParseError)) throw err;
-        markUnreadable(db, job.sessionId, hash, analysis?.flagged ?? false, err);
-      }
-
-      patchJob(db, jobId, { progress: (i + 1) / segments.length });
-    }
-
+    await runPool(segments, opts.concurrency ?? analysisConcurrency(), async (seg) => {
+      await processSegment(db, client, ctx, seg);
+      completed += 1;
+      patchJob(db, jobId, { progress: total === 0 ? 1 : completed / total });
+    });
     patchJob(db, jobId, { state: "done", stage: "done", progress: 1, error: null });
   } catch (err) {
     if (err instanceof BudgetHalt) {
@@ -367,6 +477,8 @@ export async function runAnalysisJob(
     } else {
       patchJob(db, jobId, { state: "failed", error: (err as Error).message || "Analysis failed." });
     }
+  } finally {
+    clearInterval(timer);
   }
   return getAnalysisJob(db, jobId)!;
 }
