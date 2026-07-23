@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { createSession } from "@/lib/sessions";
 import { persistSegmentFindings, type NewFinding } from "@/lib/analysis/findings";
+import { ensureLemmaItem } from "@/lib/knowledge";
 import {
   cardBack,
   countDueCards,
@@ -160,6 +161,54 @@ describe("gradeCard", () => {
     expect(after.intervalDays).toBe(0);
     expect(after.ease).toBeLessThan(before.ease);
     expect(countDueCards(db)).toBe(1); // still due this session
+  });
+
+  it("state-seeds a card and grading appends cued review evidence when it is linked (E-25)", () => {
+    const db = freshDb();
+    seedFindings(db, "kn", [finding()]);
+    generateCards(db);
+    const card = listDueCards(db)[0];
+
+    // Seed a coarse SM-2 state onto the card, as a pre-E-25 card would carry, and
+    // link it to a validated knowledge item (E-28 does this linking for real).
+    ensureLemmaItem(db, "casa", "NOUN");
+    db.prepare("UPDATE cards SET ease = 2.5, interval_days = 12, repetitions = 3, item_id = 'lemma:casa#NOUN' WHERE id = ?").run(card.id);
+
+    // A pass schedules the seeded card sanely (further out than its 12-day seed).
+    const good = gradeCard(db, card.id, "good");
+    expect(good.intervalDays).toBeGreaterThan(12);
+    expect(listDueCards(db)).toHaveLength(0); // left the due queue
+
+    // And it logged a cued, correct review evidence row on the linked item.
+    const ev = db.prepare("SELECT * FROM evidence WHERE item_id = 'lemma:casa#NOUN'").all() as {
+      mode: string;
+      polarity: number;
+      source: string;
+      source_ref: string;
+    }[];
+    expect(ev).toHaveLength(1);
+    expect(ev[0].mode).toBe("cued");
+    expect(ev[0].polarity).toBe(1); // a pass is correct production
+    expect(ev[0].source).toBe("finding");
+    expect(ev[0].source_ref).toBe(card.findingId);
+
+    // Again on a linked card logs an incorrect review — now both polarities exist.
+    gradeCard(db, card.id, "again");
+    const after = db.prepare("SELECT polarity FROM evidence WHERE item_id = 'lemma:casa#NOUN'").all() as {
+      polarity: number;
+    }[];
+    expect(after).toHaveLength(2);
+    expect(new Set(after.map((e) => e.polarity))).toEqual(new Set([0, 1]));
+  });
+
+  it("grading an unlinked card logs no evidence (all cards until E-28)", () => {
+    const db = freshDb();
+    seedFindings(db, "nolink", [finding()]);
+    generateCards(db);
+    const card = listDueCards(db)[0];
+    expect(card.itemId).toBeNull();
+    gradeCard(db, card.id, "good");
+    expect((db.prepare("SELECT COUNT(*) AS n FROM evidence").get() as { n: number }).n).toBe(0);
   });
 });
 

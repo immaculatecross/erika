@@ -90,7 +90,10 @@ describe("POST /api/cards/[id]/grade", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.schedule.repetitions).toBe(1);
-    expect(body.schedule.intervalDays).toBe(1);
+    // FSRS-6 (E-25): a first Good schedules ≥1 day out (its exact interval is the
+    // algorithm's, not SM-2's fixed 1); the route contract is that a pass leaves
+    // the due queue (asserted below).
+    expect(body.schedule.intervalDays).toBeGreaterThanOrEqual(1);
     expect(body.schedule.lastGrade).toBe("good");
 
     // A graded card is no longer due.
