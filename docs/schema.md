@@ -2,7 +2,7 @@
 
 SQLite (better-sqlite3) at `data/erika.db` (`ERIKA_DB_PATH` overrides). Applied by
 the runner in `lib/db.ts` from the append-only list in `lib/migrations/index.ts`;
-`_migrations` records the versions already applied. **Latest version: v13.**
+`_migrations` records the versions already applied. **Latest version: v14.**
 
 > **Ritual.** Adding a migration updates this file in the same PR. A schema doc
 > that lags the schema is worse than none — it is believed and it is wrong.
@@ -27,6 +27,10 @@ findings ──1:1── renditions                 (render-once contrastive-pla
 findings ──1:1── ask_notes                  (ask-once deeper note, cites other findings)
 lessons / lesson_mastery ── pattern_key     (no session FK — derived from all findings)
 spend_ledger                                (no FK at all — money outlives sessions)
+
+knowledge_items ──< evidence                (append-only log; derived state is a cache)
+                ──< spill_queue             (composer overflow; wired in v0.5)
+cards ──> knowledge_items                   (nullable item_id: a review = evidence, E-25)
 ```
 
 `content_hash` is a SHA-256 of the extracted segment audio and the spine of the
@@ -46,13 +50,16 @@ survive the deletion of any one session that happened to contain that audio.
 | `analysis_jobs` | 4, 8 | `id` | One cascade run: `state` (queued/processing/done/failed/**halted**), `stage`, `progress`, `error`, plus the v8 lease. `halted` = the budget cap stopped it. |
 | `segment_analyses` | 4, 9 | `content_hash` | The never-re-bill witness: `flagged` (triage's verdict), `deep_done`, and from v9 `unreadable` + `unreadable_reason` + `response_shape` (content-free). **This table is what "analysed" means** — see `lib/findings-model.ts`. |
 | `spend_ledger` | 4 | `id` | One row per real billable call: `month` ('YYYY-MM'), `model`, `content_hash`, `cost_usd`. No session FK — deleting a session must never erase spend history. |
-| `cards` | 5 | `id`, unique `finding_id` | The drill card and its SM-2 state (`ease`, `interval_days`, `repetitions`, `due`, `last_grade`, `suspended`). |
+| `cards` | 5, 14 | `id`, unique `finding_id` | The drill card and its scheduler state (`ease`, `interval_days`, `repetitions`, `due`, `last_grade`, `suspended`). From v14 those columns are the FSRS-6 state projected back onto the SM-2 shape (`lib/srs.ts`), and a nullable `item_id` links the card to the knowledge item its reviews are evidence for — NULL until E-28 attaches a lemma; a graded linked card appends cued review evidence. |
 | `deleted_findings` | 6 | `finding_id` | Tombstone so a deliberately deleted card is not regenerated. Pinning from the Phrasebook clears it. |
 | `lessons` | 7 | `id`, unique `pattern_key` | One generated lesson per recurring pattern (`category:<category>`, `lib/lessons/patterns.ts`); `exercises` is JSON. Unique = generated once, re-opened free. |
 | `lesson_mastery` | 7 | `pattern_key` | Per-pattern mastery 0..1, updated by the EMA rule in `lib/lessons/mastery.ts`. |
 | `slips` | 11 | `id`, unique `slip_key` | One recurring mistake (E-20): `category`, the representative `correction`, and the deterministic `slip_key` (`category:<normalized correction>`). A materialization of the pure clustering in `lib/slips.ts`, upserted by key so re-analysis of the same findings keeps the same id. State (active/remission/resolved) is computed, never stored. |
 | `finding_slips` | 11 | `finding_id` | The finding→slip association: one slip per finding, cascade-deleted with its finding. Rewritten idempotently by `materializeSlips`. |
 | `renditions` | 12 | `finding_id` | One contrastive-playback rendition per finding (E-21): `path` (mp3 under `data/renditions/`), `cost_usd` (the actual TTS charge, also ledgered once). The `finding_id` PK is both the render-once cache key and the render lease: the engine claims the row BEFORE the budget check and the provider call (lease-before-spend), so exactly one racing Generate calls the model and bills — the loser makes no call and no ledger row (D-15). An uncommitted claim (budget refusal / failed synthesize) is released so a retry can re-lease. FK cascade on delete; the file is cleaned by the delete route and playback is orphan-safe without it. |
+| `knowledge_items` | 14 | `id` | One thing the user is learning (E-25, D-19): a lemma+POS (`lemma:<lemma>#<POS>#<sense>`, `sense_key` NULL until a split is forced), a grammar `rule:<key>`, or a `phone:<symbol>`. `kind` ∈ {lemma,rule,phone}; `freq_rank`/`cefr` are the knowledge edge / banding (E-26); `prereqs` is a JSON id array (rules only, the prerequisite DAG). The `srs_stability`/`srs_difficulty`/`srs_last_event_at`/`status` (∈ unseen/introduced/learning/known/lapsed) columns are a **derived cache**, rebuildable from `evidence` alone and never the source of truth (`lib/knowledge/derive.ts`). A lemma id can only exist for a (lemma, POS) morph-it attests (`lib/lexicon/morphit.ts`). |
+| `evidence` | 14 | `id`, index `(item_id, created_at)` | **Append-only** (BEFORE UPDATE/DELETE triggers `RAISE(ABORT)`) log of the user's own production (E-25, D-19): `item_id` → `knowledge_items`, `source` ∈ {finding,exercise,tutor,placement}, `source_ref` (TEXT, not an FK — evidence outlives the sessions/findings it cites, the `spend_ledger` precedent), `polarity` 0/1, `mode` ∈ {spontaneous,cued,recognition}, `weight` (the mode weight 1.0/0.6/0.3, ×0.7 when audio-derived), `session_id`. The one source of truth; the `knowledge_items` cache is derived from it and disposable. |
+| `spill_queue` | 14 | `id`, index `planned_for` | A knowledge item planned for a day that overflowed today's quota (E-25 creates the table; the daily composer that drains it is v0.5/E-31). Cascade-deleted with its item. |
 | `ask_notes` | 13 | `finding_id` | One ask-once deeper note per finding (E-23): `note` text, `cited_ids` (JSON array of the OTHER findings the note cites — ≥1, structurally enforced and resolvable to real included findings), `cost_usd` (the actual text charge, also ledgered once). The `finding_id` PK is both the ask-once cache key and the ask lease: the engine claims the row (with an empty `note`) BEFORE the budget check and the text-model call (lease-before-spend, mirroring `renditions`), so exactly one racing Ask calls the model and bills — the loser makes no call and no ledger row (D-15). The winning call completes the row (fills `note`/`cited_ids`); the cache read returns only completed rows, and every handled failure (budget refusal, a failed/unreadable call) releases the claim so a retry can re-lease. FK cascade on delete — no on-disk file, so the cascade is the whole cleanup. |
 
 Timestamps are SQLite UTC text (`datetime('now')`, `"YYYY-MM-DD HH:MM:SS"`) so
@@ -86,6 +93,7 @@ re-upload contributes nothing anywhere until its own Analyze runs.
 | 11 | `slips` | `slips`, `finding_slips` — persistent recurring-mistake clusters and the finding→slip association (E-20) |
 | 12 | `renditions` | `renditions` — the render-once contrastive-playback cache, one row per finding (E-21) |
 | 13 | `ask_notes` | `ask_notes` — the ask-once deeper-note cache, one row per finding, citing ≥1 other finding (E-23) |
+| 14 | `knowledge_evidence_spill` | `knowledge_items`, append-only `evidence` (+ its no-UPDATE/no-DELETE triggers), `spill_queue`; nullable `item_id` on `cards` — the D-19 knowledge core (E-25) |
 
 Never edit a shipped migration — add the next one. `tests/migrations.test.ts`
 asserts a fresh database reaches the latest version and that re-running is a no-op.

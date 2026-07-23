@@ -1,4 +1,5 @@
 import type { Database } from "better-sqlite3";
+import { knowledgeMigration } from "./v14-knowledge";
 
 // Ordered, append-only migrations. Each `up` is a pure DDL step; the runner in
 // lib/db.ts applies pending versions in order and records them in _migrations.
@@ -442,4 +443,5 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  knowledgeMigration,
 ];

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Db } from "./db";
 import { INCLUDED_FINDING_SCOPE } from "./findings-model";
 import { schedule, FRESH_EASE, type Grade } from "./srs";
+import { recordEvidence } from "./knowledge";
 import { cardBack, type CardView, type CardBrowserView } from "./cards-view";
 
 export { cardBack, splitBack } from "./cards-view";
@@ -30,6 +31,9 @@ export interface Card {
   due: string;
   lastGrade: Grade | null;
   suspended: boolean;
+  /** The knowledge item this card's reviews are evidence for (E-25), or null until
+   *  the deep pass (E-28) attaches a validated lemma to its finding. */
+  itemId: string | null;
 }
 
 interface CardRow {
@@ -46,6 +50,7 @@ interface CardRow {
   due: string;
   last_grade: Grade | null;
   suspended: number;
+  item_id: string | null;
 }
 
 function toCard(r: CardRow): Card {
@@ -63,6 +68,7 @@ function toCard(r: CardRow): Card {
     due: r.due,
     lastGrade: r.last_grade,
     suspended: !!r.suspended,
+    itemId: r.item_id,
   };
 }
 
@@ -223,9 +229,17 @@ export function getCard(db: Db, id: string): Card | null {
 }
 
 /**
- * Grade a card: run the pure SM-2 scheduler over its current state and persist
- * the new ease/interval/repetitions, the grade, and a concrete `due` derived
- * from the interval (0 days = due now, so a lapsed card returns this session).
+ * Grade a card: run the (now FSRS-6, E-25) scheduler over its current state and
+ * persist the new ease/interval/repetitions, the grade, and a concrete `due`
+ * derived from the interval (0 days = due now, so a lapsed card returns this
+ * session). The drill is unchanged to the user — the scheduler shape and call
+ * site are identical; only the algorithm behind `schedule` moved to FSRS.
+ *
+ * A graded review is also production evidence (D-19): when the card is linked to a
+ * knowledge item (E-28 attaches one), the grade appends a cued review `evidence`
+ * row — `again` → incorrect (polarity 0), every passing grade → correct (1). Cards
+ * with no item link (all of them until E-28) simply log nothing yet. The append
+ * and the schedule update commit together.
  */
 export function gradeCard(db: Db, id: string, grade: Grade): Card {
   const card = getCard(db, id);
@@ -234,11 +248,24 @@ export function gradeCard(db: Db, id: string, grade: Grade): Card {
     { ease: card.ease, intervalDays: card.intervalDays, repetitions: card.repetitions },
     grade,
   );
-  db.prepare(
-    `UPDATE cards
-        SET ease = ?, interval_days = ?, repetitions = ?, last_grade = ?, due = datetime('now', ?)
-      WHERE id = ?`,
-  ).run(next.ease, next.intervalDays, next.repetitions, next.lastGrade, `+${next.intervalDays} days`, id);
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE cards
+          SET ease = ?, interval_days = ?, repetitions = ?, last_grade = ?, due = datetime('now', ?)
+        WHERE id = ?`,
+    ).run(next.ease, next.intervalDays, next.repetitions, next.lastGrade, `+${next.intervalDays} days`, id);
+    if (card.itemId) {
+      recordEvidence(db, {
+        itemId: card.itemId,
+        source: "finding",
+        sourceRef: card.findingId,
+        polarity: grade === "again" ? 0 : 1,
+        mode: "cued",
+        audioDerived: false,
+        sessionId: card.sessionId,
+      });
+    }
+  })();
   return getCard(db, id)!;
 }
 

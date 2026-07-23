@@ -139,7 +139,10 @@ describe("gradeCard", () => {
 
     const after = gradeCard(db, before.id, "good");
     expect(after.repetitions).toBe(1);
-    expect(after.intervalDays).toBe(1);
+    // FSRS-6 (E-25): a first Good schedules at least a day out — exact interval
+    // is the algorithm's, not SM-2's fixed 1; the drill contract is only that a
+    // pass leaves the due queue (asserted below).
+    expect(after.intervalDays).toBeGreaterThanOrEqual(1);
     expect(after.lastGrade).toBe("good");
     // due moved forward, so the card is no longer in the due queue.
     expect(listDueCards(db)).toHaveLength(0);
