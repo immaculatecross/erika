@@ -14,12 +14,15 @@
     "screenshot": "tsx scripts/screenshot.ts"
   },
   "dependencies": {
+    "@tus/file-store": "^2.1.0",
+    "@tus/server": "^2.4.2",
     "better-sqlite3": "^11.8.1",
     "framer-motion": "^11.15.0",
     "lucide-react": "^0.469.0",
     "next": "^15.5.20",
     "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "react-dom": "19.0.0",
+    "tus-js-client": "^4.3.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
