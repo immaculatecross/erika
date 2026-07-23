@@ -42,7 +42,7 @@ A day-scale dump analyzes in wall-clock minutes, not hours, without ever billing
      race you can construct, that is a blocker, not a risk. -->
 
 RESULT: done
-PR:       https://github.com/immaculatecross/erika/pull/new/feat/parallel-cascade (branch feat/parallel-cascade)
+PR:       https://github.com/immaculatecross/erika/pull/40
 Changed:
   - lib/analysis/budget.ts: reserve-before-call API — reserveSpend (atomic committed+pending<=cap check-and-insert of a pending row), finalizeReservation (pending->committed at actual cost; re-inserts if the row was swept, so a charge is never lost), releaseReservation, sweepStaleReservations (TTL 15min); monthToDateSpend/wouldExceedBudget now count committed ONLY (display + other-biller guard).
   - lib/analysis/cascade.ts: serial for-loop -> bounded pool (runPool, ANALYSIS_CONCURRENCY default 6); reserve/finalize/release wiring via reservedCall/withRepair; interval heartbeat for the whole run (HEARTBEAT_INTERVAL_MS = lease/5, cleared in finally); progress counts completions; startup sweep at job start.
