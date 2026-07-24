@@ -30,6 +30,7 @@ let resolveDrill: typeof import("@/lib/pronunciation").resolveDrill;
 let pronunciationDrill: typeof import("@/lib/pronunciation").pronunciationDrill;
 let drillKeyForFinding: typeof import("@/lib/pronunciation").drillKeyForFinding;
 let scoreAttempt: typeof import("@/lib/pronunciation").scoreAttempt;
+let recordVisit: typeof import("@/lib/pronunciation").recordVisit;
 let createFixtureScorer: typeof import("@/lib/pronunciation/fixture-scorer").createFixtureScorer;
 let ensurePhoneItem: typeof import("@/lib/knowledge/items").ensurePhoneItem;
 let getItem: typeof import("@/lib/knowledge/items").getItem;
@@ -107,6 +108,7 @@ beforeAll(async () => {
   pronunciationDrill = pron.pronunciationDrill;
   drillKeyForFinding = pron.drillKeyForFinding;
   scoreAttempt = pron.scoreAttempt;
+  recordVisit = pron.recordVisit;
   createFixtureScorer = (await import("@/lib/pronunciation/fixture-scorer")).createFixtureScorer;
   const items = await import("@/lib/knowledge/items");
   ensurePhoneItem = items.ensurePhoneItem;
@@ -189,10 +191,89 @@ describe("E-37 criterion 4 — pronunciation signal routes to the studio", () =>
     makeWav(take, 2);
     await scoreAttempt(db, createFixtureScorer("clean"), { drill, audioPath: take, audioSeconds: 2 });
 
-    // Without this, a pronunciation finding — which now has no card to grade — would
-    // sit in every day's plan forever, unspendable.
     const after = compose(db, "2026-07-24", DEFAULT_CAPS);
     expect(after.counts.finding).toBe(0);
+  });
+
+  // [F1 — the review's headline defect] A pronunciation finding gets NO card, so only
+  // the studio can retire it. Gating that on a SCORED attempt made it unspendable on the
+  // shipped default (no Azure key ⇒ `scoreAttempt` throws before writing anything), and
+  // it re-entered the plan every single day forever, silently eating a `dailyMax` slot
+  // ahead of fresh material. The spend condition must exist WITHOUT a key.
+  it("[no key] a pronunciation finding retires after a studio VISIT — it does not loop forever", () => {
+    const db = freshDb();
+    seed(db, [PRON_FINDING]);
+    const drill = listPronunciationDrills(db)[0];
+
+    // Nothing scored, nothing billed — this is exactly what the shipped default can do.
+    expect(compose(db, "2026-07-24", DEFAULT_CAPS).counts.finding).toBe(1);
+    recordVisit(db, { drillKey: drill.drillKey, findingId: drill.findingId });
+
+    // Retired the same day, and still retired on days the old code kept re-serving it.
+    for (const day of ["2026-07-24", "2026-08-15", "2027-06-01"]) {
+      expect(compose(db, day, DEFAULT_CAPS).counts.finding).toBe(0);
+    }
+    // And no money or score was invented along the way.
+    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM pronunciation_attempts").get() as { n: number }).n).toBe(0);
+  });
+
+  it("[no key] a visit is idempotent — repeating the loop bumps cycles, not rows", () => {
+    const db = freshDb();
+    seed(db, [PRON_FINDING]);
+    const drill = listPronunciationDrills(db)[0];
+
+    recordVisit(db, { drillKey: drill.drillKey, findingId: drill.findingId });
+    recordVisit(db, { drillKey: drill.drillKey, findingId: drill.findingId });
+    const visit = recordVisit(db, { drillKey: drill.drillKey, findingId: drill.findingId });
+    expect(visit.cycles).toBe(3);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM pronunciation_visits").get() as { n: number }).n).toBe(1);
+  });
+
+  it("a visit records ACTIVITY, never evidence — practising is not mastery (D-19/D-24)", () => {
+    const db = freshDb();
+    seed(db, [PRON_FINDING]);
+    const drill = listPronunciationDrills(db)[0];
+    recordVisit(db, { drillKey: drill.drillKey, findingId: drill.findingId });
+    expect((db.prepare("SELECT COUNT(*) AS n FROM evidence").get() as { n: number }).n).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM knowledge_items WHERE kind = 'phone'").get() as { n: number }).n).toBe(0);
+  });
+
+  // [F3 — the cross-category leak] Studio drills also come from `notes.pronunciation`
+  // riding on findings of OTHER categories. An unscoped attempt/visit clause let one
+  // pronunciation take silently retire a GRAMMAR correction whose own card had never
+  // been graded — the grammar lesson was lost without ever being taught.
+  it("a studio take never retires a grammar finding whose card is still ungraded", async () => {
+    const db = freshDb();
+    seed(db, [GRAMMAR_WITH_NOTE, PRON_FINDING]);
+    generateCards(db); // the grammar finding gets a card; the pronunciation one does not
+
+    const before = compose(db, "2026-07-24", DEFAULT_CAPS);
+    expect(before.counts.finding).toBe(2);
+
+    // Drill the GRAMMAR finding's pronunciation note, both ways.
+    const grammarDrill = listPronunciationDrills(db).find((d) => d.referenceText === "un problema")!;
+    const take = path.join(root, "cross-category.wav");
+    makeWav(take, 2);
+    recordVisit(db, { drillKey: grammarDrill.drillKey, findingId: grammarDrill.findingId });
+    await scoreAttempt(db, createFixtureScorer("clean"), {
+      drill: grammarDrill,
+      audioPath: take,
+      audioSeconds: 2,
+    });
+
+    // The grammar finding is still unspent: its card exists and has never been graded,
+    // so the grammar correction is still owed to the learner.
+    const card = db
+      .prepare("SELECT repetitions, suspended FROM cards WHERE finding_id = ?")
+      .get(grammarDrill.findingId) as { repetitions: number; suspended: number };
+    expect(card).toEqual({ repetitions: 0, suspended: 0 });
+    expect(compose(db, "2026-07-24", DEFAULT_CAPS).counts.finding).toBe(2);
+
+    // A visit on the PRONUNCIATION finding, which has no card, does retire that one.
+    const pronDrill = listPronunciationDrills(db).find((d) => d.referenceText === PRON_FINDING.correction)!;
+    recordVisit(db, { drillKey: pronDrill.drillKey, findingId: pronDrill.findingId });
+    expect(compose(db, "2026-07-24", DEFAULT_CAPS).counts.finding).toBe(1);
   });
 });
 

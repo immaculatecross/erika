@@ -46,6 +46,7 @@ export function DrillRecorder({
   maxSeconds,
   scoreEstimateUsd,
   onScored,
+  onCycleComplete,
 }: {
   /** The optional scoring route. Null when no scorer is configured — the loop is
    *  unchanged and no scoring control is offered. */
@@ -55,6 +56,10 @@ export function DrillRecorder({
   maxSeconds: number;
   scoreEstimateUsd: number;
   onScored: (body: unknown) => void;
+  /** Fired the first time the learner completes the whole loop — recorded a take AND
+   *  played it back. That is what the studio records as a visit, and it is the only
+   *  practice signal that exists on a server with no scorer. */
+  onCycleComplete?: () => void;
 }) {
   const reduced = usePrefersReducedMotion();
   const { status, level, elapsedMs, error, start, stop } = useRecorder();
@@ -62,6 +67,7 @@ export function DrillRecorder({
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const playerRef = useRef<HTMLAudioElement | null>(null);
+  const cycleReported = useRef(false);
 
   useEffect(() => {
     if (typeof Audio !== "undefined") playerRef.current = new Audio();
@@ -91,7 +97,13 @@ export function DrillRecorder({
     if (!audio || !take) return;
     audio.src = take.url;
     void audio.play().catch(() => {});
-  }, [take]);
+    // Heard the line, recorded, heard yourself: the loop is complete. Report it once
+    // per mounted drill — the server-side upsert is idempotent anyway.
+    if (!cycleReported.current) {
+      cycleReported.current = true;
+      onCycleComplete?.();
+    }
+  }, [take, onCycleComplete]);
 
   const sendForScore = useCallback(async () => {
     if (!scoreUrl || !take) return;

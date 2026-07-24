@@ -336,6 +336,30 @@ describe("migrations runner", () => {
     expect((db.prepare("SELECT COUNT(*) AS n FROM pronunciation_attempts").get() as { n: number }).n).toBe(1);
     db.close();
   });
+
+  it("v24 also adds pronunciation_visits — the no-key practice record (E-37)", () => {
+    const db = openDatabase(tmpDbPath());
+    const cols = (db.prepare("PRAGMA table_info(pronunciation_visits)").all() as { name: string }[]).map(
+      (c) => c.name,
+    );
+    expect(cols.sort()).toEqual(["created_at", "cycles", "drill_key", "finding_id", "last_at"]);
+    // A visit is an ACTIVITY record: it must carry no score-shaped column at all, so it
+    // can never be mistaken for a claim about how well the learner did (D-19/D-24).
+    expect(cols.some((n) => /score|snr|cost|result/i.test(n))).toBe(false);
+    // FK-free for the same reason as the attempts table: it outlives the finding.
+    expect(db.prepare("PRAGMA foreign_key_list(pronunciation_visits)").all()).toEqual([]);
+
+    // The PK makes repeating the loop an upsert, not a pile of rows.
+    db.prepare("INSERT INTO pronunciation_visits (drill_key, finding_id) VALUES ('finding:f1', 'f1')").run();
+    db.prepare(
+      `INSERT INTO pronunciation_visits (drill_key, finding_id) VALUES ('finding:f1', 'f1')
+       ON CONFLICT(drill_key) DO UPDATE SET cycles = cycles + 1`,
+    ).run();
+    const row = db.prepare("SELECT cycles FROM pronunciation_visits").get() as { cycles: number };
+    expect(row.cycles).toBe(2);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM pronunciation_visits").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
 });
 
 // E-17 criterion 3: docs/schema.md is bound to the migration ritual mechanically,

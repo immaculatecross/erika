@@ -6,6 +6,7 @@ import { BudgetExceededError } from "../lessons/billing";
 import { insertAttempt, getAttempt, type PronunciationAttempt } from "./attempts";
 import { applyAttemptToKnowledge } from "./knowledge";
 import {
+  committedPronunciationUsd,
   estimatePronunciationUsd,
   finalizePronunciationLease,
   openPronunciationLease,
@@ -104,11 +105,17 @@ export async function scoreAttempt(
   const attemptId = input.attemptId ?? randomUUID();
   const { monthlyBudgetUsd } = readSettings(db);
 
-  // (3) RESERVE BEFORE CALL. A refusal here means no request is made at all.
+  // (3) Read the take BEFORE reserving. This ordering is load-bearing, not tidiness:
+  // `readFile` can throw (ENOENT, EACCES, a concurrent `rm` of the take) without the
+  // process dying, and a throw after the reservation would leave an orphan pending
+  // `pa:` lease that the sweep COMMITS — spend recorded for a call that was never made.
+  // Doing the I/O first also makes the sweep's own premise true: the reservation really
+  // is the last thing that happens before the request leaves.
+  const audio = await readFile(input.audioPath);
+
+  // (4) RESERVE BEFORE CALL. A refusal here means no request is made at all.
   const reservation = openPronunciationLease(db, attemptId, input.audioSeconds, monthlyBudgetUsd);
   if (!reservation) throw new BudgetExceededError();
-
-  const audio = await readFile(input.audioPath);
 
   let result;
   try {
@@ -131,10 +138,17 @@ export async function scoreAttempt(
   const thresholds = pronunciationThresholds();
   const lowSnr = isTooNoisy(result.snrDb, thresholds);
 
-  // (4) Finalize the charge and store the attempt atomically — a scored take is never
+  // (5) Finalize the charge and store the attempt atomically — a scored take is never
   // recorded without its charge, nor charged without being recorded.
-  const costUsd = db.transaction((): number => {
+  db.transaction((): void => {
     const committed = finalizePronunciationLease(db, attemptId, input.audioSeconds);
+    // `committed` is 0 in exactly one case: a startup sweep fired while this call was in
+    // flight and already COMMITTED the lease, so there was nothing left to finalize. The
+    // ledger is correct and holds the charge exactly once; only the attempt row's
+    // provenance figure would under-report. Read the truth back off the ledger for this
+    // lease so `cost_usd` never says $0 for a take that really cost money. The ledger
+    // remains the authority; this column is provenance.
+    const costUsd = committed > 0 ? committed : committedPronunciationUsd(db, attemptId);
     insertAttempt(db, {
       id: attemptId,
       drillKey: input.drill.drillKey,
@@ -145,11 +159,9 @@ export async function scoreAttempt(
       result,
       lowSnr,
       scorerId: scorer.id,
-      costUsd: committed,
+      costUsd,
     });
-    return committed;
   })();
-  void costUsd;
 
   // Knowledge writes are deliberately OUTSIDE the money transaction: they are a
   // consequence of a stored attempt, and a derive failure must never unwind a charge

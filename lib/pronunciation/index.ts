@@ -46,7 +46,11 @@ export {
   getAttempt,
   listAttemptsForDrill,
   latestScorableAttempt,
+  recordVisit,
+  getVisit,
+  visitCyclesByDrill,
   type PronunciationAttempt,
+  type PronunciationVisit,
 } from "./attempts";
 export { estimatePronunciationUsd, pronunciationLeaseHash } from "./money";
 

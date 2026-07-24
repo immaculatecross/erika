@@ -2,7 +2,7 @@ import type { Db } from "../db";
 import { compose, capsFromSettings } from "../compose";
 import { localDay } from "../local-day";
 import { getItem } from "../knowledge/items";
-import { attemptCountsByDrill, latestScorableAttempt } from "./attempts";
+import { attemptCountsByDrill, latestScorableAttempt, visitCyclesByDrill } from "./attempts";
 import { listPronunciationDrills, type PronunciationDrill } from "./drills";
 import { pronunciationThresholds, UNCALIBRATED_NOTICE, type PronunciationThresholds } from "./thresholds";
 import type { KnowledgeStatus } from "../knowledge/types";
@@ -26,6 +26,9 @@ import type { KnowledgeStatus } from "../knowledge/types";
 export interface StudioDrillRow extends PronunciationDrill {
   /** How many takes have been scored for this drill. */
   attempts: number;
+  /** How many complete listen → record → hear-back loops have been worked. This is the
+   *  shipped default's history: it exists with no scorer, no money and no score. */
+  practised: number;
   /** The PronScore of the most recent scorable take, or null. */
   lastScore: number | null;
 }
@@ -59,9 +62,15 @@ export function buildStudioView(
 ): StudioView {
   const day = opts.day ?? localDay();
   const counts = attemptCountsByDrill(db);
+  const cycles = visitCyclesByDrill(db);
   const drills = listPronunciationDrills(db).map((d): StudioDrillRow => {
     const last = latestScorableAttempt(db, d.drillKey);
-    return { ...d, attempts: counts.get(d.drillKey) ?? 0, lastScore: last ? last.pronScore : null };
+    return {
+      ...d,
+      attempts: counts.get(d.drillKey) ?? 0,
+      practised: cycles.get(d.drillKey) ?? 0,
+      lastScore: last ? last.pronScore : null,
+    };
   });
 
   // The composer's own selection for today — the same plan (and the same idempotent

@@ -44,6 +44,7 @@ export function ListenButton({
   estimateUsd,
   label = "Listen",
   onPlayed,
+  onUnavailable,
 }: {
   /** GET route streaming the rendered clip. */
   audioSrc: string;
@@ -58,6 +59,10 @@ export function ListenButton({
    *  to unlock recording only AFTER the reference has been heard — Azure cannot assess
    *  two voices in one take, so listening and recording must be sequential. */
   onPlayed?: () => void;
+  /** Fired when the clip cannot be played at all (budget refusal or a failed render).
+   *  A surface that gates on `onPlayed` uses this to stop gating and say so honestly,
+   *  rather than leaving the learner stuck behind a control that cannot succeed. */
+  onUnavailable?: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [ready, setReady] = useState(exists);
@@ -80,8 +85,9 @@ export function ListenButton({
       onPlayed?.();
     } catch {
       setPhase("error");
+      onUnavailable?.();
     }
-  }, [audioSrc, onPlayed]);
+  }, [audioSrc, onPlayed, onUnavailable]);
 
   const generateAndPlay = useCallback(async () => {
     setPhase("generating");
@@ -89,30 +95,58 @@ export function ListenButton({
       const res = await fetch(renderUrl, { method: "POST" });
       if (res.status === 402) {
         setPhase("budget");
+        onUnavailable?.();
         return;
       }
       if (!res.ok) {
         setPhase("error");
+        onUnavailable?.();
         return;
       }
       setReady(true);
       await play();
     } catch {
       setPhase("error");
+      onUnavailable?.();
     }
-  }, [renderUrl, play]);
+  }, [renderUrl, play, onUnavailable]);
 
+  // A failed or refused render must never become a dead end. Both states keep a retry
+  // control — the earlier version rendered a bare line and REMOVED the button, so a
+  // surface that gates on `onPlayed` (the E-37 studio) could be stranded with no way
+  // forward — and both notify the surface through `onUnavailable` so it can unlock
+  // whatever it was gating on having heard the clip.
   if (phase === "budget") {
     return (
-      <span data-listen-budget className="text-[13px] text-secondary">
-        Monthly budget reached — raise it or wait for the month to roll over.
+      <span className="inline-flex flex-wrap items-center gap-2">
+        <span data-listen-budget className="text-[13px] text-secondary">
+          Monthly budget reached — raise it or wait for the month to roll over.
+        </span>
+        <button
+          type="button"
+          data-listen-retry
+          onClick={() => void generateAndPlay()}
+          className="text-[13px] font-medium text-ink underline underline-offset-2"
+        >
+          Try again
+        </button>
       </span>
     );
   }
   if (phase === "error") {
     return (
-      <span data-listen-error className="text-[13px] text-secondary">
-        The voice is unavailable right now.
+      <span className="inline-flex flex-wrap items-center gap-2">
+        <span data-listen-error className="text-[13px] text-secondary">
+          The voice is unavailable right now.
+        </span>
+        <button
+          type="button"
+          data-listen-retry
+          onClick={() => void (ready ? play() : generateAndPlay())}
+          className="text-[13px] font-medium text-ink underline underline-offset-2"
+        >
+          Try again
+        </button>
       </span>
     );
   }

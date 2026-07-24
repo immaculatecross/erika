@@ -320,6 +320,51 @@ describe("E-37 money path — nothing is spent before it can be", () => {
     expect(attemptCount(db)).toBe(0);
   });
 
+  // [F2 — the phantom charge] The take is read from disk BEFORE the reservation. When
+  // that read sat after it, any non-crash failure (ENOENT, EACCES, a concurrent `rm`)
+  // left an orphan pending `pa:` lease that the sweep then COMMITTED — spend recorded
+  // for a call that was never made. It also falsified the premise that justifies
+  // commit-on-sweep: that the reservation is the last thing before the request leaves.
+  it("an unreadable take bills NOTHING — not even a pending row the sweep could commit", async () => {
+    const db = freshDb();
+    const drill = seedDrill(db);
+    const scorer = createFixtureScorer("clean");
+
+    await expect(
+      scoreAttempt(db, scorer, {
+        drill,
+        audioPath: path.join(root, "does-not-exist.wav"),
+        audioSeconds: 2,
+      }),
+    ).rejects.toThrow(/ENOENT/);
+
+    expect(scorer.calls).toHaveLength(0);
+    expect(ledgerRows(db)).toHaveLength(0); // no reservation was ever taken
+    // And the sweep has nothing to commit, so no phantom charge can appear later.
+    expect(sweepStaleReservations(db, 0)).toBe(0);
+    expect(ledgerRows(db)).toHaveLength(0);
+    expect(attemptCount(db)).toBe(0);
+  });
+
+  it("the reservation is the LAST thing before the call — nothing awaits in between", async () => {
+    const db = freshDb();
+    const drill = seedDrill(db);
+    const take = takeFile();
+
+    // Between the reserve and the provider call there must be no further I/O that could
+    // fail and strand the lease. Asserted behaviourally: at the moment the provider is
+    // entered, exactly one pending row exists and it was created by THIS call — and if
+    // the file read had still been pending it could not have been.
+    let pendingAtCall = -1;
+    const scorer = createFixtureScorer("clean", {
+      onCall: () => {
+        pendingAtCall = ledgerRows(db).filter((r) => r.state === "pending").length;
+      },
+    });
+    await scoreAttempt(db, scorer, { drill, audioPath: take.path, audioSeconds: take.seconds });
+    expect(pendingAtCall).toBe(1);
+  });
+
   it("the tutor's sweep behaviour is unchanged — a non-assumed-run lease still releases", () => {
     const db = freshDb();
     // A plain cascade reservation (no `tutor:`/`pa:` prefix) must still release to $0

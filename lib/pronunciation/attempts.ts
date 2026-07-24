@@ -137,6 +137,70 @@ export function latestScorableAttempt(db: Db, drillKey: string): PronunciationAt
   return r ? toAttempt(r) : null;
 }
 
+// ---- studio visits (the no-key record of the loop) ------------------------
+//
+// A VISIT is what the studio's shipped default produces: the learner heard the correct
+// line, recorded a take, and played it back. No scorer, no score, no money — and no
+// claim about how well they did. It exists so "this correction has been practised" is
+// answerable on a server with no Azure key, which is what keeps a pronunciation finding
+// from looping in the composer forever (it no longer gets a card, so a card can never
+// retire it).
+
+export interface PronunciationVisit {
+  drillKey: string;
+  findingId: string | null;
+  /** How many complete listen → record → hear-back cycles have been logged. */
+  cycles: number;
+  createdAt: string;
+  lastAt: string;
+}
+
+interface VisitRow {
+  drill_key: string;
+  finding_id: string | null;
+  cycles: number;
+  created_at: string;
+  last_at: string;
+}
+
+/**
+ * Record one completed loop, idempotently: the first cycle inserts, every later one
+ * bumps `cycles` and `last_at` rather than adding a row. Returns the visit. Writes
+ * nothing to the ledger and touches no knowledge item — practising is not evidence
+ * about quality, and this row must never be mistaken for a score.
+ */
+export function recordVisit(db: Db, input: { drillKey: string; findingId: string | null }): PronunciationVisit {
+  db.prepare(
+    `INSERT INTO pronunciation_visits (drill_key, finding_id) VALUES (?, ?)
+     ON CONFLICT(drill_key) DO UPDATE SET cycles = cycles + 1, last_at = datetime('now')`,
+  ).run(input.drillKey, input.findingId);
+  return getVisit(db, input.drillKey)!;
+}
+
+export function getVisit(db: Db, drillKey: string): PronunciationVisit | null {
+  const r = db.prepare("SELECT * FROM pronunciation_visits WHERE drill_key = ?").get(drillKey) as
+    | VisitRow
+    | undefined;
+  return r
+    ? {
+        drillKey: r.drill_key,
+        findingId: r.finding_id,
+        cycles: r.cycles,
+        createdAt: r.created_at,
+        lastAt: r.last_at,
+      }
+    : null;
+}
+
+/** Cycles logged per drill key — the studio list's quiet "practised" column. */
+export function visitCyclesByDrill(db: Db): Map<string, number> {
+  const rows = db.prepare("SELECT drill_key, cycles FROM pronunciation_visits").all() as {
+    drill_key: string;
+    cycles: number;
+  }[];
+  return new Map(rows.map((r) => [r.drill_key, r.cycles]));
+}
+
 /** How many attempts exist per drill key — the studio list's quiet history column. */
 export function attemptCountsByDrill(db: Db): Map<string, number> {
   const rows = db

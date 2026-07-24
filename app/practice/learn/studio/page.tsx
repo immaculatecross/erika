@@ -59,8 +59,13 @@ export default function StudioListPage() {
     <div className="mx-auto max-w-2xl p-8">
       {back}
       <h1 className="mb-2 text-[34px] font-bold tracking-tight">Studio</h1>
-      <p className="mb-6 text-[17px] text-secondary">
-        Hear a line, then say it back. You get a score for each word and each sound.
+      {/* The subtitle states only what this server can actually do. The per-word/per-sound
+          sentence is a promise the default install cannot keep, so it appears only when a
+          scorer is configured (D-19). */}
+      <p data-studio-subtitle className="mb-6 text-[17px] text-secondary">
+        {view.scoringAvailable
+          ? "Hear a line, then say it back. You get a score for each word and each sound."
+          : "Hear a line, then say it back, and listen to the difference."}
       </p>
 
       {!view.scoringAvailable && (
@@ -117,8 +122,15 @@ export default function StudioListPage() {
                     {d.referenceText}
                   </span>
                 </span>
-                <span className="tabular shrink-0 text-[15px] text-secondary">
-                  {d.lastScore === null ? "Not tried" : `Last ${Math.round(d.lastScore)}`}
+                {/* History states only what happened. A score when one was measured;
+                    otherwise the plain count of loops worked — which is the only thing
+                    the default install can honestly say. */}
+                <span data-drill-history className="tabular shrink-0 text-[15px] text-secondary">
+                  {d.lastScore !== null
+                    ? `Last ${Math.round(d.lastScore)}`
+                    : d.practised > 0
+                      ? `Said ${d.practised}×`
+                      : "Not tried"}
                 </span>
               </Link>
             </motion.li>

@@ -43,9 +43,13 @@ export function whatToListenFor(drill: Pick<PronunciationDrill, "suspect">): Dri
       text: `Erika noticed: ${suspect}. Listen for that, then say the line back.`,
     };
   }
+  // Deliberately names segmental things only — vowels and double consonants. "Rhythm"
+  // and "intonation" are prosody words, and for it-IT nothing measures prosody at all;
+  // even as a qualitative steer they invite the reader to expect feedback the product
+  // cannot give, so the studio's copy stays off them entirely.
   return {
     basis: "general",
-    text: "Play the line, listen to the rhythm and the vowels, then say it back and compare.",
+    text: "Play the line, listen to the vowels and the double consonants, then say it back and compare.",
   };
 }
 

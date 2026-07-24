@@ -34,11 +34,35 @@ import type { Migration } from "./index";
 //       once, `pa:<attempt id>`). `scorer_id` is what keeps a fixture-sourced score
 //       from ever being mistaken for a real one.
 //
+// `pronunciation_visits` — one row per drill the learner has actually WORKED, with no
+//   scorer involved and no money at all. This is the shipped default's record of the
+//   loop: hear the correct line → record → hear yourself back. It exists because the
+//   studio's core experience does not require an Azure key, so the composer's notion of
+//   "this correction has been practised" must not require one either. Without it a
+//   pronunciation finding — which no longer gets a card — could never be spent on the
+//   default path and would re-enter the daily plan forever.
+//
+//   Keyed by `drill_key` so completing the loop again is an idempotent upsert (it moves
+//   `last_at` and bumps `cycles`, it does not accumulate rows). `finding_id` is nullable
+//   and FK-free for the same reason as the attempts table: a visit is the learner's own
+//   history and outlives the finding that prompted it. There are no scores here by
+//   construction — a visit is the record of an activity, never a claim about quality.
+//
 // Additive only; no shipped migration is edited, and no existing table is touched.
 export const pronunciationAttemptsMigration: Migration = {
   version: 24,
   name: "pronunciation_attempts",
   up: (db) => {
+    db.exec(`
+      CREATE TABLE pronunciation_visits (
+        drill_key   TEXT PRIMARY KEY,
+        finding_id  TEXT,
+        cycles      INTEGER NOT NULL DEFAULT 1,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        last_at     TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_pronunciation_visits_finding ON pronunciation_visits(finding_id);
+    `);
     db.exec(`
       CREATE TABLE pronunciation_attempts (
         id                  TEXT PRIMARY KEY,

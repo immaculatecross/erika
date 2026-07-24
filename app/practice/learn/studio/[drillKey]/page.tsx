@@ -55,6 +55,11 @@ export default function StudioDrillPage({ params }: { params: Promise<{ drillKey
   const [status, setStatus] = useState<DrillStatus | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [heard, setHeard] = useState(false);
+  // The rendition could not be played at all (budget refusal or a failed render). The
+  // learner must not be stranded behind a control that cannot succeed, so recording
+  // unlocks and the copy says why — they can still record and listen back, which is the
+  // larger half of the loop.
+  const [renditionUnavailable, setRenditionUnavailable] = useState(false);
   const [scored, setScored] = useState<ScoredBody | null>(null);
 
   useEffect(() => {
@@ -69,6 +74,17 @@ export default function StudioDrillPage({ params }: { params: Promise<{ drillKey
   }, [drillKey]);
 
   const onScored = useCallback((body: unknown) => setScored(body as ScoredBody), []);
+
+  // The learner completed the loop: heard the line, recorded, heard themselves. Record
+  // it as a studio VISIT — no score, no money, no upload. This is what lets the composer
+  // retire a pronunciation finding on a server with no scorer; without it the finding
+  // would re-enter the plan every day forever. Fire-and-forget: a failed POST must never
+  // interrupt practice, and the next cycle re-reports it.
+  const onCycleComplete = useCallback(() => {
+    void fetch(`/api/pronunciation/${encodeURIComponent(drillKey)}/visit`, { method: "POST" }).catch(
+      () => {},
+    );
+  }, [drillKey]);
 
   const back = (
     <div className="mb-6">
@@ -136,8 +152,15 @@ export default function StudioDrillPage({ params }: { params: Promise<{ drillKey
                 estimateUsd={status.renditionEstimateUsd}
                 label="Listen"
                 onPlayed={() => setHeard(true)}
+                onUnavailable={() => setRenditionUnavailable(true)}
               />
             </div>
+          )}
+          {renditionUnavailable && (
+            <p data-drill-rendition-unavailable className="text-[15px] text-secondary">
+              The line could not be played just now. You can still record your take and listen back
+              — say it as you think it should sound, and try the rendition again later.
+            </p>
           )}
         </motion.section>
 
@@ -146,10 +169,11 @@ export default function StudioDrillPage({ params }: { params: Promise<{ drillKey
             <span className="text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">Your take</span>
             <DrillRecorder
               scoreUrl={status.scoringAvailable ? `/api/pronunciation/${encodeURIComponent(drillKey)}` : null}
-              enabled={heard}
+              enabled={heard || renditionUnavailable}
               maxSeconds={status.maxSeconds}
               scoreEstimateUsd={status.scoreEstimateUsd}
               onScored={onScored}
+              onCycleComplete={onCycleComplete}
             />
             <p data-drill-unscored-notice className="text-[13px] leading-[1.5] text-secondary">
               {status.scoringAvailable

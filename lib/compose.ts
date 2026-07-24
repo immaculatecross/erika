@@ -284,12 +284,27 @@ function readReviews(db: Db): ReviewCandidate[] {
  * Included, non-tombstoned findings the user has never drilled — fresh corrections
  * from their own speech, newest first.
  *
- * "Drilled" depends on where the finding's practice actually lives. A grammar or
- * vocabulary finding is spent by a graded or suspended CARD. A PRONUNCIATION finding
- * has no card at all since E-37 (a typed cloze cannot test a mispronunciation), so it
- * is spent by a scored studio ATTEMPT instead — without this it would sit in every
- * day's plan forever, unspendable. The attempt clause is a no-op for every other
- * category, since nothing else produces attempts.
+ * "Drilled" depends on where the finding's practice actually lives, and the two
+ * mechanisms are deliberately kept apart:
+ *
+ *   * EVERY finding is spent by a graded or suspended CARD, exactly as before.
+ *   * A **pronunciation-category** finding gets no card at all since E-37 (a typed
+ *     cloze cannot test a mispronunciation), so a card can never retire it. It is spent
+ *     instead by working it in the studio: a **visit** (the shipped default — hear the
+ *     correct line, record, hear yourself back; no key, no score, no money) or a scored
+ *     **attempt** where a scorer happens to be configured.
+ *
+ * The studio clause is scoped to `f.category = 'pronunciation'` on purpose. Studio
+ * drills also come from the `notes.pronunciation` note riding on findings of OTHER
+ * categories, so an unscoped clause would let one pronunciation take silently retire a
+ * grammar correction whose own card had never been graded — losing the grammar lesson.
+ * The rule is therefore: a studio visit or attempt spends a finding only where a card
+ * cannot.
+ *
+ * The visit half is what makes this true on the shipped default. Gating on a scored
+ * attempt alone would make a pronunciation finding unspendable without an Azure key,
+ * and it would re-enter the plan every day forever, silently consuming a `dailyMax`
+ * slot ahead of fresh material.
  */
 function readUnspentFindings(db: Db): FindingCandidate[] {
   const rows = db
@@ -299,7 +314,13 @@ function readUnspentFindings(db: Db): FindingCandidate[] {
         WHERE ${INCLUDED_FINDING_SCOPE}
           AND NOT EXISTS (SELECT 1 FROM deleted_findings d WHERE d.finding_id = f.id)
           AND NOT EXISTS (SELECT 1 FROM cards c WHERE c.finding_id = f.id AND (c.repetitions > 0 OR c.suspended = 1))
-          AND NOT EXISTS (SELECT 1 FROM pronunciation_attempts pa WHERE pa.finding_id = f.id)
+          AND (
+            f.category <> 'pronunciation'
+            OR (
+              NOT EXISTS (SELECT 1 FROM pronunciation_visits pv WHERE pv.finding_id = f.id)
+              AND NOT EXISTS (SELECT 1 FROM pronunciation_attempts pa WHERE pa.finding_id = f.id)
+            )
+          )
         ORDER BY f.created_at DESC, f.id`,
     )
     .all() as { id: string }[];

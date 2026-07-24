@@ -97,6 +97,20 @@ export function finalizePronunciationLease(
   })();
 }
 
+/** Total USD actually COMMITTED against one assessment's lease. Used as a fallback
+ *  provenance figure when `finalizePronunciationLease` finds nothing left to finalize
+ *  because a startup sweep already committed the lease mid-call: the ledger holds the
+ *  charge exactly once, and this reads it back so the stored attempt cannot report $0
+ *  for a take that really cost money. The ledger stays the authority. */
+export function committedPronunciationUsd(db: Db, attemptId: string): number {
+  const row = db
+    .prepare(
+      "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM spend_ledger WHERE content_hash = ? AND state = 'committed'",
+    )
+    .get(pronunciationLeaseHash(attemptId)) as { total: number };
+  return row.total;
+}
+
 /** Release an open lease without charging — the no-response path (missing key,
  *  network failure, a 4xx Azure never billed). Idempotent. */
 export function releasePronunciationLease(db: Db, attemptId: string): void {

@@ -19,6 +19,7 @@ let root: string;
 let studioGET: typeof import("@/app/api/pronunciation/route").GET;
 let drillGET: typeof import("@/app/api/pronunciation/[drillKey]/route").GET;
 let drillPOST: typeof import("@/app/api/pronunciation/[drillKey]/route").POST;
+let visitPOST: typeof import("@/app/api/pronunciation/[drillKey]/visit/route").POST;
 let getDb: typeof import("@/lib/db").getDb;
 let createSession: typeof import("@/lib/sessions").createSession;
 let persistSegmentFindings: typeof import("@/lib/analysis/findings").persistSegmentFindings;
@@ -36,6 +37,7 @@ beforeAll(async () => {
   const drill = await import("@/app/api/pronunciation/[drillKey]/route");
   drillGET = drill.GET;
   drillPOST = drill.POST;
+  visitPOST = (await import("@/app/api/pronunciation/[drillKey]/visit/route")).POST;
   getDb = (await import("@/lib/db")).getDb;
   createSession = (await import("@/lib/sessions")).createSession;
   persistSegmentFindings = (await import("@/lib/analysis/findings")).persistSegmentFindings;
@@ -158,6 +160,36 @@ describe("POST /api/pronunciation/[drillKey] — the optional scoring layer", ()
     expect((getDb().prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(0);
     expect((getDb().prepare("SELECT COUNT(*) AS n FROM pronunciation_attempts").get() as { n: number }).n).toBe(0);
     expect(fs.existsSync(path.join(root, "pronunciation"))).toBe(false);
+  });
+});
+
+describe("POST /api/pronunciation/[drillKey]/visit — the no-key practice record", () => {
+  it("records a completed loop with no key, no money and no score", async () => {
+    const findingId = seedPronFinding();
+    const key = drillKeyForFinding(findingId);
+    const res = await visitPOST(new Request("http://localhost", { method: "POST" }), ctx(key));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { drillKey: string; cycles: number };
+    expect(body.drillKey).toBe(key);
+    expect(body.cycles).toBe(1);
+
+    // Nothing billed, nothing scored, nothing claimed about how well it went.
+    expect((getDb().prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(0);
+    expect((getDb().prepare("SELECT COUNT(*) AS n FROM pronunciation_attempts").get() as { n: number }).n).toBe(0);
+    expect((getDb().prepare("SELECT COUNT(*) AS n FROM evidence").get() as { n: number }).n).toBe(0);
+
+    // Repeating the loop is idempotent.
+    await visitPOST(new Request("http://localhost", { method: "POST" }), ctx(key));
+    const again = (await (
+      await visitPOST(new Request("http://localhost", { method: "POST" }), ctx(key))
+    ).json()) as { cycles: number };
+    expect(again.cycles).toBe(3);
+  });
+
+  it("refuses a key that is not a real drill, so no row can be minted for one", async () => {
+    const res = await visitPOST(new Request("http://localhost", { method: "POST" }), ctx("finding:nope"));
+    expect(res.status).toBe(404);
+    expect((await res.json()).error.code).toBe("drill_not_found");
   });
 });
 
