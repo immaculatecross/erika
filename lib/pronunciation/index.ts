@@ -21,11 +21,18 @@ export {
 } from "./thresholds";
 export {
   listPronunciationDrills,
+  resolveDrill,
   pronunciationDrill,
   isPronunciationFinding,
   drillKeyForFinding,
+  drillKeyOf,
+  parseDrillKey,
+  findingDrillSource,
+  DRILL_SOURCES,
   type PronunciationDrill,
+  type DrillSource,
 } from "./drills";
+export { whatToListenFor, UNSCORED_NOTICE, type DrillGuidance } from "./guidance";
 export { buildResultView, attemptPassed, type ResultView, type WordCell, type PhonemeCell } from "./view";
 export { buildStudioView, phoneSymbolOf, type StudioView } from "./studio-view";
 export {

@@ -43,6 +43,7 @@ export function ListenButton({
   exists,
   estimateUsd,
   label = "Listen",
+  onPlayed,
 }: {
   /** GET route streaming the rendered clip. */
   audioSrc: string;
@@ -53,6 +54,10 @@ export function ListenButton({
   /** Worst-case render cost, shown before the render exists. */
   estimateUsd: number;
   label?: string;
+  /** Fired when a clip has finished playing. The pronunciation studio (E-37) uses it
+   *  to unlock recording only AFTER the reference has been heard — Azure cannot assess
+   *  two voices in one take, so listening and recording must be sequential. */
+  onPlayed?: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [ready, setReady] = useState(exists);
@@ -72,10 +77,11 @@ export function ListenButton({
       setPhase("playing");
       await playClip(audio, audioSrc);
       setPhase("idle");
+      onPlayed?.();
     } catch {
       setPhase("error");
     }
-  }, [audioSrc]);
+  }, [audioSrc, onPlayed]);
 
   const generateAndPlay = useCallback(async () => {
     setPhase("generating");
