@@ -39,7 +39,7 @@ D-18 lands across the three surfaces that show the user their own errors, so a m
      specs, D-14) / Risks / Blocker. Verify against DISPOSABLE state. -->
 
 RESULT: done
-PR:       https://github.com/immaculatecross/erika/pull/new/feat/correction-forward (branch feat/correction-forward)
+PR:       https://github.com/immaculatecross/erika/pull/42
 Changed:
   - lib/cards-view.ts: added the pure correction-forward derivation — `deriveFront` (a context gap: blank the changed span of the correction, keeping correct context; degrade to a `____ · category` cue when no localized change) and `deriveFaces`; new `CardView`/`CardBrowserView`/`CardFaces` shapes ({front, correction, why, error}); kept `cardBack`/`splitBack` for the stored column.
   - lib/cards.ts: display views now re-derive faces from each card's JOINED finding at read time — `listDueCardViews`/`listCardBrowserViews`/`getCardView`/`listCardsCsv`; replaced the old Card→view mappers. Storage (front=quote, back=cardBack) and all writes (generateCards, createCardForFinding pin) are byte-unchanged — no migration, no backfill, existing cards flip automatically.
