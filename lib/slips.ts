@@ -239,9 +239,9 @@ function analysedSessionDates(db: Db): string[] {
   return listAnalysedSessions(db).map((s) => s.createdAt);
 }
 
-// [RETRO-003 T3] The time-aware "positive event" green signal — reading the
-// timestamped `evidence` log so a drill-then-recur fossil stays active — lives in
-// lib/slip-events.ts (keeps this file under the 500-line hook).
+// [RETRO-003 T3] The time-aware "positive event" green signal — reading the passing
+// drill grade's timestamp (`due - interval_days`) so a drill-then-recur fossil stays
+// active — lives in lib/slip-events.ts (keeps this file under the 500-line hook).
 
 /**
  * Materialize the clustering: upsert one `slips` row per cluster (keyed by the

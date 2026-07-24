@@ -8,8 +8,6 @@ import { upsertSegment } from "@/lib/segments";
 import { persistSegmentFindings, type Category } from "@/lib/analysis/findings";
 import { enqueueAnalysis, type AnalysisState } from "@/lib/analysis/cascade";
 import { generateCards, gradeCard, listDueCards } from "@/lib/cards";
-import { recordEvidence } from "@/lib/knowledge";
-import { ensureLemmaItem } from "@/lib/knowledge/items";
 import { recordCompletion } from "@/lib/lessons/mastery";
 import { buildFocusPayload } from "@/lib/focus";
 import {
@@ -165,43 +163,25 @@ function seed(
   db.prepare("UPDATE analysis_jobs SET state = ?, progress = 1 WHERE id = ?").run(state, job.id);
 }
 
-/** Link every card to a knowledge item so a passing grade writes cued production
- *  evidence — [T3] green reads the timestamped `evidence` log, not the card snapshot,
- *  so a drill must be knowledge-linked to register (E-25/D-19). */
-function linkCardsToItem(db: Db): void {
-  ensureLemmaItem(db, "casa", "NOUN");
-  db.prepare("UPDATE cards SET item_id = 'lemma:casa#NOUN' WHERE item_id IS NULL").run();
-}
-
-/** [T3] Earn a positive drill event for a slip: card every finding, link it to a
- *  knowledge item, and grade it `good` — a passing grade appends a cued positive
- *  `evidence` row (source_ref = the finding), the signal green now reads. */
+/** [T3] A REAL passing drill: card every finding and grade each `good` through the
+ *  actual `gradeCard` path — the only way production writes the green signal, which
+ *  lib/slip-events.ts reads as the card's `due - interval_days` grade instant. The
+ *  grade lands at wall-clock now, so it postdates the past-dated seeded occurrences. */
 function drillClean(db: Db): void {
   generateCards(db);
-  linkCardsToItem(db);
   for (const c of listDueCards(db)) gradeCard(db, c.id, "good");
 }
 
-/** The finding ids of one seeded session, in insertion order. */
-function findingIds(db: Db, sessionId: string): string[] {
-  return (
-    db.prepare("SELECT id FROM findings WHERE session_id = ? ORDER BY start_ms").all(sessionId) as { id: string }[]
-  ).map((r) => r.id);
-}
-
-/** Record a positive cued production event for a finding at a controlled time — the
- *  [T3] time-aware green signal (postdates-the-last-recurrence is what matters). */
-function positiveEventFor(db: Db, findingId: string, at: string): void {
-  ensureLemmaItem(db, "casa", "NOUN");
-  recordEvidence(db, {
-    itemId: "lemma:casa#NOUN",
-    source: "finding",
-    sourceRef: findingId,
-    polarity: 1,
-    mode: "cued",
-    audioDerived: false,
-    createdAt: at,
-  });
+/** [T3] Drive a REAL passing grade for every due card, then DATE that grade instant at
+ *  `at` — exactly as `seed()` dates a session's `created_at`. The grade itself goes
+ *  through `gradeCard` (no hand-inserted evidence, no fake item link); only its clock
+ *  is set, by writing `due = at + interval_days` so slip-events reads `at` back. */
+function drillGoodAt(db: Db, at: string): void {
+  generateCards(db);
+  for (const c of listDueCards(db)) {
+    gradeCard(db, c.id, "good");
+    db.prepare("UPDATE cards SET due = datetime(?, '+' || interval_days || ' days') WHERE id = ?").run(at, c.id);
+  }
 }
 
 describe("materializeSlips (criterion 1 persistence)", () => {
@@ -275,16 +255,15 @@ describe("listSlips + state from later analysed sessions (criterion 2 data path)
     expect(listSlips(db)[0].standing.state).toBe("active");
     expect(resolvedSlipCount(db)).toBe(0);
 
-    // A failed drill (all `again`) is a lapse — a NEGATIVE evidence row, not a positive
-    // one — still not green.
+    // A failed drill (all `again`) is a lapse — `last_grade` leaves good/easy, so the
+    // card carries no passing grade — still not green.
     generateCards(db);
-    linkCardsToItem(db);
     for (const c of listDueCards(db)) gradeCard(db, c.id, "again");
     expect(listSlips(db)[0].standing.state).toBe("active");
     expect(resolvedSlipCount(db)).toBe(0);
 
-    // A passing drill appends a positive cued evidence row (postdating every
-    // occurrence) — the event that unlocks green.
+    // A passing drill (grade instant now, postdating every occurrence) is the event
+    // that unlocks green.
     for (const c of listDueCards(db)) gradeCard(db, c.id, "good");
     expect(listSlips(db)[0].standing.state).toBe("resolved");
     expect(resolvedSlipCount(db)).toBe(1);
@@ -297,9 +276,8 @@ describe("listSlips + state from later analysed sessions (criterion 2 data path)
   it("a slip drilled BEFORE it recurred stays active through clean sessions (fossil)", () => {
     const db = freshDb();
     seed(db, "occ1", "2026-07-01", [["il congiuntivo", "grammar"]]);
-    const [firstFinding] = findingIds(db, "occ1");
-    // Drilled correctly on 2 Jul — BEFORE the recurrence.
-    positiveEventFor(db, firstFinding, "2026-07-02 09:00:00");
+    // A REAL passing drill through `gradeCard`, dated 2 Jul — BEFORE the recurrence.
+    drillGoodAt(db, "2026-07-02 09:00:00");
 
     // The SAME slip recurs on 5 Jul (a new occurrence), then three clean sessions.
     seed(db, "occ2", "2026-07-05", [["il congiuntivo", "grammar"]]);
@@ -308,7 +286,7 @@ describe("listSlips + state from later analysed sessions (criterion 2 data path)
     seed(db, "clean3", "2026-07-08", [], "done");
     materializeSlips(db);
 
-    // Last occurrence is 5 Jul; the only positive event is 2 Jul, BEFORE it. Three
+    // Last occurrence is 5 Jul; the only passing grade is 2 Jul, BEFORE it. Three
     // clean sessions since, but the fossil has NOT been re-produced correctly → active.
     const slip = listSlips(db)[0];
     expect(slip.occurrences).toBe(2);
@@ -317,9 +295,8 @@ describe("listSlips + state from later analysed sessions (criterion 2 data path)
     expect(resolvedSlipCount(db)).toBe(0);
     expect(getSlipDossier(db, slip.id)!.standing.state).toBe("active");
 
-    // A positive event AFTER the recurrence finally resolves it.
-    const [recurFinding] = findingIds(db, "occ2");
-    positiveEventFor(db, recurFinding, "2026-07-09 09:00:00");
+    // A REAL passing drill AFTER the recurrence finally resolves it.
+    drillGoodAt(db, "2026-07-09 09:00:00");
     expect(listSlips(db)[0].standing.state).toBe("resolved");
     expect(resolvedSlipCount(db)).toBe(1);
     expect(getSlipDossier(db, listSlips(db)[0].id)!.standing.state).toBe("resolved");

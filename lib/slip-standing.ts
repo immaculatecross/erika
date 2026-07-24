@@ -35,12 +35,13 @@ export interface SlipStanding {
  * fixed — the speaker may just have stopped using the construction. So a clean
  * streak with `hasPositiveEvent === false` stays `active` however long it runs;
  * green only attaches once the correct form has been produced or drilled correctly.
- * [T3] the DB glue supplies this flag from the TIMESTAMPED `evidence` log and only
- * for an event whose timestamp POSTDATES this slip's last occurrence — so a slip
- * drilled correctly and THEN heard again (a fossil) stays active until it is
- * re-produced correctly after the recurrence, which the old `cards.last_grade`
- * snapshot could not distinguish. Default `true` keeps the pure-clustering call sites
- * and their tests unchanged; production always passes the real, time-aware value.
+ * [T3] the DB glue supplies this flag from the TIMESTAMPED passing drill grade — the
+ * instant `gradeCard` records as `due - interval_days` (lib/slip-events.ts) — and only
+ * for a grade whose timestamp POSTDATES this slip's last occurrence, so a slip drilled
+ * correctly and THEN heard again (a fossil) stays active until it is re-produced
+ * correctly after the recurrence, which a bare `cards.last_grade` snapshot could not
+ * distinguish. Default `true` keeps the pure-clustering call sites and their tests
+ * unchanged; production always passes the real, time-aware value.
  */
 export function computeSlipStanding(
   lastOccurrenceAt: string,
