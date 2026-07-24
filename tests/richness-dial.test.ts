@@ -131,7 +131,7 @@ describe("short-capture full-deep path (criterion 1)", () => {
   });
 
   it("isFullDeepSession is the shared short/long decision over total speech", () => {
-    const segs = (mins: number) => [{ id: "x", sessionId: "s", idx: 0, startMs: 0, endMs: mins * 60_000, durationMs: mins * 60_000, contentHash: "h" }];
+    const segs = (mins: number) => [{ id: "x", sessionId: "s", idx: 0, startMs: 0, endMs: mins * 60_000, durationMs: mins * 60_000, contentHash: "h", speakerScore: null, isUser: null }];
     expect(isFullDeepSession(segs(30), 30)).toBe(true); // ≤ threshold
     expect(isFullDeepSession(segs(31), 30)).toBe(false); // over
     expect(deepFullMaxMinutes(undefined)).toBe(30); // stated default

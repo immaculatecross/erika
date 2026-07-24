@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, UserX } from "lucide-react";
 import { JobStateBadge } from "@/components/job-state-badge";
 import { IngestStatus } from "@/components/ingest-status";
 import { AnalysisPanel } from "@/components/analysis-panel";
@@ -40,6 +40,8 @@ export default function SessionDetailPage() {
   const router = useRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [deleting, setDeleting] = useState(false);
+  const [excluded, setExcluded] = useState(false);
+  const [excludeSaving, setExcludeSaving] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -72,9 +74,32 @@ export default function SessionDetailPage() {
   useEffect(() => {
     fetch(`/api/sessions/${id}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((session: Session) => setState({ kind: "ready", session }))
+      .then((session: Session) => {
+        setState({ kind: "ready", session });
+        setExcluded(session.excludeFromEvidence);
+      })
       .catch(() => setState({ kind: "missing" }));
   }, [id]);
+
+  // The manual "this recording isn't me" toggle (E-36, D-22). Optimistic and calm
+  // (D-24): flip immediately, POST, and revert only if the write fails.
+  async function toggleExcluded() {
+    const next = !excluded;
+    setExcluded(next);
+    setExcludeSaving(true);
+    try {
+      const res = await fetch(`/api/sessions/${id}/exclude`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ excluded: next }),
+      });
+      if (!res.ok) setExcluded(!next);
+    } catch {
+      setExcluded(!next);
+    } finally {
+      setExcludeSaving(false);
+    }
+  }
 
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("t");
@@ -195,6 +220,35 @@ export default function SessionDetailPage() {
               selectedFindingId={selectedFindingId}
               onSelectFinding={selectFinding}
             />
+          </div>
+
+          <div className="flex items-start gap-4 rounded-card bg-card p-6 shadow-card">
+            <UserX size={22} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0 text-secondary" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[15px] font-medium text-ink">This recording isn&rsquo;t me</p>
+              <p className="mt-0.5 text-[13px] text-secondary">
+                When this recording is analyzed, Erika won&rsquo;t learn your vocabulary from it —
+                useful when it&rsquo;s someone else speaking. Applies going forward; anything already
+                learned isn&rsquo;t removed.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={excluded}
+              aria-label="Exclude this recording from learning"
+              onClick={toggleExcluded}
+              disabled={excludeSaving}
+              className={`relative mt-0.5 h-[31px] w-[51px] shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                excluded ? "bg-ink" : "bg-hairline"
+              }`}
+            >
+              <span
+                className={`absolute top-[2px] h-[27px] w-[27px] rounded-full bg-card shadow-sm transition-transform ${
+                  excluded ? "translate-x-[22px]" : "translate-x-[2px]"
+                }`}
+              />
+            </button>
           </div>
 
           <div>

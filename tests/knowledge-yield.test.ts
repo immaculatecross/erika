@@ -34,7 +34,7 @@ describe("yield counters", () => {
     const db = freshDb();
     createSession(db);
     // 'casa'/NOUN and 'bello'/ADJ are attested by morph-it; 'zzzfoo' is not.
-    const written = recordProducedLemmas(db, "s1", [
+    const written = recordProducedLemmas(db, "s1", "hash-yield", [
       { lemma: "casa", pos: "NOUN" },
       { lemma: "bello", pos: "ADJ" },
       { lemma: "zzzfoo", pos: "NOUN" },

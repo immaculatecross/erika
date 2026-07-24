@@ -92,9 +92,11 @@ describe("crash-resume never trusts a torn artifact", () => {
     ws = workspace();
     const a = ws.seed(TWO_THREE_FOUR);
 
-    // Real run up to the rendering boundary: normalize + both segments on disk.
+    // Real run up to the rendering boundary: normalize + both segments on disk. The
+    // next stage is `attributing` (E-36), a no-op here — no embedder is injected — so
+    // the resume below still crashes on the render (atempo) call, not before it.
     const staged = await processJob(ws.db, a.jobId, { stopAfter: "segmenting" });
-    expect(staged.stage).toBe("rendering");
+    expect(staged.stage).toBe("attributing");
     const hash0 = listSegments(ws.db, a.sessionId)[0].contentHash;
     const cachePath = renditionCachePath(hash0, 1.5);
 

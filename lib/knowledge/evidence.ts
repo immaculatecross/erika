@@ -90,6 +90,50 @@ export function recordEvidence(db: Db, input: EvidenceInput & { createdAt?: stri
 }
 
 /**
+ * Append one PRODUCED-LEMMA positive (E-28) idempotently (E-36, closes a RETRO-002
+ * item). Produced positives are minted per (session, segment, lemma) once, ever: the
+ * `sourceRef` is that stable idempotency key and a partial UNIQUE index
+ * (idx_evidence_produced_idem) enforces it, so re-running a deep-listen on the same
+ * segment re-emits the same key and this write is a no-op. It uses `INSERT OR IGNORE`
+ * — append-only-COMPATIBLE (a skipped insert, never the UPDATE/DELETE the v14 triggers
+ * reject). Returns whether a NEW row was actually appended (false = deduped), so the
+ * caller keeps its yield counters honest. The item cache is rebuilt only on a real
+ * append. Refuses an unvalidated lemma id and an unknown item, exactly like
+ * `recordEvidence` — the same morph-it gate, enforced here too.
+ */
+export function recordProducedEvidence(
+  db: Db,
+  input: { itemId: string; sessionId: string; sourceRef: string },
+): boolean {
+  const parsed = parseItemId(input.itemId);
+  if (parsed.kind === "lemma") {
+    if (!parsed.lemma || !parsed.pos || !attestsLemma(parsed.lemma, parsed.pos)) {
+      throw new UnvalidatedLemmaError(parsed.lemma ?? input.itemId, parsed.pos ?? "?");
+    }
+  }
+  if (!itemExists(db, input.itemId)) {
+    throw new Error(`No knowledge item ${input.itemId} to attach evidence to.`);
+  }
+  const weight = evidenceWeight("spontaneous", true); // discounted spontaneous-correct
+  const id = randomUUID();
+  let appended = false;
+  const tx = db.transaction(() => {
+    const info = db
+      .prepare(
+        `INSERT OR IGNORE INTO evidence (id, item_id, source, source_ref, polarity, mode, weight, session_id)
+         VALUES (?, ?, 'finding', ?, 1, 'spontaneous', ?, ?)`,
+      )
+      .run(id, input.itemId, input.sourceRef, weight, input.sessionId);
+    if (info.changes > 0) {
+      appended = true;
+      rebuildItem(db, input.itemId);
+    }
+  });
+  tx();
+  return appended;
+}
+
+/**
  * Bridge one finding to an evidence row on `itemId`. The finding is read through
  * the E-17 included-finding scope ONLY — a finding outside it (its audio carries no
  * complete analysis witness) is refused, never quietly written. Findings come from

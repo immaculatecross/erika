@@ -34,4 +34,8 @@ export interface Session {
   durationSeconds: number;
   createdAt: string;
   jobState: IngestState;
+  /** The manual "this recording isn't me — don't learn from it" flag (E-36, D-22).
+   *  An excluded session mints NO produced-lemma positive evidence regardless of the
+   *  acoustic verdict; findings/corrections are unaffected. Defaults false. */
+  excludeFromEvidence: boolean;
 }

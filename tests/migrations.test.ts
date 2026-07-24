@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { openDatabase, runMigrations } from "@/lib/db";
@@ -176,6 +177,51 @@ describe("migrations runner", () => {
     db.prepare("INSERT INTO enrollment_takes (id, path, format, duration_seconds, size_bytes) VALUES ('e1','/d/e1.wav','wav',45,1000)").run();
     db.prepare("INSERT INTO enrollment_takes (id, path, format, duration_seconds, size_bytes) VALUES ('e2','/d/e2.wav','wav',48,1100)").run();
     expect((db.prepare("SELECT COUNT(*) AS n FROM enrollment_takes").get() as { n: number }).n).toBe(2);
+    db.close();
+  });
+
+  it("v23 adds the speaker verdict, the exclusion flag, the reference cache, and the produced idempotency index (E-36)", () => {
+    const db = openDatabase(tmpDbPath());
+
+    // segments gains a nullable per-segment verdict.
+    const segCols = db.prepare("PRAGMA table_info(segments)").all() as { name: string; notnull: number }[];
+    for (const c of ["speaker_score", "is_user"]) {
+      const col = segCols.find((x) => x.name === c);
+      expect(col).toBeDefined();
+      expect(col!.notnull).toBe(0); // nullable ⇒ NULL = unattributed = treated as the user
+    }
+
+    // sessions gains the manual "not me" flag, default 0.
+    const sessCol = (db.prepare("PRAGMA table_info(sessions)").all() as { name: string; dflt_value: string | null }[]).find(
+      (c) => c.name === "exclude_from_evidence",
+    );
+    expect(sessCol).toBeDefined();
+    expect(String(sessCol!.dflt_value)).toContain("0");
+
+    // the reference cache, keyed by (enrollment_id, embedder_id).
+    const refCols = (db.prepare("PRAGMA table_info(speaker_references)").all() as { name: string; pk: number }[]);
+    expect(refCols.map((c) => c.name)).toEqual(
+      expect.arrayContaining(["enrollment_id", "embedder_id", "dim", "vector", "window_count", "created_at"]),
+    );
+    expect(refCols.filter((c) => c.pk > 0).map((c) => c.name).sort()).toEqual(["embedder_id", "enrollment_id"]);
+
+    // the produced-lemma idempotency index: INSERT OR IGNORE dedups a replayed key,
+    // append-only-compatibly (a no-op insert, never an UPDATE/DELETE).
+    db.prepare(`INSERT INTO knowledge_items (id, kind, lemma, pos) VALUES ('lemma:__idem__#NOUN', 'lemma', '__idem__', 'NOUN')`).run();
+    const ins = (ref: string | null) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO evidence (id, item_id, source, source_ref, polarity, mode, weight)
+           VALUES (?, 'lemma:__idem__#NOUN', 'finding', ?, 1, 'spontaneous', 0.7)`,
+        )
+        .run(randomUUID(), ref);
+    expect(ins("s:h:__idem__#NOUN").changes).toBe(1); // first produced positive
+    expect(ins("s:h:__idem__#NOUN").changes).toBe(0); // replay ⇒ deduped
+    expect(ins("s2:h:__idem__#NOUN").changes).toBe(1); // a different segment ⇒ a new row
+    // Legacy produced rows carry a NULL ref and are excluded from the index — two
+    // NULLs both insert, so the index builds on old data without collapsing history.
+    expect(ins(null).changes).toBe(1);
+    expect(ins(null).changes).toBe(1);
     db.close();
   });
 

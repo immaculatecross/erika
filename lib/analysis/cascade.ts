@@ -238,7 +238,15 @@ async function deepListenSegment(
     findings,
     reservation,
   });
-  recordProducedLemmas(db, ctx.sessionId, produced);
+  // Gate POSITIVE production credit (E-36, D-22). Findings/corrections above are
+  // untouched — a correction may still be surfaced from a mixed segment — but a
+  // produced-lemma positive is minted ONLY for the user's own speech: suppress it
+  // when this segment was attributed to a non-user speaker (`is_user === 0`), or when
+  // the whole session is manually excluded ("not me"). A null verdict (no enrollment,
+  // filter off, or a hiccup) is NOT suppressed — behaviour is identical to before
+  // attribution existed. The suppressed emits are still counted as dropped (honest yield).
+  const suppress = ctx.excludeFromEvidence || seg.isUser === 0;
+  recordProducedLemmas(db, ctx.sessionId, seg.contentHash, produced, { suppress });
 }
 
 /**
@@ -298,6 +306,10 @@ interface RunContext {
   profile: SpeakerProfile;
   /** The register the correction voice is phrased in (E-33, D-23). */
   register: Register;
+  /** The manual session-level "not me" exclusion (E-36, D-22): when true, NO
+   *  produced-lemma positive is minted for any segment of this run, regardless of the
+   *  acoustic verdict. Read once per run from the session row. */
+  excludeFromEvidence: boolean;
   tempo: number;
   /** The short-capture full-deep path (E-28, D-20): skip triage, deep-listen every
    *  segment at native speed with the enriched prompt. Decided once per run. */
@@ -418,7 +430,17 @@ export async function runAnalysisJob(
   // total speech so every segment takes the same path — and so it matches what the
   // pre-run estimate showed the user (the estimate uses the same `isFullDeepSession`).
   const fullDeep = isFullDeepSession(segments, opts.deepFullMaxMinutes);
-  const ctx: RunContext = { jobId, sessionId: job.sessionId, targetLanguage, budget, profile, register, tempo, fullDeep };
+  const ctx: RunContext = {
+    jobId,
+    sessionId: job.sessionId,
+    targetLanguage,
+    budget,
+    profile,
+    register,
+    excludeFromEvidence: session.excludeFromEvidence,
+    tempo,
+    fullDeep,
+  };
   patchJob(db, jobId, { state: "processing", stage: fullDeep ? "deep-listening" : "analyzing", error: null });
 
   // Refresh the lease on an interval for the whole run, not once per segment: a long

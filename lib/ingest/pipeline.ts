@@ -12,6 +12,14 @@ import { normalize } from "./normalize";
 import { detectSpeech, type Interval } from "./vad";
 import { extractSegment, hashFile, renderRendition, triageTempo } from "./render";
 import { claimQueued, heartbeat, reclaimStale, workerId } from "../jobs/lease";
+import {
+  type SpeakerEmbedder,
+  ensureReference,
+  attributeSegment,
+  setSegmentAttribution,
+  SPEAKER_USER_THRESHOLD,
+  speakerFilterEnabled,
+} from "../speaker";
 
 // The heart of E-3 (D-10): drain a queued capture into stored, deduplicated,
 // pre-rendered speech segments — resumably and without ever holding a whole
@@ -19,15 +27,19 @@ import { claimQueued, heartbeat, reclaimStale, workerId } from "../jobs/lease";
 // thin loop around it. Every audio op is ffmpeg file→file (see ./normalize,
 // ./vad, ./render); this module only orchestrates and checkpoints.
 
-/** Fine-grained pipeline checkpoint, persisted on ingest_jobs.stage. */
-export const STAGES = ["normalizing", "detecting", "segmenting", "rendering", "done"] as const;
+/** Fine-grained pipeline checkpoint, persisted on ingest_jobs.stage. The
+ *  `attributing` stage (E-36) runs on-device speaker attribution between segmenting
+ *  and rendering — it scores each segment against the enrolled reference and records
+ *  a per-segment verdict, checkpointed/resumable like every other stage. */
+export const STAGES = ["normalizing", "detecting", "segmenting", "attributing", "rendering", "done"] as const;
 export type Stage = (typeof STAGES)[number];
 
 /** Progress recorded once each stage completes. */
 const STAGE_PROGRESS: Record<Stage, number> = {
   normalizing: 0.25,
   detecting: 0.4,
-  segmenting: 0.7,
+  segmenting: 0.6,
+  attributing: 0.8,
   rendering: 0.95,
   done: 1,
 };
@@ -91,6 +103,48 @@ export interface ProcessOpts {
 }
 
 /**
+ * On-device speaker attribution (E-36, D-22): score each segment against the
+ * enrolled reference and record a per-segment verdict. Best-effort by contract — it
+ * NEVER throws out to fail ingest:
+ *   * no `embedder` injected, the filter killed (`ERIKA_SPEAKER_FILTER=off`), no
+ *     enrollment, or an unavailable model ⇒ nothing is written, every segment stays
+ *     unattributed (null) and is treated as the user downstream;
+ *   * a per-segment embedding hiccup ⇒ that segment stays null (recall-first).
+ */
+async function attributeAll(
+  db: Db,
+  jobId: string,
+  sessionId: string,
+  embedder: SpeakerEmbedder | undefined,
+): Promise<void> {
+  if (!embedder || !speakerFilterEnabled() || !embedder.isAvailable()) return;
+  let reference;
+  try {
+    reference = await ensureReference(db, embedder);
+  } catch {
+    return; // reference computation failed — skip filtering, everyone stays the user
+  }
+  if (!reference) return; // no enrollment (or unusable take) — nothing to match against
+
+  for (const seg of listSegments(db, sessionId)) {
+    heartbeat(db, "ingest_jobs", jobId);
+    try {
+      const verdict = await attributeSegment(
+        embedder,
+        segmentPath(sessionId, seg.idx),
+        seg.durationMs,
+        reference,
+        SPEAKER_USER_THRESHOLD,
+      );
+      setSegmentAttribution(db, seg.id, verdict.speakerScore, verdict.isUser);
+    } catch {
+      // A single unreadable segment is a fact about one segment, not the run — leave
+      // it unattributed (treated as the user, recall-first) and carry on.
+    }
+  }
+}
+
+/**
  * Run (or resume) one ingest job to completion. Advances state
  * queued → processing → done, checkpointing `stage`/`progress` after each step.
  * Resumable: a crashed job re-enters at its recorded stage — a finished
@@ -99,7 +153,12 @@ export interface ProcessOpts {
  * and is never marked done. Returns the final job. Does not throw on pipeline
  * failure — the failure is recorded on the row.
  */
-export async function processJob(db: Db, jobId: string, opts: ProcessOpts = {}): Promise<IngestJob> {
+export async function processJob(
+  db: Db,
+  jobId: string,
+  opts: ProcessOpts = {},
+  embedder?: SpeakerEmbedder,
+): Promise<IngestJob> {
   const job = getJob(db, jobId);
   if (!job) throw new Error(`No ingest job ${jobId}.`);
   if (job.state === "done") return job;
@@ -126,7 +185,14 @@ export async function processJob(db: Db, jobId: string, opts: ProcessOpts = {}):
 
     if (atOrBefore(from, "segmenting")) {
       await segmentAll(db, jobId, session.id, normalized, intervals);
-      if (checkpoint(db, jobId, "rendering", opts.stopAfter, "segmenting")) return getJob(db, jobId)!;
+      if (checkpoint(db, jobId, "attributing", opts.stopAfter, "segmenting")) return getJob(db, jobId)!;
+    }
+
+    if (atOrBefore(from, "attributing")) {
+      // On-device speaker attribution (E-36). Best-effort: a skip/hiccup leaves
+      // verdicts null and the run proceeds — attribution is a filter, never a gate.
+      await attributeAll(db, jobId, session.id, embedder);
+      if (checkpoint(db, jobId, "rendering", opts.stopAfter, "attributing")) return getJob(db, jobId)!;
     }
 
     if (atOrBefore(from, "rendering")) {
