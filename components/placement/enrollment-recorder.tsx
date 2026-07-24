@@ -7,6 +7,7 @@ import { LevelMeter } from "@/components/level-meter";
 import { useRecorder } from "@/lib/use-recorder";
 import { formatElapsed, recordingFilename } from "@/lib/recording";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
+import type { AudioFormat } from "@/lib/session-types";
 
 // The enrollment-take recorder (E-35, D-22). Records a clean ~45 s voice sample and
 // posts the bytes to /api/placement/enrollment — stored ON-DEVICE ONLY, never
@@ -26,7 +27,7 @@ function RecordingDot({ reduced }: { reduced: boolean }) {
   );
 }
 
-async function postEnrollment(blob: Blob, extension: string): Promise<boolean> {
+async function postEnrollment(blob: Blob, extension: AudioFormat): Promise<boolean> {
   const res = await fetch("/api/placement/enrollment", {
     method: "POST",
     headers: { "x-filename": encodeURIComponent(recordingFilename(extension)) },
