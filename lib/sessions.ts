@@ -31,6 +31,7 @@ interface SessionRow {
   duration_seconds: number;
   created_at: string;
   job_state: IngestState;
+  exclude_from_evidence: number;
 }
 
 function toSession(row: SessionRow): Session {
@@ -42,12 +43,13 @@ function toSession(row: SessionRow): Session {
     durationSeconds: row.duration_seconds,
     createdAt: row.created_at,
     jobState: row.job_state,
+    excludeFromEvidence: row.exclude_from_evidence === 1,
   };
 }
 
 const SELECT = `
   SELECT s.id, s.original_filename, s.format, s.size_bytes, s.duration_seconds,
-         s.created_at, j.state AS job_state
+         s.created_at, s.exclude_from_evidence, j.state AS job_state
   FROM sessions s
   JOIN ingest_jobs j ON j.session_id = s.id
 `;
@@ -101,5 +103,19 @@ export function getSession(db: Db, id: string): Session | null {
  */
 export function deleteSession(db: Db, id: string): boolean {
   const info = db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+  return info.changes > 0;
+}
+
+/**
+ * Set/clear the manual "not me" exclusion on a session (E-36, D-22). An excluded
+ * session mints no produced-lemma positive evidence on its next analysis run,
+ * regardless of the acoustic verdict. Returns whether a row existed. This does NOT
+ * retroactively remove already-minted evidence (the log is append-only); it governs
+ * future production credit for the session.
+ */
+export function setSessionExcluded(db: Db, id: string, excluded: boolean): boolean {
+  const info = db
+    .prepare("UPDATE sessions SET exclude_from_evidence = ? WHERE id = ?")
+    .run(excluded ? 1 : 0, id);
   return info.changes > 0;
 }

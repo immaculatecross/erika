@@ -18,7 +18,7 @@ export {
   ensurePhoneItem,
   itemExists,
 } from "./items";
-export { recordEvidence, bridgeFinding, getEvidence } from "./evidence";
+export { recordEvidence, recordProducedEvidence, bridgeFinding, getEvidence } from "./evidence";
 export {
   seedPlacement,
   type SeedPlacementInput,

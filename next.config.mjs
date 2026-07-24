@@ -9,7 +9,13 @@ const nextConfig = {
   // intent. (For `next dev`/`next start` from the repo root the source assets are
   // already present; this matters only for `output: "standalone"`.)
   outputFileTracingIncludes: {
-    "/**": ["./lib/lexicon/*.tsv.gz"],
+    // The lexicon assets (E-28) and, when the operator installs it, the on-device
+    // speaker model (E-36) — both read from disk at runtime via the #47-safe
+    // module-relative-then-project-root discipline. Tracing them preserves their
+    // repo-relative path into a standalone build. The .onnx glob matches nothing in
+    // the repo (the ~29 MB model is operator-installed, never committed) and is
+    // harmless when absent; it arms the standalone trace the moment a model is dropped in.
+    "/**": ["./lib/lexicon/*.tsv.gz", "./lib/speaker/models/*.onnx"],
   },
   // The two-tab shell (E-30). Record is the home tab (`/`) and Learn's home is
   // the daily plan (`/practice`); `/record` and `/learn` are convenience aliases

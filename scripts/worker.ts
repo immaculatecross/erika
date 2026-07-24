@@ -8,6 +8,7 @@ import {
 } from "../lib/analysis/cascade";
 import { sweepStaleReservations } from "../lib/analysis/budget";
 import { openAiAudioModel } from "../lib/analysis/audio-model";
+import { resolveEmbedder, type SpeakerEmbedder } from "../lib/speaker";
 
 // `npm run worker`: a thin loop around processJob (E-3 ingest) and runAnalysisJob
 // (E-4 analysis — the real OpenAI cascade). Every claim takes a heartbeat lease
@@ -27,9 +28,11 @@ import { openAiAudioModel } from "../lib/analysis/audio-model";
 const POLL_MS = Number(process.env.ERIKA_WORKER_POLL_MS ?? 1000);
 const ONCE = process.env.ERIKA_WORKER_ONCE === "1";
 
-async function runOne(db: ReturnType<typeof getDb>, id: string): Promise<void> {
+async function runOne(db: ReturnType<typeof getDb>, id: string, embedder: SpeakerEmbedder): Promise<void> {
   console.error(`[worker] ingest job ${id}`);
-  const job = await processJob(db, id);
+  // The concrete speaker embedder is injected here (E-36) — never imported inside the
+  // pipeline — exactly as the OpenAI client is injected into the cascade below.
+  const job = await processJob(db, id, {}, embedder);
   if (job.state === "failed") console.error(`[worker] ingest ${id} failed: ${job.error}`);
   else console.error(`[worker] ingest ${id} → ${job.state}`);
 }
@@ -44,12 +47,12 @@ async function runAnalysis(db: ReturnType<typeof getDb>, id: string): Promise<vo
   }
 }
 
-async function tick(db: ReturnType<typeof getDb>): Promise<boolean> {
-  for (const id of reclaimStuckJobs(db)) await runOne(db, id); // crash recovery first
+async function tick(db: ReturnType<typeof getDb>, embedder: SpeakerEmbedder): Promise<boolean> {
+  for (const id of reclaimStuckJobs(db)) await runOne(db, id, embedder); // crash recovery first
   for (const id of reclaimStuckAnalysisJobs(db)) await runAnalysis(db, id);
   const next = claimNextJob(db);
   if (next) {
-    await runOne(db, next);
+    await runOne(db, next, embedder);
     return true;
   }
   const nextAnalysis = claimNextAnalysisJob(db);
@@ -73,9 +76,12 @@ async function main(): Promise<void> {
   // against the budget cap. Mirrors the per-tick job-lease reclaim below.
   const swept = sweepStaleReservations(db);
   if (swept > 0) console.error(`[worker] swept ${swept} stale spend reservation(s)`);
-  console.error(`[worker] started (${applied.length} var(s) from .env.local)`);
+  // Resolve the speaker embedder once at startup (E-36): the sherpa-onnx model if its
+  // runtime + asset are installed, else the deterministic in-sandbox spectral feature.
+  const embedder = await resolveEmbedder();
+  console.error(`[worker] started (${applied.length} var(s) from .env.local; speaker=${embedder.id})`);
   for (;;) {
-    const didWork = await tick(db);
+    const didWork = await tick(db, embedder);
     if (!didWork) {
       if (ONCE) break;
       await new Promise((r) => setTimeout(r, POLL_MS));

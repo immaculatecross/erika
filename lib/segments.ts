@@ -14,6 +14,12 @@ export interface Segment {
   endMs: number;
   durationMs: number;
   contentHash: string;
+  /** Max cosine over the segment's speaker windows (E-36), or null if unattributed. */
+  speakerScore: number | null;
+  /** 1 = the enrolled user, 0 = another speaker, null = unattributed (E-36, D-22).
+   *  null means "no verdict" — no enrollment, the filter is off, or a hiccup — and is
+   *  treated as the user downstream, so attribution never silences an un-enrolled learner. */
+  isUser: 0 | 1 | null;
 }
 
 interface SegmentRow {
@@ -24,6 +30,8 @@ interface SegmentRow {
   end_ms: number;
   duration_ms: number;
   content_hash: string;
+  speaker_score: number | null;
+  is_user: 0 | 1 | null;
 }
 
 function toSegment(r: SegmentRow): Segment {
@@ -35,6 +43,8 @@ function toSegment(r: SegmentRow): Segment {
     endMs: r.end_ms,
     durationMs: r.duration_ms,
     contentHash: r.content_hash,
+    speakerScore: r.speaker_score ?? null,
+    isUser: r.is_user ?? null,
   };
 }
 

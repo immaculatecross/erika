@@ -8,6 +8,7 @@ import { dayLedgerMigration } from "./v19-day-ledger";
 import { itemLessonsMigration } from "./v20-item-lessons";
 import { phraseRendersMigration } from "./v21-phrase-renders";
 import { enrollmentMigration } from "./v22-enrollment";
+import { speakerAttributionMigration } from "./v23-speaker-attribution";
 
 // Ordered, append-only migrations. Each `up` is a pure DDL step; the runner in
 // lib/db.ts applies pending versions in order and records them in _migrations.
@@ -460,4 +461,5 @@ export const migrations: Migration[] = [
   itemLessonsMigration,
   phraseRendersMigration,
   enrollmentMigration,
+  speakerAttributionMigration,
 ];
