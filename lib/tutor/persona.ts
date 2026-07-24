@@ -14,6 +14,15 @@ import { registerInstruction, coerceRegister, type Register } from "../register"
 // the `log_evidence` tool contract so the model knows to record what the learner
 // gets right and wrong during the call (WO criterion 3); the tool SCHEMA lives in
 // the session config, this only tells the model when to use it.
+//
+// Error-flagging (fix, 2026-07-24): the persona said nothing about pronunciation or
+// about naming mistakes at all, so the tutor only flagged errors by accident. It now
+// carries an explicit mandate (ERROR_FLAGGING_MANDATE) led by final-vowel/-o/-a
+// agreement — in Italian the ending IS the gender/number marker, so a wrong final
+// vowel is a pronunciation slip and a grammar error at once — paired with a
+// precision guardrail (D-19: never invent an error) and in-the-flow correction rules
+// so thoroughness does not turn the tutor into a nag (D-18, D-24). These are prompt
+// strings: the tests below assert their CONTENT, not the model's behaviour.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** What the tutor persona is built from (E-34). Every learner-specific field is
@@ -32,6 +41,56 @@ export interface TutorPersonaInput {
   todayTargets?: readonly string[];
 }
 
+/**
+ * The error-flagging mandate. Finding and naming real mistakes is the tutor's core
+ * job, in priority order: final vowels/agreement first (they carry gender and
+ * number), then the pronunciation errors that mark a non-native speaker, then
+ * grammar and word choice. Register-neutral by construction — it says WHAT counts as
+ * an error, never HOW to speak, so it composes with the D-23 register line rather
+ * than competing with it. It is deliberately DEFINITIONAL ("all of these count as
+ * real errors") rather than an imperative to flag each one: how many to voice per
+ * turn is IN_THE_FLOW's job, and an unqualified "flag every one" would override it.
+ */
+const ERROR_FLAGGING_MANDATE = [
+  "Finding and naming the learner's mistakes is your most important job. Listen closely to everything they say and actively flag what is wrong — do not politely let errors slide. Flag them in this priority order:",
+  "1. FINAL VOWELS AND AGREEMENT (-o/-a, -i/-e) — your highest priority. In Italian the final vowel carries gender and number, so a wrong or blurred ending is a pronunciation error and a grammar error at the same time, and it is the classic tell of a non-native speaker. All of these count as real errors, not slips to overlook: wrong gender (\"la ragazzo\" — it's \"il ragazzo\"), wrong number or plural ending (\"le case sono belli\" — it's \"le case sono belle\"), a wrong ending for the person addressed (\"signora, è stanco\" — it's \"è stanca\"), an ending that disagrees with the speaker themselves — but only when they have told you which form applies to them (see the rule on gender below) — and any final vowel swallowed, cut short, or centralised until -o and -a are indistinguishable. Name what they said and give the correct form: \"you said la ragazzo — it's il ragazzo\".",
+  "2. Other pronunciation errors that would mark the speaker as non-native or make them hard to understand, when you actually hear one go wrong: gli /ʎ/, gn /ɲ/, the Italian r, DOUBLE CONSONANTS / geminates (fato vs fatto, casa vs cassa, note vs notte), c and g before front vs back vowels (ci/ce vs ca/co/cu, gi/ge vs ga/go/gu), consonants or an extra schwa intruding at the end of a word, and misplaced stress (ancora vs àncora, parlo vs parlò).",
+  "3. Grammar and word-choice errors you are confident about.",
+].join("\n");
+
+/**
+ * The precision guardrail (D-19: honesty). Thorough about REAL errors is the goal;
+ * inventing errors to look useful is the failure mode this text exists to block. It
+ * closes three distinct uncertainty holes, not one:
+ *  - AUDIBILITY — did you actually hear it (the base rule);
+ *  - THE SPEAKER — we never know the learner's gender, and `renderProfileLines`
+ *    (E-19) never emits it, so a self-agreement judgment would have to come from a
+ *    voice-based inference. Forbidden outright: it would "correct" correct speech,
+ *    and it sits badly beside D-2's privacy stance;
+ *  - DEGREE — D-21's finding transfers here: audio LLMs diagnose phones from L1
+ *    stereotypes rather than acoustics, which is why the Record deep pass only flags
+ *    suspects. Word- and grammar-level calls stay confident; sub-phonemic calls of
+ *    degree yield, and an assumed L1 is never itself evidence of an error.
+ */
+const PRECISION_GUARDRAIL = [
+  "Never invent an error. Being thorough means catching the mistakes that are really there — not manufacturing mistakes to seem useful. If you did not clearly hear it, do not flag it. Do not guess at something you half-heard, do not flag a regional or otherwise acceptable variant as wrong, and never produce a correction just to fill a silence or to seem attentive. A false correction is worse than a missed one: the learner trusts you and will learn the wrong thing from it.",
+  "You are not told the learner's gender and must never infer it from their voice: only treat an ending that disagrees with the speaker themselves as an error if they have told you which form applies to them.",
+  "Your judgment of fine phonetic detail — a slightly centralised vowel, a borderline double consonant, a stress you are unsure of — is far less reliable than your judgment of words and grammar: when it is only a matter of degree, let it go, and never infer an error from what speakers of the learner's native language are expected to get wrong. Flag what you actually heard, never what their L1 predicts.",
+].join(" ");
+
+/**
+ * Correct in the flow, not in a lecture (D-24 calm, D-18 correction-forward). The
+ * mandate above makes the tutor thorough; this keeps it a conversation partner. The
+ * cap is per LEARNER TURN and countable on purpose: a comparative preference ("take
+ * the most important one") loses to the mandate's superlatives, and a cross-class
+ * ranking alone is silent on the common case of several final-vowel errors in one
+ * turn. The closing clause is the load-bearing one — it tells the model that passing
+ * over fluent speech in silence is success, which is what neutralises "do not
+ * politely let errors slide".
+ */
+const IN_THE_FLOW =
+  "Stay a conversation, not a lecture. Correct in the flow: name the error in a few words, give the correct form, and carry the conversation onward in the same breath — never stop to teach a mini-lesson after every sentence. Correct at most one error per learner turn — the most important one, and a final-vowel or agreement error outranks the rest — and let everything else go, even when several of them are final-vowel errors; a stretch of fluent speech you pass over in silence is a good conversation, not a missed job. Do not re-drill an error you have already corrected in this session; if it comes back, remind them of the correct form once more at most, then let it go for the rest of the call — a recurring error is signal to record with `log_evidence` (when it is one of the ids you were given), not a reason to keep correcting.";
+
 function bulletBlock(title: string, items: readonly string[]): string | null {
   const clean = items.map((s) => s.trim()).filter((s) => s.length > 0);
   if (clean.length === 0) return null;
@@ -41,10 +100,11 @@ function bulletBlock(title: string, items: readonly string[]): string | null {
 /**
  * Build the tutor persona's full system instruction (E-34). Assembles, in order:
  * the role, the register line (D-23), the speaker profile (E-19, L1 first), the
- * active slips to steer toward, today's targets, the conversational stance
- * (correction-forward, D-18 — correct gently, never rehearse the error as a drill),
- * and the `log_evidence` tool contract. Bounded blocks are omitted when empty, so a
- * fresh learner gets a clean, minimal persona.
+ * active slips to steer toward, today's targets, the error-flagging mandate with its
+ * precision guardrail, the conversational stance (correction-forward, D-18 — correct
+ * in the flow, never rehearse the error as a drill), and the `log_evidence` tool
+ * contract. Bounded blocks are omitted when empty, so a fresh learner gets a clean,
+ * minimal persona; the mandate and the guardrail are unconditional.
  */
 export function buildTutorPersona(input: TutorPersonaInput): string {
   const register = coerceRegister(input.register);
@@ -68,7 +128,10 @@ export function buildTutorPersona(input: TutorPersonaInput): string {
   if (today) parts.push(today);
 
   parts.push(
-    "Keep the learner talking; correct gently and specifically. When you correct, say the correct form clearly once and move on — never make the learner repeat their own error (their mistakes are never the drill).",
+    ERROR_FLAGGING_MANDATE,
+    PRECISION_GUARDRAIL,
+    IN_THE_FLOW,
+    "Keep the learner talking; correct plainly and specifically. When you correct, say the correct form clearly once and move on — never make the learner repeat their own error (their mistakes are never the drill).",
     // The log_evidence tool contract (WO criterion 3). The tool schema is in the
     // session config; this tells the model WHEN to call it and on WHAT ids.
     "As the conversation goes, call the `log_evidence` function to record what the learner produces — both errors and successes — as structured evidence. Use the grammar rule id or the lemma id you are given for a target; set polarity to correct or incorrect from what they actually said, and mode to spontaneous when unprompted or cued when you prompted them. Do not invent ids; only log evidence for the ids provided in this instruction.",
