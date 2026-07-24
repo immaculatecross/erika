@@ -227,8 +227,9 @@ export default function SessionDetailPage() {
             <div className="min-w-0 flex-1">
               <p className="text-[15px] font-medium text-ink">This recording isn&rsquo;t me</p>
               <p className="mt-0.5 text-[13px] text-secondary">
-                Erika won&rsquo;t learn your vocabulary from a recording you exclude — useful when
-                it&rsquo;s someone else speaking.
+                When this recording is analyzed, Erika won&rsquo;t learn your vocabulary from it —
+                useful when it&rsquo;s someone else speaking. Applies going forward; anything already
+                learned isn&rsquo;t removed.
               </p>
             </div>
             <button

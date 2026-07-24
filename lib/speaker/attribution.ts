@@ -18,8 +18,9 @@ export const WINDOW_HOP_MS = 2000;
 
 /**
  * Recall-first similarity threshold τ for the in-sandbox spectral embedder, above
- * which a window is judged the enrolled user. CALIBRATED on the committed two-voice
- * fixture (tests/fixtures/labelled-speaker): every true user window there scores
+ * which a window is judged the enrolled user. CALIBRATED on the committed SYNTHETIC
+ * two-voice fixture (tests/fixtures/labelled-speaker — procedurally generated ffmpeg
+ * formant voices, not recorded audio): every true user window there scores
  * ≥ 0.749, so τ is set BELOW that floor — the user is never dropped (user-recall
  * ≥ 0.99, D-22) — while still excluding a real fraction of the other speaker's
  * windows. This is the recall-first trade deliberately made: we accept the

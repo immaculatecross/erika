@@ -18,12 +18,13 @@ import { SPEAKER_USER_THRESHOLD } from "@/lib/speaker/attribution";
 //   3. the fixture is not trivially separable — the classes OVERLAP, so a lazy τ
 //      cannot both keep every user window and exclude every other window.
 //
-// CALIBRATION PATH (stated plainly, D-19): a REAL in-sandbox embedding
-// (`spectral-logmel-v1` — ffmpeg + a log-mel filterbank) is exercised end to end
-// here; the fixture voices are synthetic but the embedding and the τ decision are
-// genuinely run, so this calibrates the METHOD. The production sherpa-onnx model
-// lives in a different embedding space and its live τ re-calibration against a real
-// two-voice sample is OPERATOR-GATED (the sandbox has no egress/model).
+// CALIBRATION PATH (stated plainly, D-19): the in-sandbox EMBEDDING genuinely runs
+// (`spectral-logmel-v1` — ffmpeg + a log-mel filterbank, exercised end to end here),
+// but the fixture VOICES are SYNTHETIC (procedurally generated ffmpeg formant
+// voices, not recorded audio) — so this calibrates the METHOD, not a production
+// operating point. The production sherpa-onnx model lives in a different embedding
+// space and its live τ re-calibration against REAL recorded voices is OPERATOR-GATED
+// (the sandbox has no egress/model).
 
 const FIX = path.join(__dirname, "fixtures");
 const FILE = path.join(FIX, "labelled-speaker.flac");
