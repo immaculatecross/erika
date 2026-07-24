@@ -293,7 +293,7 @@ describe("migrations runner", () => {
     migrated.close();
   });
 
-  it("v24 adds pronunciation_attempts with no prosody column and no finding FK (E-37)", () => {
+  it("v26 adds pronunciation_attempts with no prosody column and no finding FK (E-37)", () => {
     const db = openDatabase(tmpDbPath());
     const cols = (db.prepare("PRAGMA table_info(pronunciation_attempts)").all() as { name: string; notnull: number }[]) ;
     const names = cols.map((c) => c.name);
@@ -337,7 +337,7 @@ describe("migrations runner", () => {
     db.close();
   });
 
-  it("v24 also adds pronunciation_visits — the no-key practice record (E-37)", () => {
+  it("v26 also adds pronunciation_visits — the no-key practice record (E-37)", () => {
     const db = openDatabase(tmpDbPath());
     const cols = (db.prepare("PRAGMA table_info(pronunciation_visits)").all() as { name: string }[]).map(
       (c) => c.name,

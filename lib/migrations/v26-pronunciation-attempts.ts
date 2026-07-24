@@ -1,6 +1,16 @@
 import type { Migration } from "./index";
 
-// E-37 Pronunciation studio (D-21). A scripted Italian drill is heard in a native
+// E-37 Pronunciation studio (D-21). **Numbered v26, not v24**: E-38 merged first and
+// shipped v25 (`streak_repairs`), so this was renumbered to keep the applied sequence
+// monotonic — a database that already ran v25 must never then run a lower version. The
+// two are functionally independent (pronunciation tables vs the repair ledger), but the
+// runner and `tests/migrations.test.ts` are built on versions only ever increasing, and
+// a latent ordering oddity is exactly what bites a future migration that DOES depend on
+// order. Renumbering is legitimate here precisely because v24 was never merged and never
+// shipped — the "never edit a shipped migration" rule does not apply to one that existed
+// only on this branch.
+//
+// A scripted Italian drill is heard in a native
 // rendition, re-recorded by the learner, and scored by Azure Pronunciation Assessment
 // (it-IT) at word AND phoneme granularity. This migration persists the attempts so
 // progress is inspectable and every drill is re-attemptable.
@@ -50,7 +60,7 @@ import type { Migration } from "./index";
 //
 // Additive only; no shipped migration is edited, and no existing table is touched.
 export const pronunciationAttemptsMigration: Migration = {
-  version: 24,
+  version: 26,
   name: "pronunciation_attempts",
   up: (db) => {
     db.exec(`

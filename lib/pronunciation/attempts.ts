@@ -1,7 +1,7 @@
 import type { Db } from "../db";
 import type { PronunciationResult } from "./types";
 
-// The `pronunciation_attempts` store (E-37, migration v24). One row per SCORED take:
+// The `pronunciation_attempts` store (E-37, migration v26). One row per SCORED take:
 // the drill, the learner's audio, the whole parsed result, the headline scores, the
 // SNR verdict, and the actual charge. Typed data layer only — no money, no model
 // calls, no policy; the orchestration in ./studio.ts owns those.

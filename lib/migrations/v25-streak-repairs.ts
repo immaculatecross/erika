@@ -27,11 +27,12 @@ import type { Migration } from "./index";
 //    so there is no `day_ledger` row to reference (the ledger only holds days the
 //    goal was MET). The `spend_ledger`/`phrase_renders` precedent.
 //
-// PARALLEL BATCH: E-37 (the pronunciation studio) owns migration v24 and is in
-// flight; this migration is v25 as assigned up front, the v18-syllabus precedent
-// (lib/migrations/v18-syllabus.ts:20-23). The trivial docs/schema.md + index.ts
-// append-conflict is reconciled when whichever PR rebases second lands. Additive;
-// no shipped migration is edited; no money path is touched.
+// PARALLEL BATCH: E-37 (the pronunciation studio) was in flight alongside this one and
+// held v24 at the time; this migration took v25 as assigned up front, the v18-syllabus
+// precedent (lib/migrations/v18-syllabus.ts:20-23). E-38 merged FIRST, so E-37 then
+// renumbered its own (never-merged, never-shipped) migration v24 → v26: the applied
+// sequence is v25 then v26, and a database never runs a lower version after a higher
+// one. Additive; no shipped migration is edited; no money path is touched.
 export const streakRepairsMigration: Migration = {
   version: 25,
   name: "streak_repairs",
