@@ -6,8 +6,8 @@ import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
 import { TrendBadge } from "@/components/category-bars";
-import type { Letter, LetterFinding } from "@/lib/letter";
-import { SEVERITY_STYLES } from "@/lib/analysis-view";
+import { LetterRecast } from "@/components/letter-recast";
+import type { Letter } from "@/lib/letter";
 
 // The editor's letter (E-12, v0.2 — the finale): a quiet weekly digest, the
 // narrative counterpart to the Focus map. One headline stat (this week's error
@@ -127,7 +127,7 @@ export default function LetterPage() {
             <h2 className="text-[22px] font-semibold tracking-tight">Your best recasts</h2>
             <div className="flex flex-col gap-3">
               {letter.recasts.map((r) => (
-                <Recast key={r.id} recast={r} />
+                <LetterRecast key={r.id} recast={r} />
               ))}
             </div>
           </motion.section>
@@ -151,38 +151,6 @@ export default function LetterPage() {
           </motion.section>
         )}
       </motion.article>
-    </div>
-  );
-}
-
-function Recast({ recast }: { recast: LetterFinding }) {
-  const sev = SEVERITY_STYLES[recast.severity];
-  return (
-    <div data-recast data-recast-id={recast.id} className="flex flex-col gap-4 rounded-card bg-card p-5 shadow-card">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Side label="You said" text={recast.quote} />
-        <Side label="Natives say" text={recast.correction} accent />
-      </div>
-      {recast.explanation && (
-        <p className="text-[15px] leading-[1.47] text-secondary">{recast.explanation}</p>
-      )}
-      <div className="flex items-center gap-2 pt-1">
-        <span className="text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">{recast.category}</span>
-        <span
-          className={`rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.06em] ${sev.tint} ${sev.text}`}
-        >
-          {sev.label}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function Side({ label, text, accent }: { label: string; text: string; accent?: boolean }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-secondary">{label}</span>
-      <p className={`text-[17px] leading-[1.47] ${accent ? "font-semibold text-ink" : "text-ink"}`}>“{text}”</p>
     </div>
   );
 }

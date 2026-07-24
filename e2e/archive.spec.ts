@@ -116,7 +116,10 @@ test.describe("archive screen", () => {
     await page.goto("/archive");
     const entry = page.locator("[data-entry]").first();
     await expect(entry).toHaveAttribute("data-start-ms", "4000");
-    await entry.click();
+    // Correction-forward (E-30 P1, D-18): the row leads with the recast and links
+    // back to the moment from that headline; the error is behind a reveal, so the
+    // deep link is the headline control, not the whole row.
+    await entry.locator("[data-entry-jump]").click();
 
     await expect(page).toHaveURL(new RegExp(`/sessions/${id}\\?t=4000`));
     // The player loads metadata then the deep link seeks it to ~4s (4000ms). It may
