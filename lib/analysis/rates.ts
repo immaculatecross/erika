@@ -170,11 +170,13 @@ export const ASK_MAX_OUTPUT_TOKENS = 700;
 // VALIDATED LIVE 2026-07-24 (operator directive — do not trust the training
 // cutoff): the flagship family is `gpt-realtime` (current version
 // `gpt-realtime-2.1`, the DEFAULT) with a cheaper `gpt-realtime-2.1-mini`; the
-// legacy `gpt-4o-realtime-preview` is not used. Flagship audio pricing ≈ $32 / 1M
-// audio-input tokens ($0.40/1M cached) + $64 / 1M audio-output tokens; mini is
-// cheaper. Pin the EXACT ids and prices from the account's model list at real-run;
-// these are the single price knob and an explicit approximation to recalibrate
-// against real `usage` once a key exists (T1 owed — no live key in the sandbox).
+// legacy `gpt-4o-realtime-preview` is not used. Both ids are real — they appear in
+// the first-party SDK model unions (`openai-python` `types/realtime/`,
+// `openai-node` `resources/realtime/calls.ts`), which enumerate
+// `gpt-realtime-1.5` | `gpt-realtime-2` | `gpt-realtime-2.1` |
+// `gpt-realtime-2.1-mini` | `gpt-realtime-2025-08-28`. This family moved from dated
+// snapshots to semver-style version ids, so `gpt-realtime-2.1` IS the pinned
+// snapshot; there is no dated variant to prefer.
 
 export const REALTIME_FLAGSHIP = "gpt-realtime-2.1" as const;
 export const REALTIME_MINI = "gpt-realtime-2.1-mini" as const;
@@ -198,9 +200,44 @@ export interface RealtimeModelRate {
   usdPerAudioOutputToken: number;
 }
 
-// Per-token audio prices (WO). Mini is set at ~¼ of flagship — a documented
-// approximation ("mini cheaper", no published figure at authoring time), to pin to
-// the real account rates at real-run (D-13). Both remain the single price knob.
+// ⚠️ THE ERROR DIRECTIONS ARE NOT SYMMETRIC — read before editing a number down.
+// These rates drive the pre-call estimate and the reserved lease, which is what the
+// hard monthly cap is enforced against. So:
+//
+//   * OVER-estimating a rate costs the user a slightly EARLY refusal — the cap bites
+//     a little sooner than it strictly had to. Annoying; harmless.
+//   * UNDER-estimating a rate makes the cap a LIE — the modelled budget believes it
+//     has headroom the invoice will not honour, so real spend can exceed the cap the
+//     user set. Under-pricing is the ONE direction that can overshoot.
+//
+// So a rate here must be at or ABOVE reality. If a figure cannot be verified, round
+// it UP and say so on the line; never round down, and never "split the difference".
+//
+// VERIFIED 2026-07-24 by live research (the sandbox cannot reach
+// `platform.openai.com` / `developers.openai.com` — both 403 at the egress gateway —
+// so these came from machine-readable mirrors of OpenAI's own model pages, agreeing
+// across four+ independent sources): assistant-ui/modelpedia
+// (`providers/openai/models/gpt-realtime-2.1{,-mini}.json`, which mirrors the docs
+// pricing table verbatim and links back to it, 2026-07-08/09), mlflow's
+// `model_catalog/openai.json` (`last_updated_at: 2026-07-10`), LiteLLM's
+// `model_prices_and_context_window.json`, and promptfoo's OpenAI provider table.
+// This repo's own `docs/research/spike-3-extraction-tutor.md` already carried the
+// same mini figures with citations — the table below had simply not been updated
+// from it.
+//
+//   gpt-realtime-2.1       audio in $32 / 1M · cached in $0.40 / 1M · out $64 / 1M
+//   gpt-realtime-2.1-mini  audio in $10 / 1M · cached in $0.30 / 1M · out $20 / 1M
+//
+// The MINI row was previously a placeholder set at ~¼ of flagship ($8/$0.10/$16)
+// when no published figure was to hand. That UNDER-priced mini audio by 20% (real
+// rates are 25% higher than modelled) and cached mini audio by 3× — exactly the
+// unsafe direction, so it is corrected upward here. The FLAGSHIP row was already
+// right and is unchanged.
+//
+// Still the single price knob, and still an approximation in one respect: the
+// per-minute cost multiplies these by an assumed token throughput (below). The
+// standing T1 reconciliation — real `usage` from a live run against the invoice —
+// remains the real fix; the cap guards the MODELLED budget, not the invoice.
 export const REALTIME_RATES: Record<RealtimeModelId, RealtimeModelRate> = {
   "gpt-realtime-2.1": {
     usdPerAudioInputToken: 32 / 1_000_000,
@@ -208,20 +245,27 @@ export const REALTIME_RATES: Record<RealtimeModelId, RealtimeModelRate> = {
     usdPerAudioOutputToken: 64 / 1_000_000,
   },
   "gpt-realtime-2.1-mini": {
-    usdPerAudioInputToken: 8 / 1_000_000,
-    usdPerCachedAudioInputToken: 0.1 / 1_000_000,
-    usdPerAudioOutputToken: 16 / 1_000_000,
+    usdPerAudioInputToken: 10 / 1_000_000,
+    usdPerCachedAudioInputToken: 0.3 / 1_000_000,
+    usdPerAudioOutputToken: 20 / 1_000_000,
   },
 };
 
 /**
  * Assumed audio-token throughput PER ELAPSED CONVERSATION MINUTE, split by
- * direction. A spoken exchange has both parties active across a minute; realtime
- * audio tokenizes at roughly 1.5k tokens per spoken minute, so a conservative,
- * upper-bound-leaning default books ~1500 input + ~1500 output tokens per elapsed
- * minute (the pre-call estimate must never UNDER-price, or the cap could be
- * overshot). A single documented knob, tunable via env, to recalibrate against real
- * `usage` (D-13, T1). This is the ONE place the per-minute realtime cost is derived.
+ * direction. A spoken exchange has both parties active across a minute, and the
+ * pre-call estimate must never UNDER-price (see the asymmetry note above the rate
+ * table), so this deliberately over-books: ~1500 input + ~1500 output tokens per
+ * elapsed minute, 3000/min all in.
+ *
+ * That is a CONSERVATIVE OVER-ESTIMATE, on purpose. The figures reachable in
+ * 2026-07 research put realtime audio nearer ~600 input + ~1200 output tokens per
+ * minute (~1800/min — see `docs/research/spike-3-extraction-tutor.md` and its
+ * citations), so the default books roughly 1.7× the expected throughput. Left high
+ * because it is unverified against this account's real `usage`: an over-estimate
+ * only refuses slightly early, while an under-estimate would let real spend pass the
+ * cap. Tunable via env; the T1 usage→invoice reconciliation is what should eventually
+ * lower it (D-13). This is the ONE place the per-minute realtime cost is derived.
  */
 export function realtimeAudioTokensPerMinute(
   raw: string | undefined = process.env.REALTIME_TOKENS_PER_MINUTE,
