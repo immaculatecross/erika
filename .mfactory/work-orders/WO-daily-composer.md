@@ -33,3 +33,31 @@ Branch `feat/daily-composer` off latest `master`; empty commit + `git push -u or
 
 ## Exit report
 Append to the WO per `task.md`: RESULT / PR / Changed / Verified (exact commands + the compose unit-test summary + the migration/ledger test + screenshots) / Tests / Risks / Blocker.
+
+---
+
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/50  (branch `feat/daily-composer` → `master`)
+Changed:
+- `lib/compose.ts` — pure, unit-tested `compose(day)`: spill → FSRS-due (worst retrievability first) → active slips → unspent findings → knowledge-edge new items (10/3/10, settable), interleaved, overflow→tomorrow's spill; ZERO model calls; idempotent spill reconciliation. Pure core `composePlan` + DB glue.
+- New-item selection reads the E-26 inventory: vocab by `freq_rank`, rules gated on the syllabus DAG, phones for pronunciation; excludes `known` + `recording_attested`.
+- `lib/knowledge/derive.ts` — [P3/T3] recognition-mode positives no longer corroborate `known` (D-19).
+- `lib/slips.ts` + new `lib/slip-standing.ts` (500-line extraction) — [P3] slip green (remission/resolved) gated on a positive production/drill event, not mere absence; DB glue supplies the flag (a passing card grade on the slip's findings).
+- Migration **v19** `lib/migrations/v19-day-ledger.ts` — `day_ledger` local-day goal-completion ledger; `lib/day-ledger.ts` (idempotent, authoritative, derived goal); `lib/local-day.ts` (explicit timezone stance); `docs/schema.md` updated same PR.
+- Learn TODAY home: `components/goal-ring.tsx` (one ink ring, hairline track, standard spring), reworked `app/practice/page.tsx`, `lib/today.ts`, `app/api/learn/today` (GET), `app/api/day/complete` (POST, authoritative).
+- [T2] `lib/knowledge/yield.ts` + `lib/knowledge/inspector.ts` + `app/api/dev/knowledge` + `app/dev/knowledge` (dev-only, 404 in prod); `recordProducedLemmas` bumps emitted/attested/dropped.
+- Settable new-item caps in `lib/settings.ts` + `app/settings/page.tsx`.
+- Ritual: E-31 → done in FEATURES.md; STATE.md regenerated.
+Verified:
+- `npm run typecheck` ✓ · `npm run lint` ✓ (no warnings) · `npm run test` ✓ **613 passing** (+34) · `npm run build` ✓ (routes `/api/learn/today`, `/api/day/complete`, `/api/dev/knowledge`, `/practice`, `/dev/knowledge` all built).
+- Compose unit tests: priority ordering, worst-retrievability-first, round-robin interleave, per-kind caps (spill counts first), overflow→spill (fresh only, never reviews/slips), and DB-level edge selection (freq_rank + cap), `known`/`recording_attested` exclusion, rule-DAG eligibility, spill drain + same-day idempotency.
+- Migration/ledger tests: v19 shape + PK-idempotency; ledger records once / never double-counts; timezone-boundary (local-day straddling midnight, month/year rollover); derived goal met only when queue cleared after real work.
+- Disposable-state e2e: throwaway `ERIKA_DB_PATH`, seeded corpus, real built server — `/api/learn/today` returned pre (ring 3/9, 6 due, 10 words/3 rules) and post (ring 9/9, "Done for today. 9 cards."); `/api/dev/knowledge` 404s in production; yield 4/3/1; status spread known 1 / learning 3 / unseen 30782 lemmas + 266 rules. Never touched `data/erika.db`.
+- Screenshots: pixel screenshots NOT possible — the Playwright browser CDN (`cdn.playwright.dev`) is egress-blocked in this sandbox (`403 host not permitted`), a proxy policy denial not routed around. Substituted with (a) DOM render tests for the goal ring (one ring, stroke-only, data-complete flips) and (b) a faithful visual reference of all four states (light+dark × pre/post) built from the real composed data: https://claude.ai/code/artifact/ad2e7aa2-5eeb-4c8b-a8cb-1e9e6b95b2a3
+Tests changed/removed:
+- `tests/slips.test.ts` — two DB tests that asserted resolved/resolved-count from clean sessions ALONE now add a passing drill (`drillClean`) to earn green; they encoded the pre-fix contract (green from absence). Added a test pinning: clean streak with no positive event stays active; a failed drill (all `again`) is a lapse; a passing drill unlocks green.
+- `tests/settings.test.ts` — the "persists all fields" exact-equality expectation extended with the three new-item-cap defaults.
+- No tests deleted.
+Risks:
+- FSRS params remain uncalibrated defaults (pre-existing, truthful-degradation). Pronunciation new-item pool is empty until E-37 seeds phones (slot wired + tested). `dailyMax` is a composer constant (40), not a Settings knob — it only creates the spill pressure. A card re-graded `again` briefly counts in the ring denominator via `dueRemaining` but not in `done` (advanced-only) — no false completion; polish is E-38's ring rendering.
+Blocker: none.
