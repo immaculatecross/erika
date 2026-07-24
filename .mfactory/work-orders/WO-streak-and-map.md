@@ -43,3 +43,88 @@ The **calm habit layer**: a streak that rewards returning without ever punishing
 ## Exit report
 Append here per `task.md`: RESULT / PR / Changed / Verified (exact commands + the streak tests incl. the third-gap-ends-run and month-rollover and DST cases + the map "activity ≠ green" test + all four today's-thread negative cases + the slip-hours local conversion with your DST answer + migration v25) / Tests (changed/removed — justify each, esp. the converted UTC tests) / Risks / Blocker.
 **Also write your exit report to `/tmp/claude-0/-home-user-erika/3099ebc4-2226-5dc9-8bf4-f6efa564d8e2/scratchpad/E38-report.md` before returning** (durability — a completion notification may be lost).
+
+---
+
+## Exit report (filled)
+
+```
+RESULT: done
+PR:     https://github.com/immaculatecross/erika/pull/62  (branch feat/streak-and-map → master)
+```
+
+## Changed
+
+- **Migration v25 `streak_repairs`** (`lib/migrations/v25-streak-repairs.ts`, registered in `lib/migrations/index.ts`): the spent-repair ledger. `local_day` PK (the missed day bridged) + `charged_month` (stored, not re-derived, so the ledger stays auditable) + `created_at`. FK-free — a repair records a day the goal was *not* met, so there is no `day_ledger` row to point at (`spend_ledger` precedent). Header states the **parallel-batch** reservation (E-37 holds v24; this is v25 as assigned up front, the `v18-syllabus.ts:20-23` precedent).
+- **`lib/streak/compute.ts`** — the pure run + repair logic (`computeStreak({completedDays, repairs, today}) → {currentRun, repairedDays, repairsUsedThisMonth, newRepairs, lastCompletedDay}`). Two automatic silent repairs per calendar month, charged to the month of the *missed* day; a single missed day inside a run is bridged, two consecutive misses never are, and when credits are gone the run simply ends. Today-not-yet-complete is skipped, not treated as a miss. `currentRun` counts only days actually completed (a repaired day is bridged, never credited — D-19).
+- **`lib/streak/store.ts`** — DB glue over `day_ledger` + `streak_repairs`; `INSERT OR IGNORE` on the PK, so recomputation (every read) can never double-spend or rewrite history.
+- **`lib/streak/caption.ts` + `components/streak-line.tsx`** — "Day 14" / "Day 14 · repaired Tue" in caption style; a zero run renders `null`/`""`.
+- **`lib/knowledge-map.ts` + `components/knowledge-map.tsx`** — the Learn map strip over `CATEGORY_ORDER`, tinting toward `good` only by resolved-slip share. Hand-rolled, no chart library; band 0 is `bg-hairline`.
+- **`lib/slips.ts`** — `resolvedSlipCount` refactored onto a new shared read-only `computeSlipStandings(db)`; the map reduces the same standings, so there is exactly **one** notion of mastery.
+- **`lib/today-thread.ts` + `components/today-thread.tsx`** — the app's first "evidence on local day D" query, gated to spontaneous, own-speech production positives with E-36's segment verdict and `sessions.exclude_from_evidence` **re-applied at read time**. Null when nothing qualifies.
+- **`lib/local-day.ts`** — `previousLocalDay`, `localMonth`, `localWeekday`, `localDayBoundsUtc`, `localHour` (the DST answer lives in `localHour`'s doc comment).
+- **`lib/slip-hours.ts`, `components/slip-hours.tsx`, `app/focus/page.tsx`, `lib/focus.ts`** — RETRO-003: bin by the learner's **local** hour, not `getUTCHours()`; user-visible "UTC" strings replaced with "your local time".
+- **`lib/today.ts` + `app/practice/page.tsx`** — `TodayView` gains `streak` / `map` / `thread`; the Learn home renders the streak line under the ring, the thread line when true, and the map strip when there is at least one slip.
+- **Ritual**: `FEATURES.md` E-38 → `done` (E-39's debt-sweep row loses the UTC-basis line); `STATE.md` regenerated; `docs/schema.md` gains the `streak_repairs` table row + the v25 history row + `Latest version: v25.`
+- `.mfactory/work-orders/WO-streak-and-map.md` added in the first real commit.
+
+## Verified
+
+```
+npm run typecheck                          # clean
+npm run lint                               # No ESLint warnings or errors
+npm run test                               # 113 files, 827 tests passed  (762 at E-36 close)
+npm run build                              # succeeds (the webpack server realm, not just tsc)
+.mfactory/hooks/run-tripwires.sh --all     # TRIPWIRES OK
+```
+
+**End-to-end, built server, throwaway DB** (`ERIKA_DB_PATH` under a scratch dir; `data/erika.db` never touched). Seeded a 6-day run with one gap plus one resolved and one stubborn slip, then `npx next start`:
+
+- `GET /api/learn/today` → `streak: {currentRun: 6, repairedDays: [{localDay: "2026-07-21", chargedMonth: "2026-07"}], repairsUsedThisMonth: 1}`.
+- `map` → `grammar {slips:1, resolved:0, band:0}` (5 analysed sessions of the same active mistake — heavy activity, **no green**) and `vocabulary {slips:1, resolved:1, band:4}`.
+- **Six** requests left **exactly one** `streak_repairs` row; `day_ledger` still 6 rows; `evidence` **0 rows** (this milestone writes none).
+- Built `/practice` client bundle contains `data-streak-run`, `data-knowledge-map`, `data-today-thread`, `data-today-map`, `repaired`; built CSS emits `.bg-good`, `bg-good/20`, `/40`, `/65`.
+
+**Per-criterion tests**
+
+| Criterion | Where | What it proves |
+|---|---|---|
+| 1 streak + repairs | `tests/streak.test.ts` (20) | clean run · unfinished today does not break it · zero run · **one gap repaired** · **second gap same month repaired** · **third gap same month correctly ends the run** · two consecutive misses never bridged (credits not burned) · **month rollover restores credits** · a gap on a month's last day charged to *that* month · **DST**: spring-forward run, fall-back run, a gap that *is* the DST day, half-hour zone `Australia/Lord_Howe` · **idempotent recomputation** (recompute charges nothing; a spent credit stays spent after its day leaves the run; a ledger already showing two spent refuses a third) · store: `INSERT OR IGNORE` no-op, `buildStreak` persists exactly one credit across repeated reads, writes **nothing** to `day_ledger` |
+| 2 D-24 render | `tests/streak-render.test.tsx` (8) | markup free of confetti/trophy/badge/streak-freeze/"don't break"/xp/points/level-up/leaderboard/flame/🔥/🎉/"at risk"/countdown/"expires"/"you'll lose"/`text-severe`/`bg-severe`/`text-medium`/`animate-`; no `good` on the streak line; no credit balance ("of 2", "left", "credit"); zero run renders `""`; "Day 14 · repaired Tue" exact |
+| 3 map = mastery | `tests/knowledge-map.test.ts` (7) + render | **16 slips / 0 resolved ⇒ `band === 0` and the cell markup contains no `good`**; remission ≠ resolved; strip totals equal `resolvedSlipCount` / `computeSlipStandings`; DB-path case with the mistake recurring in the latest analysed session stays neutral |
+| 4 today's thread | `tests/today-thread.test.ts` (13) | positive minted through the **real cascade** + mock audio model. **Four negatives**: bystander-attributed segment (write gate *and* post-hoc re-attribution), excluded session (including flipped *after* minting, then un-flipped), cued/recognition-only, no qualifying evidence. Plus: not on today's plan, different local day, negative polarity, unresolvable provenance → all null. Two `buildToday` cases prove the composer wiring |
+| 5 local hours + DST | `tests/slip-hours.test.ts` (9), `tests/slip-hours-render.test.tsx` (3), `tests/day-ledger.test.ts` | every original case converted to local under a pinned `Europe/Rome`; spring-forward skipped hour empty; fall-back repeated hour one bucket of 2; Σ(buckets) conserved on both 2026 transition dates; 23/25-hour `localDayBoundsUtc`; UI no longer says "UTC" |
+| 6 gates + migration | `tests/migrations.test.ts` | v25 columns/PK + `INSERT OR IGNORE` no-double-spend; `docs/schema.md` row and `Latest version: v25.` enforced by the existing doc-tracking suite |
+
+### The DST answer (in code at `lib/local-day.ts#localHour`, and in the PR)
+
+`Date#getHours()` maps every instant to exactly one wall-clock hour, so the mapping is total and single-valued across both transitions.
+- **Spring forward** — the *skipped* local hour never happened on that date, so its bucket receives nothing from that day. No instant exists to be binned; nothing is lost or misplaced.
+- **Fall back** — the *repeated* local hour: both passes report the same wall-clock hour, so that bucket covers two real hours on that one date. Counts stay additive; nothing dropped, nothing double-counted.
+- **Σ(buckets) is conserved on every date** (asserted for both 2026 transitions). The residual distortion is one bucket on two dates a year, which is the right trade: the histogram answers "what time was it *for me* when I slipped", and a UTC hour answers a question nobody asked.
+
+## Tests changed/removed
+
+Nothing removed or weakened.
+
+1. **`tests/slip-hours.test.ts`** — four UTC-pinned cases **converted**: identical fixtures, asserted against their local hour under a pinned `Europe/Rome`. `08:00Z → bucket 8` becomes `→ bucket 9`, and one case now asserts `buckets[8] === 0` so the old basis cannot creep back. The midnight-crossing case moves from 23:50**Z** to 23:50 **local** (22:50Z) so it still tests what it claims. The DB-path case moves 14→15 / 15→16. *Why*: the basis changed by design (criterion 5); coverage is preserved case-for-case and extended with three DST cases.
+2. **`tests/slip-hours-render.test.tsx`** — fixture timestamps unchanged; asserted bucket indices shift by the pinned offset (9→10, 14→15); one test added asserting the surface no longer says "UTC". *Why*: same basis change; the render assertions themselves are untouched.
+3. **`tests/day-ledger.test.ts`** — the existing "local-day basis (D-24 timezone stance)" describe block **extended** with the new seam helpers and the DST assertions. *Why*: extend the seam's own suite rather than start a second local-day suite.
+4. **`tests/migrations.test.ts`** — one `it` added for v25. *Why*: new migration.
+
+## Risks
+
+- **The streak read persists.** `GET /api/learn/today` can charge a repair. Idempotent (`local_day` PK), only ever for days strictly in the past, silent to the learner, and it follows the established read-path materialization precedent (slips materialize on read; the composer reconciles spill on read). Documented at the top of `lib/streak/store.ts`.
+- **`currentRun` counts completed days, not the run's calendar span.** With one repair a 14-day span reads "Day 13 · repaired Tue". Chosen deliberately as the under-claim (D-19); if the operator prefers the ordinal reading it is a one-line change in `compute.ts` and the caption is unaffected. **Flagging this as the one judgment call a reviewer may want to overturn.**
+- **Legacy produced positives (NULL `source_ref`) can never be cited** by the thread — their speaker is unverifiable. Only affects pre-E-36 history; the honest failure direction.
+- **Repairs are charged eagerly while walking back**, so opening the app can spend a credit on a weeks-old gap that is still holding a live run together. That is the mechanic working; it is only visible as the run not resetting.
+- **D-24's ban list has no tripwire.** `tests/streak-render.test.tsx` is a keyword/class denylist over rendered markup — it catches regressions but is not a substitute for the human read.
+- **No browser in the sandbox**, so Playwright could not run. Page wiring is evidenced by the built bundle/CSS markers plus component-level render tests (the repo's existing convention).
+
+## Contracts held
+
+`evidence` append-only and read-only to this milestone (0 rows written, verified on the live route); `lib/findings-model.ts` still the only findings gate; composer/knowledge core untouched; `day_ledger`'s "row only when met" unchanged; **no money path touched** (no biller, ledger row, or model call anywhere in the diff); no shipped migration edited; every file under 500 lines; Conventional Commits; verification only ever against a throwaway `ERIKA_DB_PATH`.
+
+## Blocker
+
+None.
