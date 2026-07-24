@@ -156,6 +156,15 @@ export default function TutorPage() {
     const elapsedSeconds = (Date.now() - startedAt.current) / 1000;
     const id = tutorId.current;
 
+    // Stop heart-beating BEFORE the wind-down's awaits (the take is assembled and
+    // uploaded first, which can take seconds). A heartbeat that fires in that window
+    // would land at the server after `/end` has finalized the lease. The server refuses
+    // such a heartbeat outright (`session_closed`) — that is the real fix for the
+    // double-charge race, since a request already on the wire cannot be recalled — but
+    // there is no reason to keep firing them once the user has ended the call.
+    if (heartbeat.current) clearInterval(heartbeat.current);
+    heartbeat.current = null;
+
     // Stop recording and assemble the take.
     const rec = recorder.current;
     const blob = await new Promise<Blob | null>((resolve) => {
