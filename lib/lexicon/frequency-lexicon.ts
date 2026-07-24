@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
+import { lexiconAssetPath } from "./asset-path";
 import { isPos, type Pos } from "./pos";
 
 // The frequency lexicon (E-26a, D-19). A comprehensive, license-clean Italian
@@ -19,9 +19,8 @@ import { isPos, type Pos } from "./pos";
 // CC BY-NC source (Kelly/itWaC/spaCy stay out of the shipped data path, D-19).
 
 /** Repo-relative path to the committed gzipped asset (one
- *  `lemma\tPOS\tfreq_rank\tband` per line, after a `#`-prefixed header block). Kept
- *  for documentation/diagnostics; the load resolves the file relative to THIS
- *  module, not the process cwd (see `assetFile`). */
+ *  `lemma\tPOS\tfreq_rank\tband` per line, after a `#`-prefixed header block).
+ *  The load resolves this against the project root (see `assetFile`). */
 export const ASSET_PATH = "lib/lexicon/frequency-lexicon.tsv.gz";
 
 /** One lemma row of the frequency lexicon. */
@@ -50,15 +49,14 @@ export function rankToBand(rank: number): string {
 }
 
 /**
- * Absolute path to the committed asset, resolved RELATIVE TO THIS MODULE FILE
- * (`import.meta.url`), never `process.cwd()` — the E-28 rule (the morph-it asset
- * uses the same pattern): a Next.js standalone/production build runs from a server
- * root where cwd is not the repo, and a module-relative `new URL(...)` also lets
- * Next's file tracer bundle the asset into the standalone output. The asset sits
- * beside this file, so the relative name is just its basename.
+ * Absolute path to the committed asset, resolved via `lexiconAssetPath` — beside
+ * this module when possible (cwd-independent, the E-28 intent), else against the
+ * project root. It does NOT use `new URL(..., import.meta.url)`: under Next's
+ * webpack server bundle that pattern is rewritten to a browser asset URL, not a
+ * filesystem path, which 500'd the v17 seed on first migration (see `asset-path.ts`).
  */
 function assetFile(): string {
-  return fileURLToPath(new URL("./frequency-lexicon.tsv.gz", import.meta.url));
+  return lexiconAssetPath(ASSET_PATH);
 }
 
 let cache: LexiconRecord[] | null = null;
