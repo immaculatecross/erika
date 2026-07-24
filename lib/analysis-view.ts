@@ -4,10 +4,10 @@
 // helpers. The server route fills this from lib/analysis/* (the job + findings)
 // and the page renders it — nothing here touches better-sqlite3 or the filesystem.
 
-import type { Category, Severity } from "./analysis/findings";
+import type { Category, FindingNotes, Severity } from "./analysis/findings";
 import type { AnalysisState } from "./analysis/cascade";
 
-export type { Category, Severity } from "./analysis/findings";
+export type { Category, FindingNotes, Severity } from "./analysis/findings";
 
 /**
  * UI state: the run's state, or "idle" when the session has never been analyzed
@@ -34,6 +34,14 @@ export interface FindingView {
   severity: Severity;
   startMs: number;
   endMs: number;
+  /**
+   * The enriched observation channel the richness dial paid for (E-28, v16),
+   * surfaced as the report's "Erika also noticed" line (E-30 P2). Null/absent when
+   * the deep model returned no enrichment for this finding — most findings. The
+   * three fields (pronunciation suspect, colto register upgrade, disfluency) are
+   * annotations ON the finding, subordinate to its correction.
+   */
+  notes?: FindingNotes | null;
 }
 
 /** A category paired with how many findings fall under it (may be zero). */

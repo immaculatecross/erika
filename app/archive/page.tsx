@@ -1,13 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Play } from "lucide-react";
-import { staggerContainer, staggerItem } from "@/lib/motion";
+import { staggerContainer } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
-import { formatCreatedAt, formatDuration } from "@/lib/format";
+import { formatCreatedAt } from "@/lib/format";
 import { EmptyState } from "@/components/empty-state";
+import { ArchiveRow } from "@/components/archive-row";
 import {
   filterEntries,
   groupBySession,
@@ -18,7 +17,6 @@ import {
   type CategoryFilter,
   type SeverityFilter,
 } from "@/lib/archive";
-import { SEVERITY_STYLES } from "@/lib/analysis-view";
 
 // The Speech archive (E-11, v0.2): your speaking life at a glance — every analyzed
 // moment in chronological order, newest session first, grouped by session, each
@@ -164,38 +162,9 @@ function Group({ group, reduced }: { group: ArchiveGroup; reduced: boolean }) {
         className="flex flex-col gap-2"
       >
         {group.entries.map((e) => (
-          <Row key={e.findingId} entry={e} reduced={reduced} />
+          <ArchiveRow key={e.findingId} entry={e} reduced={reduced} />
         ))}
       </motion.ul>
     </section>
-  );
-}
-
-function Row({ entry, reduced }: { entry: ArchiveEntry; reduced: boolean }) {
-  const sev = SEVERITY_STYLES[entry.severity];
-  return (
-    <motion.li variants={staggerItem(reduced)}>
-      <Link
-        href={`/sessions/${entry.sessionId}?t=${entry.startMs}`}
-        data-entry
-        data-entry-id={entry.findingId}
-        data-start-ms={entry.startMs}
-        className="flex items-center gap-3 rounded-control bg-card px-4 py-3 shadow-card transition-transform hover:bg-hairline active:scale-[0.99]"
-      >
-        <span className="tabular w-14 shrink-0 text-[13px] text-secondary">
-          {formatDuration(entry.startMs / 1000)}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[17px] text-ink">“{entry.quote}”</span>
-        <span className="hidden shrink-0 text-[13px] uppercase tracking-[0.06em] text-secondary sm:inline">
-          {entry.category}
-        </span>
-        <span
-          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.06em] ${sev.tint} ${sev.text}`}
-        >
-          {sev.label}
-        </span>
-        <Play size={16} strokeWidth={1.5} aria-hidden className="shrink-0 text-secondary" />
-      </Link>
-    </motion.li>
   );
 }
