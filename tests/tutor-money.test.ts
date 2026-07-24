@@ -4,7 +4,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { monthToDateSpend, reserveSpend, sweepStaleReservations } from "@/lib/analysis/budget";
-import { REALTIME_FLAGSHIP, REALTIME_MINI, realtimeSessionCost } from "@/lib/analysis/rates";
+import {
+  REALTIME_FLAGSHIP,
+  REALTIME_MINI,
+  REALTIME_RATES,
+  realtimeAudioTokensPerMinute,
+  realtimeSessionCost,
+} from "@/lib/analysis/rates";
 import {
   estimateTutorSessionUsd,
   openTutorLease,
@@ -52,6 +58,45 @@ describe("tutor per-session estimate", () => {
     expect(estimateTutorSessionUsd(FLAG, 10)).toBeCloseTo(realtimeSessionCost(FLAG, 10));
     expect(estimateTutorSessionUsd(FLAG, 10)).toBeGreaterThan(0);
     expect(estimateTutorSessionUsd(REALTIME_MINI, 10)).toBeLessThan(estimateTutorSessionUsd(FLAG, 10));
+  });
+});
+
+describe("the realtime rate table is at or above real pricing", () => {
+  // Under-pricing is the ONE direction that can overshoot the cap: the estimate and
+  // the lease are what the hard monthly cap is enforced against, so a rate below
+  // reality makes the cap a lie. Mini shipped at a $8/$16 placeholder (~¼ of
+  // flagship) and really costs $10/$20 per 1M audio tokens with $0.30/1M cached —
+  // verified 2026-07-24, see the citations above REALTIME_RATES. These assertions are
+  // FLOORS, not equalities: a future correction may raise a rate, never lower it.
+  const perMillion = (usdPerToken: number) => usdPerToken * 1_000_000;
+
+  it("prices flagship audio at no less than the verified $32 in / $0.40 cached / $64 out", () => {
+    const r = REALTIME_RATES[FLAG];
+    expect(perMillion(r.usdPerAudioInputToken)).toBeGreaterThanOrEqual(32);
+    expect(perMillion(r.usdPerCachedAudioInputToken)).toBeGreaterThanOrEqual(0.4);
+    expect(perMillion(r.usdPerAudioOutputToken)).toBeGreaterThanOrEqual(64);
+  });
+
+  it("prices mini audio at no less than the verified $10 in / $0.30 cached / $20 out", () => {
+    const r = REALTIME_RATES[REALTIME_MINI];
+    expect(perMillion(r.usdPerAudioInputToken)).toBeGreaterThanOrEqual(10);
+    expect(perMillion(r.usdPerCachedAudioInputToken)).toBeGreaterThanOrEqual(0.3);
+    expect(perMillion(r.usdPerAudioOutputToken)).toBeGreaterThanOrEqual(20);
+  });
+
+  it("books at least the researched audio-token throughput (~600 in / ~1200 out per minute)", () => {
+    // The throughput knob is a deliberate over-estimate for the same reason. If it is
+    // ever tuned DOWN below the researched figures the estimate starts under-pricing.
+    const { input, output } = realtimeAudioTokensPerMinute();
+    expect(input).toBeGreaterThanOrEqual(600);
+    expect(output).toBeGreaterThanOrEqual(1200);
+  });
+
+  it("a cached-audio rate is never priced above the uncached one it discounts", () => {
+    for (const model of [FLAG, REALTIME_MINI] as const) {
+      const r = REALTIME_RATES[model];
+      expect(r.usdPerCachedAudioInputToken).toBeLessThan(r.usdPerAudioInputToken);
+    }
   });
 });
 
