@@ -1,0 +1,62 @@
+{
+  "version": "1.0.0",
+  "language": "Italian",
+  "license": "public-domain",
+  "notice": "lib/canon/NOTICE.md",
+  "passages": [
+    {
+      "id": "collodi-pinocchio-incipit",
+      "author": "Carlo Collodi",
+      "work": "Le avventure di Pinocchio",
+      "year": 1883,
+      "cefr": "A1",
+      "text": "C'era una volta un pezzo di legno. Non era un legno di lusso, ma un semplice pezzo da catasta, di quelli che d'inverno si mettono nelle stufe e nei caminetti per accendere il fuoco e per riscaldare le stanze.",
+      "source": "Wikisource / Project Gutenberg (public domain)"
+    },
+    {
+      "id": "deamicis-cuore-primo-giorno",
+      "author": "Edmondo De Amicis",
+      "work": "Cuore",
+      "year": 1886,
+      "cefr": "A2",
+      "text": "Oggi, primo giorno di scuola. Passarono come un sogno quei tre mesi di vacanza in campagna. Questa mattina mia madre mi accompagnò alla scuola per farmi inscrivere alla terza elementare: io pensavo alla campagna e andavo di mala voglia.",
+      "source": "Wikisource / Project Gutenberg (public domain)"
+    },
+    {
+      "id": "verga-malavoglia-incipit",
+      "author": "Giovanni Verga",
+      "work": "I Malavoglia",
+      "year": 1881,
+      "cefr": "B1",
+      "text": "Un tempo i Malavoglia erano stati numerosi come i sassi della strada vecchia di Trezza; ce n'erano persino ad Ognina, e ad Aci Castello, tutti buona e brava gente di mare, proprio all'opposto di quel che sembrava dal nomignolo, come dev'essere.",
+      "source": "Wikisource / Project Gutenberg (public domain)"
+    },
+    {
+      "id": "manzoni-promessi-sposi-incipit",
+      "author": "Alessandro Manzoni",
+      "work": "I promessi sposi",
+      "year": 1840,
+      "cefr": "B2",
+      "text": "Quel ramo del lago di Como, che volge a mezzogiorno, tra due catene non interrotte di monti, tutto a seni e a golfi, a seconda dello sporgere e del rientrare di quelli, vien, quasi a un tratto, a ristringersi, e a prender corso e figura di fiume, tra un promontorio a destra, e un'ampia costiera dall'altra parte.",
+      "source": "Wikisource / Project Gutenberg (public domain)"
+    },
+    {
+      "id": "leopardi-infinito",
+      "author": "Giacomo Leopardi",
+      "work": "L'infinito",
+      "year": 1819,
+      "cefr": "C1",
+      "text": "Sempre caro mi fu quest'ermo colle, e questa siepe, che da tanta parte dell'ultimo orizzonte il guardo esclude. Ma sedendo e mirando, interminati spazi di là da quella, e sovrumani silenzi, e profondissima quiete io nel pensier mi fingo, ove per poco il cor non si spaura.",
+      "source": "Wikisource / Project Gutenberg (public domain)"
+    },
+    {
+      "id": "dante-inferno-i-incipit",
+      "author": "Dante Alighieri",
+      "work": "Inferno (Divina Commedia), Canto I",
+      "year": 1320,
+      "cefr": "C2",
+      "text": "Nel mezzo del cammin di nostra vita mi ritrovai per una selva oscura, ché la diritta via era smarrita. Ahi quanto a dir qual era è cosa dura esta selva selvaggia e aspra e forte che nel pensier rinova la paura!",
+      "source": "Wikisource / Project Gutenberg (public domain)"
+    }
+  ]
+}

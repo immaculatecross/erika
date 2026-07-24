@@ -1,5 +1,6 @@
 import type { Db } from "../db";
 import { readSettings } from "../settings";
+import { registerInstruction, coerceRegister, type Register } from "../register";
 import { finalizeReservation } from "../analysis/budget";
 import { TEXT_MODEL, estimateTokens, textCallCost } from "../analysis/rates";
 import { parseItemId } from "../knowledge/items";
@@ -9,7 +10,6 @@ import { extractJsonObject, TextModelParseError, type TextModelClient } from "./
 import { parseBilledResponse, runBilledTextCall } from "./billing";
 import {
   applyGlossFallback,
-  defaultRegister,
   ITEM_EXERCISE_TYPES,
   MIN_ITEM_EXERCISES,
   type ItemExercise,
@@ -46,9 +46,10 @@ export function posLabel(pos: Pos | null): string {
   return pos ? POS_LABEL[pos] : "word";
 }
 
-/** The register guidance injected into every prompt (D-23, default colto). */
+/** The register guidance injected into every prompt (E-33, D-23). Now the shared
+ *  dial instruction (lib/register.ts) — one source for recasts, lessons, TTS, tutor. */
 function registerLine(register: string): string {
-  return `Write in the "${register}" register of ${"Italian"}: elevated, precise, idiomatic contemporary Italian (no archaisms). Examples and correct answers must be natural in that register.`;
+  return registerInstruction(coerceRegister(register));
 }
 
 // ── prompts ──────────────────────────────────────────────────────────────────
@@ -215,10 +216,16 @@ export function itemLessonPrompt(db: Db, itemId: string, register: string): stri
   throw new Error(`E-32 does not generate a lesson for ${itemId}.`);
 }
 
+/** The register lesson generation writes in — the E-33 dial from Settings (D-23). */
+export function lessonRegister(db: Db): Register {
+  return coerceRegister(readSettings(db).register);
+}
+
 /** Worst-case USD to generate an item's lesson — the SAME upper bound the cap
- *  checks before the real call (display only, no model call, no write). */
+ *  checks before the real call (display only, no model call, no write). Uses the
+ *  live register so the estimate is built from the prompt the call will send. */
 export function itemLessonEstimateUsd(db: Db, itemId: string): number {
-  const prompt = itemLessonPrompt(db, itemId, defaultRegister());
+  const prompt = itemLessonPrompt(db, itemId, lessonRegister(db));
   return textCallCost(TEXT_MODEL, estimateTokens(prompt), ITEM_LESSON_MAX_OUTPUT_TOKENS);
 }
 
@@ -240,7 +247,7 @@ export async function generateItemLesson(
 
   const kind = itemLessonKind(itemId);
   if (!kind) throw new Error(`E-32 does not generate a lesson for ${itemId}.`);
-  const register = defaultRegister();
+  const register = lessonRegister(db);
   const prompt = itemLessonPrompt(db, itemId, register);
   const { completion, costUsd, reservation } = await runBilledTextCall(db, client, {
     prompt,

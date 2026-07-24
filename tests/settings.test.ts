@@ -42,7 +42,7 @@ describe("settings persistence", () => {
     db.close();
 
     // Fresh connection = simulated reload. Unset keys fall back to their defaults
-    // (the E-31 new-item caps were not written here).
+    // (the E-31 new-item caps and the E-33 register were not written here).
     const reopened = openDatabase(p);
     expect(readSettings(reopened)).toEqual({
       targetLanguage: "German",
@@ -52,8 +52,21 @@ describe("settings persistence", () => {
       newVocabPerDay: 10,
       newRulesPerDay: 3,
       newPronPerDay: 10,
+      register: "colto",
     });
     reopened.close();
+  });
+
+  it("persists the register dial across a reload and rejects an unknown register (E-33)", () => {
+    const p = tmpDbPath();
+    const db = openDatabase(p);
+    expect(readSettings(db).register).toBe("colto"); // default colto (D-23)
+    writeSettings(db, { register: "letterario" });
+    db.close();
+    const reopened = openDatabase(p);
+    expect(readSettings(reopened).register).toBe("letterario");
+    reopened.close();
+    expect(() => validateSettings({ register: "aulico" })).toThrow(SettingsValidationError);
   });
 
   it("coerces a numeric-string budget but keeps the number type", () => {

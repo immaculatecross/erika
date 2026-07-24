@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MODEL_TIERS, type ModelTier, type Settings } from "@/lib/settings";
+import { REGISTERS, type Register } from "@/lib/register";
 import { formatUsd } from "@/lib/format";
 
 type Status = { kind: "idle" | "saving" | "saved" } | { kind: "error"; message: string };
@@ -90,6 +91,33 @@ export default function SettingsPage() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* The register dial (E-33, D-23): how Erika phrases Italian — corrections,
+            lessons, the tutor voice, and spoken renders. Style only, never
+            correctness. Default colto. */}
+        <div className="flex flex-col gap-1.5" data-register-dial>
+          <span className={LABEL}>Register</span>
+          <div className="inline-flex flex-wrap gap-1 rounded-control border border-hairline p-1">
+            {REGISTERS.map((r) => (
+              <button
+                key={r}
+                type="button"
+                data-register={r}
+                data-selected={form.register === r ? "true" : "false"}
+                onClick={() => set("register", r as Register)}
+                className={`flex-1 rounded-[9px] px-3 py-1.5 text-[15px] capitalize transition-colors ${
+                  form.register === r ? "bg-accent text-accent-ink" : "text-secondary"
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          <span className="text-[13px] text-secondary">
+            How Erika phrases Italian — corrections, lessons, and the spoken voice. Colto is elevated,
+            cultured Italian.
+          </span>
         </div>
 
         <label className="flex flex-col gap-1.5">

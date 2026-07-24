@@ -4,18 +4,21 @@ import { MINI_MODEL, type ModelId } from "./rates";
 import {
   triagePrompt,
   deepPrompt,
+  recastRegisterInstruction,
   STRICT_JSON_INSTRUCTION,
   DOMINANT_SPEAKER_INSTRUCTION,
   RECURRENCE_INSTRUCTION,
   ENRICHED_NOTES_INSTRUCTION,
   PRODUCED_LEMMAS_INSTRUCTION,
 } from "./prompts";
+import { DEFAULT_REGISTER, type Register } from "../register";
 
 // Prompt builders live in ./prompts (500-line hook); re-exported here so the
 // cascade and the criterion-tests keep importing them from audio-model.
 export {
   triagePrompt,
   deepPrompt,
+  recastRegisterInstruction,
   STRICT_JSON_INSTRUCTION,
   DOMINANT_SPEAKER_INSTRUCTION,
   RECURRENCE_INSTRUCTION,
@@ -57,6 +60,9 @@ export interface DeepInput {
   /** The speaker profile the prompt is primed with (E-19). Optional: absent
    *  behaves exactly as before the profile existed. */
   profile?: SpeakerProfile;
+  /** The register the CORRECTION voice is phrased in (E-33, D-23). Optional:
+   *  absent defaults to colto, exactly as before the dial existed. */
+  register?: Register;
 }
 
 /** One correctly-produced (lemma, POS) the deep pass reports the speaker using
@@ -453,7 +459,7 @@ export const openAiAudioModel: AudioModelClient = {
     return interpret(MINI_MODEL, await callModel(MINI_MODEL, prompt, input, TRIAGE_MAX_OUTPUT_TOKENS), parseTriageResponse);
   },
   async deepListen(model, input, opts) {
-    const prompt = strict(deepPrompt(input.targetLanguage, input.profile), opts);
+    const prompt = strict(deepPrompt(input.targetLanguage, input.profile, input.register ?? DEFAULT_REGISTER), opts);
     return interpret(model, await callModel(model, prompt, input, DEEP_MAX_OUTPUT_TOKENS), parseDeepResponse);
   },
 };

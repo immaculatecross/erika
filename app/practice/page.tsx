@@ -224,7 +224,7 @@ export default function LearnTodayPage() {
           </motion.section>
         )}
 
-        <motion.div variants={staggerItem(reduced)} className="flex items-center gap-5">
+        <motion.div variants={staggerItem(reduced)} className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <Link
             href="/practice/cards"
             data-browse-cards
@@ -238,6 +238,21 @@ export default function LearnTodayPage() {
             className="text-[15px] font-medium text-secondary transition-colors hover:text-ink"
           >
             All lessons
+          </Link>
+          {/* The E-33 voice & canon formats (D-23, D-19). */}
+          <Link
+            href="/practice/reading"
+            data-open-reading
+            className="text-[15px] font-medium text-secondary transition-colors hover:text-ink"
+          >
+            Reading
+          </Link>
+          <Link
+            href="/practice/learn/shadow"
+            data-open-shadow
+            className="text-[15px] font-medium text-secondary transition-colors hover:text-ink"
+          >
+            Shadow
           </Link>
         </motion.div>
       </motion.div>

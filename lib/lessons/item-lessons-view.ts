@@ -1,4 +1,5 @@
 import { normalizeAnswer } from "./lessons-view";
+import { DEFAULT_REGISTER as REGISTER_DEFAULT } from "../register";
 
 // Client-safe view types and pure helpers for the E-32 item-lesson runner. The
 // server generator (lib/lessons/item-lessons.ts) imports node:crypto and
@@ -25,10 +26,11 @@ export type ItemLessonKind = (typeof ITEM_LESSON_KINDS)[number];
 export const ITEM_EXERCISE_TYPES = ["multiple_choice", "cloze"] as const;
 export type ItemExerciseType = (typeof ITEM_EXERCISE_TYPES)[number];
 
-/** The default register injected into every generated lesson (D-23, default colto).
- *  The colloquiale→letterario dial lands in Settings at E-33; until then this is the
- *  fixed default, read through `defaultRegister` so E-33 wires the dial in one place. */
-export const DEFAULT_REGISTER = "colto";
+/** The default register for a generated lesson (D-23, default colto). The E-33
+ *  register dial (lib/register.ts) is now the live source; lesson generation reads
+ *  it from Settings. This default remains for the estimate path and any caller
+ *  without a Settings context, and is the single shared constant (no divergence). */
+export const DEFAULT_REGISTER: string = REGISTER_DEFAULT;
 
 export function defaultRegister(): string {
   return DEFAULT_REGISTER;

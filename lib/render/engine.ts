@@ -1,29 +1,31 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { Db } from "../db";
 import type { Finding } from "../analysis/findings";
 import { readSettings } from "../settings";
 import { reserveSpend, finalizeReservation, releaseReservation } from "../analysis/budget";
 import { TTS_MODEL, ttsCallCost } from "../analysis/rates";
 import { BudgetExceededError } from "../lessons/billing";
+import { registerTtsInstruction, coerceRegister } from "../register";
 import { ensureRenditionsDir, renditionPath } from "../audio-storage";
 import { getRendition, insertRendition, deleteRendition, type Rendition } from "./renditions";
 import type { TtsModelClient } from "./tts-model";
 
-// The render-once engine for E-21 contrastive playback (D-10). Rendering a
-// finding's correction in the audio model's voice happens at most once, ever:
-// replays are pure cache hits with zero model calls and zero ledger rows, and the
-// monthly budget cap refuses generation truthfully with no call and no row. Reuses
-// E-4's budget spine (lib/analysis/budget.ts) and E-6's `BudgetExceededError`
-// exactly — the same shared cap the analysis cascade and the text lessons obey.
+// The render-once engine for E-21 contrastive playback (D-10), generalized by E-33
+// so a SECOND format family (listen-and-shadow, reading/listening) can render an
+// arbitrary CORRECT phrase through the SAME money path — reserve-before-call, one
+// ledger row per render, replay bills ZERO, cap hard cross-biller. The shared
+// `billedSynthesize` below IS that one biller (WO criterion 4: do NOT fork a second
+// money path); `renderCorrection` here and `renderPhrase` (lib/render/phrase.ts)
+// both drive it, differing only in their cache/lease table and cost key.
 //
 // Money-path invariant (mfactory D-15, never-waivable): recorded spend must equal
-// actual spend even under concurrent Generate. So this engine LEASES BEFORE IT
-// SPENDS — it claims the `finding_id` row first, before the budget check and before
-// the provider call, exactly as the analysis cascade claims its job lease before
-// calling the model. Only the request that wins the claim may call the provider;
-// racing losers detect the claim and return WITHOUT a second call and WITHOUT a
-// second ledger row. A claim that never bills (budget refusal or a failed
-// synthesize) is released, so it is a lease and not a permanent tombstone.
+// actual spend even under concurrent Generate. So both engines LEASE BEFORE THEY
+// SPEND — they claim the cache row first, before the budget check and the provider
+// call. Only the request that wins the claim may call the provider; racing losers
+// detect the claim and return WITHOUT a second call and WITHOUT a second ledger row.
+// A claim that never bills (budget refusal or a failed synthesize) is released, so it
+// is a lease and not a permanent tombstone.
 
 export { BudgetExceededError } from "../lessons/billing";
 
@@ -39,29 +41,55 @@ export function renditionEstimateUsd(correction: string): number {
 }
 
 /**
+ * The ONE TTS biller (WO criterion 4). Given a lease the CALLER has already claimed,
+ * this reserves the cost as a pending ledger row (atomically, committed + pending ≤
+ * cap), synthesizes once, finalizes the reservation to the actual charge, and writes
+ * the audio file. It does NOT own the lease — the caller claims and releases the
+ * cache row — so the same biller serves the finding-keyed and phrase-keyed caches
+ * identically. Throws `BudgetExceededError` BEFORE any call when the cap refuses the
+ * reservation (no call, no surviving ledger row); on a failed synthesize it releases
+ * the reservation (nothing billed) and rethrows. Ordering: reserve → synthesize →
+ * finalize → write. Money that left the provider is always ledgered before the file
+ * write, and playback is orphan-safe if the write fails.
+ */
+export async function billedSynthesize(
+  db: Db,
+  client: TtsModelClient,
+  input: { text: string; instructions?: string; contentHash: string; costUsd: number; path: string },
+): Promise<void> {
+  const { monthlyBudgetUsd } = readSettings(db);
+  const reservation = reserveSpend(
+    db,
+    { model: TTS_MODEL, contentHash: input.contentHash, costUsd: input.costUsd },
+    monthlyBudgetUsd,
+  );
+  if (!reservation) throw new BudgetExceededError();
+
+  let result;
+  try {
+    result = await client.synthesize({ text: input.text, instructions: input.instructions });
+  } catch (err) {
+    // Nothing was billed: release the reservation (frees the cap) and rethrow. The
+    // caller releases its own lease claim.
+    releaseReservation(db, reservation);
+    throw err;
+  }
+
+  // The provider was charged. From here the spend MUST be committed — the TTS cost is
+  // known up front (estimate == actual), so finalize at the reserved cost.
+  finalizeReservation(db, reservation, input.costUsd);
+  await mkdir(dirname(input.path), { recursive: true });
+  await writeFile(input.path, result.audio); // if this fails the row+ledger stand; playback is orphan-safe
+}
+
+/**
  * Render `finding`'s correction to a cached audio clip, or return the existing one.
- *
- *   * Cache hit (a rendition already exists): return it, `generated: false`. ZERO
- *     model calls, ZERO ledger rows — this is what makes replay free (criterion 1).
- *   * Claim lost (a concurrent Generate holds the lease): return the in-progress
- *     rendition, `generated: false`. ZERO model calls, ZERO ledger rows — the loser
- *     of the race NEVER makes a provider call (the money-path invariant, D-15).
- *   * Budget cap reached: release the claim, then throw `BudgetExceededError`
- *     BEFORE any model call. No call, no ledger row, no surviving row (criterion 2).
- *   * Otherwise: synthesize once, record the spend, write the file.
- *
- * Ordering is LEASE-BEFORE-SPEND: the `finding_id` PK row is claimed via
- * `insertRendition` FIRST — before the budget check and before `synthesize()`. The
- * claim is exclusive (PK + serialized statements), so exactly one request reaches
- * the provider; every racing request that fails the claim returns without a call
- * and without a charge. Because the cost is fully determined from the correction
- * length (estimate == actual), the claim row already carries its final cost; only
- * the spend record and the file write remain after a successful call. If the call
- * or the budget check does not go through, the claim is released (`deleteRendition`)
- * so it never permanently blocks a legitimate retry. `recordSpend` runs immediately
- * after a successful `synthesize()` — money that left the provider is always
- * ledgered — then the file is written; playback is orphan-safe regardless (the
- * audio route 404s on a missing file rather than crashing).
+ * The E-21 contract, unchanged: a cache hit / lost claim makes ZERO calls and rows;
+ * the budget cap refuses truthfully before any call; otherwise synthesize once,
+ * record the spend, write the file. E-33 additionally passes the register dial's TTS
+ * delivery instruction (D-23) so the correction voice matches the learner's register
+ * — style only, and the rendition cache key is still the finding id, so this never
+ * re-bills an existing rendition.
  */
 export async function renderCorrection(
   db: Db,
@@ -74,48 +102,29 @@ export async function renderCorrection(
   const costUsd = renditionEstimateUsd(finding.correction);
   const path = renditionPath(finding.id);
 
-  // LEASE FIRST: claim the finding_id row before the budget check and before the
-  // provider call. If we lose the claim, a concurrent Generate already holds it —
-  // make no call and bill nothing; hand back its in-progress rendition.
+  // LEASE FIRST: claim the finding_id row before the budget check and the call. If we
+  // lose the claim, a concurrent Generate holds it — make no call, bill nothing.
   const won = insertRendition(db, { findingId: finding.id, path, costUsd });
   if (!won) {
     return { rendition: getRendition(db, finding.id)!, generated: false };
   }
 
-  // RESERVE-BEFORE-CALL (E-28 criterion 5b): the cap must count this in-flight cost
-  // so a concurrent analysis cascade cannot reserve on top of it and push committed
-  // spend over the cap. `reserveSpend` inserts a PENDING ledger row atomically iff
-  // committed + pending + cost ≤ cap — the same guard the cascade uses (E-27), now
-  // shared, so the cross-biller path is pending-aware in BOTH directions. A refused
-  // reservation is a budget halt: release the claim, make no call, no row survives.
-  const { monthlyBudgetUsd } = readSettings(db);
-  const reservation = reserveSpend(
-    db,
-    { model: TTS_MODEL, contentHash: finding.contentHash, costUsd },
-    monthlyBudgetUsd,
-  );
-  if (!reservation) {
-    deleteRendition(db, finding.id);
-    throw new BudgetExceededError();
-  }
-
-  let result;
+  const instructions = registerTtsInstruction(coerceRegister(readSettings(db).register));
+  await ensureRenditionsDir();
   try {
-    result = await client.synthesize({ text: finding.correction });
+    await billedSynthesize(db, client, {
+      text: finding.correction,
+      instructions,
+      contentHash: finding.contentHash,
+      costUsd,
+      path,
+    });
   } catch (err) {
-    // A failed synthesize — NOTHING was billed: release the reservation (frees the
-    // cap) and the claim so a legitimate retry can re-lease and render.
-    releaseReservation(db, reservation);
+    // Budget refusal or a failed synthesize: neither committed. Release the claim so
+    // a legitimate retry can re-lease and render.
     deleteRendition(db, finding.id);
     throw err;
   }
-
-  // The provider was charged. From here the claim MUST stand and the spend MUST be
-  // committed — never release the row past this point, or a retry would re-bill. The
-  // TTS cost is known up front (estimate == actual), so finalize at the reserved cost.
-  finalizeReservation(db, reservation, costUsd);
-  await ensureRenditionsDir();
-  await writeFile(path, result.audio); // if this fails the row+ledger stay; playback is orphan-safe
 
   const rendition = getRendition(db, finding.id)!;
   return { rendition, generated: true };

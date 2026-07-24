@@ -1,4 +1,5 @@
 import { profileBlock, type SpeakerProfile } from "./profile";
+import { registerInstruction, DEFAULT_REGISTER, type Register } from "../register";
 
 // The prompt builders for the two audio-model calls (D-3, D-10), factored out of
 // lib/analysis/audio-model.ts to keep that file under the 500-line hook. Pure
@@ -72,12 +73,28 @@ export const PRODUCED_LEMMAS_INSTRUCTION =
   " (one of NOUN, PROPN, VERB, AUX, ADJ, ADV, PRON, DET, ADP, CCONJ, INTJ)}]. Prefer content words" +
   " (nouns, verbs, adjectives, adverbs). Use [] if there is nothing notable.";
 
-export function deepPrompt(targetLanguage: string, profile?: SpeakerProfile): string {
+/**
+ * The register instruction for the deep pass's CORRECTION voice (E-33, D-23). Each
+ * finding's `correction` is a recast of what the learner said — the WO injects the
+ * register dial here so the recast is phrased in the learner's chosen register
+ * (default colto). Style only: the register never changes WHETHER something is an
+ * error, only how the correct form is phrased.
+ */
+export function recastRegisterInstruction(register: Register): string {
+  return `${registerInstruction(register)} Each "correction" you give is a recast of the learner's words in this register.`;
+}
+
+export function deepPrompt(
+  targetLanguage: string,
+  profile?: SpeakerProfile,
+  register: Register = DEFAULT_REGISTER,
+): string {
   const hasEntries = (profile?.entries.length ?? 0) > 0;
   return [
     `You are an expert ${targetLanguage} coach reviewing a learner's speech at native speed.`,
     ...profileLines(profile),
     DOMINANT_SPEAKER_INSTRUCTION,
+    recastRegisterInstruction(register),
     "Identify each genuine error the dominant speaker makes. For each, give the quote, a correction,",
     "a category (one of: grammar, vocabulary, phrasing, idiom, pronunciation), a short explanation,",
     "a severity (high, medium, low), and its approximate start/end time within this clip in",
