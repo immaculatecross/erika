@@ -1,7 +1,7 @@
 import type { Db } from "../db";
 import { readSettings } from "../settings";
 import { registerInstruction, coerceRegister, type Register } from "../register";
-import { finalizeReservation, releaseReservation } from "../analysis/budget";
+import { finalizeReservation } from "../analysis/budget";
 import { TEXT_MODEL, estimateTokens, textCallCost } from "../analysis/rates";
 import { parseItemId } from "../knowledge/items";
 import { loadSyllabus, type SyllabusRule } from "../syllabus";

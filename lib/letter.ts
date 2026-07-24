@@ -73,6 +73,9 @@ export interface Letter {
   speechHours: number;
   totalFindings: number;
   ratePerHour: number;
+  /** [P1] Whether the week has enough analyzed speech for the per-hour rate to be
+   *  trustworthy; when false the letter states counts, not a collapsing rate. */
+  rateReliable: boolean;
   trend: LetterTrend;
   /** Up to three notable recasts from the week (see `selectRecasts`). */
   recasts: LetterFinding[];
@@ -216,6 +219,7 @@ export function composeWeek(sessions: readonly LetterSession[], weekStart: strin
     speechHours: focus.speechHours,
     totalFindings: focus.totalFindings,
     ratePerHour: focus.overallRatePerHour,
+    rateReliable: focus.rateReliable,
     trend: {
       direction: hasPrior ? direction(priorRate as number, focus.overallRatePerHour) : "flat",
       hasPrior,

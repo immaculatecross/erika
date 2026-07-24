@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles, Loader2, ArrowUpRight } from "lucide-react";
 import { SPRING } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
-import { formatUsd } from "@/lib/format";
+import { formatEstimate } from "@/lib/format";
 
 // Ask Erika (E-23, the v0.3 finale): ask any finding for a deeper note. Erika
 // returns a persisted explanation that ties this correction to at least one OTHER
@@ -99,7 +99,7 @@ export function AskErika({
           className="inline-flex w-fit items-center gap-1.5 rounded-full bg-accent px-3.5 py-1.5 text-[13px] font-medium text-accent-ink transition-transform active:scale-[0.97]"
         >
           <Sparkles size={16} strokeWidth={1.5} aria-hidden />
-          Ask — est. {formatUsd(status?.estimateUsd ?? 0)}
+          Ask — est. {formatEstimate(status?.estimateUsd ?? 0)}
         </button>
       ) : phase === "asking" ? (
         <span data-ask-asking className="inline-flex items-center gap-1.5 text-[13px] text-secondary">

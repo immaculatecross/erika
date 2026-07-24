@@ -76,10 +76,26 @@ export default function FocusPage() {
           className="flex flex-wrap items-end justify-between gap-6 rounded-card bg-card p-6 shadow-card"
         >
           <div>
-            <p className="tabular text-[34px] font-bold leading-none tracking-tight text-ink" data-focus-rate>
-              {model.overallRatePerHour.toFixed(1)}
-            </p>
-            <p className="mt-2 text-[15px] text-secondary">errors per speaking hour</p>
+            {model.rateReliable ? (
+              <>
+                <p className="tabular text-[34px] font-bold leading-none tracking-tight text-ink" data-focus-rate>
+                  {Math.round(model.overallRatePerHour)}
+                </p>
+                <p className="mt-2 text-[15px] text-secondary">errors per speaking hour</p>
+              </>
+            ) : (
+              <>
+                <p className="tabular text-[34px] font-bold leading-none tracking-tight text-ink" data-focus-count>
+                  {model.totalFindings}
+                </p>
+                <p className="mt-2 text-[15px] text-secondary">
+                  {model.totalFindings === 1 ? "finding" : "findings"} so far
+                </p>
+                <p className="mt-1 text-[13px] text-secondary" data-focus-floor>
+                  Not enough speech yet for a reliable rate.
+                </p>
+              </>
+            )}
             <p className="mt-1 tabular text-[13px] text-secondary">
               {model.speechHours.toFixed(1)} h of analyzed speech · {model.totalFindings}{" "}
               {model.totalFindings === 1 ? "finding" : "findings"} · {model.analyzedSessions}{" "}
@@ -87,8 +103,12 @@ export default function FocusPage() {
             </p>
           </div>
           <div className="flex flex-col items-end gap-2">
-            <Sparkline values={model.trend.map((t) => t.ratePerHour)} />
-            <TrendBadge trend={model.overallTrend} />
+            {model.rateReliable && (
+              <>
+                <Sparkline values={model.trend.map((t) => t.ratePerHour)} />
+                <TrendBadge trend={model.overallTrend} />
+              </>
+            )}
           </div>
         </motion.section>
 

@@ -70,7 +70,8 @@ export default function SessionsPage() {
             action={busy ? `Uploading ${upload.name}…` : "Upload audio"}
             onAction={pick}
             disabled={busy}
-            secondary={<Recorder onRecorded={load} disabled={busy} />}
+            actionVariant="secondary"
+            secondary={<Recorder onRecorded={load} disabled={busy} variant="primary" />}
           />
           {upload.kind === "error" && (
             <p className="pb-8 text-center text-[13px] text-severe" role="alert">
@@ -83,12 +84,13 @@ export default function SessionsPage() {
           <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-[34px] font-bold tracking-tight">Sessions</h1>
             <div className="flex flex-wrap items-center gap-3">
-              <Recorder onRecorded={load} disabled={busy} />
+              {/* [polish] Record leads (primary/accent); Upload is the secondary action. */}
+              <Recorder onRecorded={load} disabled={busy} variant="primary" />
               <button
                 type="button"
                 onClick={pick}
                 disabled={busy}
-                className="rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98] disabled:opacity-50"
+                className="rounded-full bg-black/[0.06] px-5 py-2.5 text-[15px] font-medium text-ink transition-transform hover:bg-black/[0.09] active:scale-[0.98] disabled:opacity-50 dark:bg-white/[0.08] dark:hover:bg-white/[0.12]"
               >
                 {busy ? `Uploading ${upload.name}…` : "Upload audio"}
               </button>

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { ensureLemmaItem } from "@/lib/knowledge/items";
-import { getItemLesson, insertItemLesson } from "@/lib/lessons/item-lessons";
+import { claimItemLesson, completeItemLesson, getItemLesson } from "@/lib/lessons/item-lessons";
 import type { NewItemLesson } from "@/lib/lessons/item-lessons-view";
 
 // Migration v20 — the item_lessons cache exists, a lesson round-trips its typed body
@@ -52,7 +52,9 @@ describe("migration v20 schema", () => {
 
   it("round-trips a lesson's typed body and enforces one lesson per item", () => {
     const db = freshDb();
-    const stored = insertItemLesson(db, LESSON);
+    // [T1] lease-before-call: claim the item_id row, then complete it with the body.
+    expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBe(true);
+    const stored = completeItemLesson(db, LESSON);
     expect(stored.intro).toBe(LESSON.intro);
     expect(stored.glossEn).toBe("house");
     expect(stored.exercises).toEqual(LESSON.exercises);
@@ -60,8 +62,8 @@ describe("migration v20 schema", () => {
     const read = getItemLesson(db, LESSON.itemId)!;
     expect(read.exercises[1]).toMatchObject({ type: "cloze", answer: "casa", gloss: "house" });
 
-    // The PK makes a second insert for the same item a truthful failure (cache once).
-    expect(() => insertItemLesson(db, LESSON)).toThrow();
+    // The PK makes a second CLAIM for the same item return false (cache once, one row).
+    expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBe(false);
     expect((db.prepare("SELECT COUNT(*) AS n FROM item_lessons").get() as { n: number }).n).toBe(1);
     db.close();
   });

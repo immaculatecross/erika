@@ -25,6 +25,16 @@ const MS_PER_HOUR = 3_600_000;
 // when deciding a trend's direction so a dead-equal rate reads "steady", not a flip.
 const EPS = 1e-9;
 
+/**
+ * [P1 — D-14] The minimum analyzed-speech time below which a per-hour error RATE is
+ * not trustworthy and must not be shown. With short captures the D-20 norm, the
+ * denominator (analyzed-speech hours) collapses toward zero, so a handful of findings
+ * in ~2 minutes extrapolates to an absurd "450/hr". Below this floor the surfaces show
+ * raw finding COUNTS and a quiet "not enough speech yet" instead of a rate. Five
+ * minutes of analyzed speech is a conservative floor (tunable). */
+export const MIN_RATE_SPEECH_MINUTES = 5;
+const MIN_RATE_SPEECH_HOURS = MIN_RATE_SPEECH_MINUTES / 60;
+
 /** improving = the rate FELL (fewer errors per hour later); worsening = it rose. */
 export type TrendDirection = "improving" | "worsening" | "flat";
 
@@ -63,6 +73,10 @@ export interface FocusModel {
   speechHours: number;
   totalFindings: number;
   overallRatePerHour: number;
+  /** [P1] Whether there is enough analyzed speech (≥ `MIN_RATE_SPEECH_MINUTES`) for
+   *  the per-hour rate to be trustworthy. When false, surfaces show counts + a quiet
+   *  "not enough speech yet", never the collapsing rate. */
+  rateReliable: boolean;
   overallTrend: TrendDirection;
   /** All five categories in CATEGORY_ORDER, zero-filled (never absent/NaN). */
   categories: CategoryMetric[];
@@ -146,6 +160,7 @@ export function computeFocus(sessions: readonly AnalyzedSession[]): FocusModel {
     speechHours,
     totalFindings,
     overallRatePerHour: perHour(totalFindings),
+    rateReliable: speechHours >= MIN_RATE_SPEECH_HOURS - EPS,
     overallTrend,
     categories,
     ranking,

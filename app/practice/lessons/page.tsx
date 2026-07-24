@@ -7,7 +7,7 @@ import { ArrowLeft } from "lucide-react";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { masteryLabel, masteryPercent, type PatternSummary } from "@/lib/lessons/lessons-view";
-import { formatUsd } from "@/lib/format";
+import { formatEstimate } from "@/lib/format";
 
 // The lessons list under Practice (E-6b; E-18 criterion 5): the user's recurring
 // error patterns (a category with >= 3 findings) from GET /api/lessons/patterns,
@@ -108,7 +108,7 @@ export default function LessonsPage() {
                   {p.count} {p.count === 1 ? "finding" : "findings"}
                 </span>
                 <span data-lesson-price className="tabular text-[13px] text-secondary">
-                  {p.hasLesson ? "Lesson ready" : `Generate — est. ${formatUsd(p.estimateUsd ?? 0)}`}
+                  {p.hasLesson ? "Lesson ready" : `Generate — est. ${formatEstimate(p.estimateUsd ?? 0)}`}
                 </span>
               </div>
               <div className="flex flex-col items-end gap-1.5">
