@@ -162,6 +162,33 @@ interface GeneratableFinding {
   start_ms: number;
 }
 
+// ---- what cannot become a card (E-37) --------------------------------------
+//
+// A card's front is derived by diffing the error against the correction
+// (`deriveFront`), so it needs a localized textual change to cue from. A PRONUNCIATION
+// finding has none — the spelling was never wrong — so the front degrades to a bare
+// "____ · pronunciation": a prompt nobody can answer, and precisely the defect
+// RETRO-003 named. Such findings belong to the pronunciation studio, where the learner
+// hears the correct line and says it back.
+//
+// This is a routing decision about a card's FORMAT, not a second findings gate: the
+// finding is as included as it ever was, and it is fully present in the Phrasebook, the
+// Archive and the report. One constant serves BOTH card paths — bulk generation and the
+// deliberate pin — so neither can produce an unanswerable card.
+
+export const UNCARDABLE_CATEGORIES: ReadonlySet<string> = new Set(["pronunciation"]);
+
+/** Whether a finding of this category can become an answerable card. */
+export function isCardable(category: string): boolean {
+  return !UNCARDABLE_CATEGORIES.has(category);
+}
+
+/** The SQL form of `isCardable`, built from the same constant. The values are internal
+ *  literals from the closed `CATEGORIES` vocabulary, never user input. */
+const CARDABLE_CATEGORY_SQL = `f.category NOT IN (${[...UNCARDABLE_CATEGORIES]
+  .map((c) => `'${c}'`)
+  .join(", ")})`;
+
 /**
  * Create one card per finding that does not have one yet, due immediately for a
  * first review. Idempotent: findings already carrying a card are skipped by the
@@ -174,15 +201,9 @@ interface GeneratableFinding {
  * `NOT EXISTS` clauses on top are deck bookkeeping — already carded, or tombstoned
  * by a deliberate delete — not a second opinion about what a finding is.
  *
- * [E-37] PRONUNCIATION findings are excluded: a typed cloze cannot test a
- * mispronunciation. `deriveFront` degrades them to a bare "____ · pronunciation"
- * prompt — a card that asks you to type a word whose SPELLING was never wrong
- * (RETRO-003). Those findings now route to the pronunciation studio, where the
- * learner hears the correct rendition and re-records it for a real per-phoneme score
- * (lib/pronunciation/drills.ts). This is a routing decision about a card's *format*,
- * not a second findings gate: the finding is as included as it ever was, and the
- * deliberate Phrasebook pin (`createCardForFinding`) still works if a user explicitly
- * wants one in the deck.
+ * [E-37] UNCARDABLE findings are excluded — see `UNCARDABLE_CATEGORIES`. Both this
+ * bulk path and the deliberate Phrasebook pin apply the SAME rule, from the same
+ * constant, so no path can mint an unanswerable card.
  */
 export function generateCards(db: Db): number {
   const findings = db
@@ -190,7 +211,7 @@ export function generateCards(db: Db): number {
       `SELECT f.id, f.session_id, f.quote, f.correction, f.explanation, f.category, f.start_ms
          FROM findings f
         WHERE ${INCLUDED_FINDING_SCOPE}
-          AND f.category <> 'pronunciation'
+          AND ${CARDABLE_CATEGORY_SQL}
           AND NOT EXISTS (SELECT 1 FROM cards c WHERE c.finding_id = f.id)
           AND NOT EXISTS (SELECT 1 FROM deleted_findings d WHERE d.finding_id = f.id)`,
     )
@@ -222,23 +243,40 @@ export function generateCards(db: Db): number {
 }
 
 /**
+ * The outcome of pinning a finding — three genuinely different answers the route must
+ * be able to tell apart, which a bare `Card | null` could not.
+ */
+export type PinOutcome =
+  | { status: "pinned"; card: Card }
+  | { status: "not_found" }
+  /** The finding cannot become an answerable card; it belongs to another surface. */
+  | { status: "not_cardable"; category: string };
+
+/**
  * Pin one finding into the deck (E-9): ensure a card exists for it, deliberately
  * clearing any `deleted_findings` tombstone first — so a finding the user removed
  * from their deck (E-5b) can be added back on purpose. Idempotent: the
  * `finding_id` UNIQUE key + INSERT OR IGNORE means a second pin is a no-op and the
- * existing card (with its live schedule) is untouched — no duplicate. Returns the
- * finding's card, or null if the finding does not exist. This is the ONLY seam
- * that un-tombstones; the bulk `generateCards` still skips tombstoned findings.
+ * existing card (with its live schedule) is untouched — no duplicate. This is the ONLY
+ * seam that un-tombstones; the bulk `generateCards` still skips tombstoned findings.
+ *
+ * [E-37] An UNCARDABLE finding is refused here, not just in bulk generation. Honouring
+ * an explicit user act is the right instinct, but a pronunciation finding's spelling was
+ * never wrong, so `deriveFront` has no localized change to cue from and degrades to a
+ * bare "____ · pronunciation" — a card that cannot be answered. Minting it on request
+ * does not make it work; it just means we broke it because the user asked. The pin route
+ * sends these to the studio instead, which is the surface that can actually drill them.
  */
-export function createCardForFinding(db: Db, findingId: string): Card | null {
-  return db.transaction(() => {
+export function pinFinding(db: Db, findingId: string): PinOutcome {
+  return db.transaction((): PinOutcome => {
     const f = db
       .prepare(
         `SELECT id, session_id, quote, correction, explanation, category, start_ms
            FROM findings WHERE id = ?`,
       )
       .get(findingId) as GeneratableFinding | undefined;
-    if (!f) return null;
+    if (!f) return { status: "not_found" };
+    if (!isCardable(f.category)) return { status: "not_cardable", category: f.category };
 
     // A pin overrides a prior delete: drop the tombstone so the card returns.
     db.prepare("DELETE FROM deleted_findings WHERE finding_id = ?").run(findingId);
@@ -258,8 +296,18 @@ export function createCardForFinding(db: Db, findingId: string): Card | null {
     );
 
     const row = db.prepare(`${SELECT_CARD} WHERE finding_id = ?`).get(findingId) as CardRow | undefined;
-    return row ? toCard(row) : null;
+    return row ? { status: "pinned", card: toCard(row) } : { status: "not_found" };
   })();
+}
+
+/**
+ * The pre-E-37 pin signature, kept for callers that only need "did a card result?".
+ * An uncardable finding yields null here exactly as a missing one does — the route uses
+ * `pinFinding` when it needs to tell those two apart.
+ */
+export function createCardForFinding(db: Db, findingId: string): Card | null {
+  const outcome = pinFinding(db, findingId);
+  return outcome.status === "pinned" ? outcome.card : null;
 }
 
 const SELECT_CARD = "SELECT * FROM cards";

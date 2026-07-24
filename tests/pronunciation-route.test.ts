@@ -20,6 +20,7 @@ let studioGET: typeof import("@/app/api/pronunciation/route").GET;
 let drillGET: typeof import("@/app/api/pronunciation/[drillKey]/route").GET;
 let drillPOST: typeof import("@/app/api/pronunciation/[drillKey]/route").POST;
 let visitPOST: typeof import("@/app/api/pronunciation/[drillKey]/visit/route").POST;
+let pinPOST: typeof import("@/app/api/phrasebook/[findingId]/pin/route").POST;
 let getDb: typeof import("@/lib/db").getDb;
 let createSession: typeof import("@/lib/sessions").createSession;
 let persistSegmentFindings: typeof import("@/lib/analysis/findings").persistSegmentFindings;
@@ -38,6 +39,7 @@ beforeAll(async () => {
   drillGET = drill.GET;
   drillPOST = drill.POST;
   visitPOST = (await import("@/app/api/pronunciation/[drillKey]/visit/route")).POST;
+  pinPOST = (await import("@/app/api/phrasebook/[findingId]/pin/route")).POST;
   getDb = (await import("@/lib/db")).getDb;
   createSession = (await import("@/lib/sessions")).createSession;
   persistSegmentFindings = (await import("@/lib/analysis/findings")).persistSegmentFindings;
@@ -190,6 +192,38 @@ describe("POST /api/pronunciation/[drillKey]/visit — the no-key practice recor
     const res = await visitPOST(new Request("http://localhost", { method: "POST" }), ctx("finding:nope"));
     expect(res.status).toBe(404);
     expect((await res.json()).error.code).toBe("drill_not_found");
+  });
+});
+
+describe("POST /api/phrasebook/[findingId]/pin — a pronunciation recast is routed, not carded", () => {
+  it("mints no card and points the learner at the drill that can practise it", async () => {
+    const findingId = seedPronFinding();
+    const res = await pinPOST(new Request("http://localhost", { method: "POST" }), {
+      params: Promise.resolve({ findingId }),
+    });
+    expect(res.status).toBe(200); // being sent somewhere better is not an error
+    const body = (await res.json()) as {
+      inDeck: boolean;
+      routedTo: string;
+      studioPath: string;
+      message: string;
+    };
+    expect(body.inDeck).toBe(false);
+    expect(body.routedTo).toBe("studio");
+    expect(body.studioPath).toBe(
+      `/practice/learn/studio/${encodeURIComponent(drillKeyForFinding(findingId))}`,
+    );
+    expect(body.message).toMatch(/practise it in the studio/i);
+    expect(body.message).not.toContain("!"); // calm, no apology, no error styling (D-24)
+
+    // No card exists for it — the unanswerable "____ · pronunciation" is never minted.
+    expect(
+      (getDb().prepare("SELECT COUNT(*) AS n FROM cards WHERE finding_id = ?").get(findingId) as { n: number }).n,
+    ).toBe(0);
+
+    // And the path it hands back resolves to a real drill.
+    const drill = await drillGET(new Request("http://localhost"), ctx(drillKeyForFinding(findingId)));
+    expect(drill.status).toBe(200);
   });
 });
 

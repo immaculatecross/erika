@@ -75,6 +75,31 @@ export interface PronunciationResult {
   words: PronouncedWord[];
 }
 
+// ---- drill addressing (client-safe) ---------------------------------------
+//
+// A drill key is `<source>:<ref>`. These three helpers live HERE, in the module with no
+// imports at all, so a client component can address a drill without importing
+// lib/pronunciation/drills.ts — which reaches the database through the findings model
+// and must never enter a browser bundle. `drills.ts` imports and re-exports them, so
+// there is still exactly one definition of the format.
+
+/** The drill-source id for findings-backed drills (the only producer today). */
+export const FINDING_DRILL_SOURCE = "finding";
+
+export function drillKeyOf(source: string, sourceRef: string): string {
+  return `${source}:${sourceRef}`;
+}
+
+/** The key a finding-sourced drill files its attempts and visits under. */
+export function drillKeyForFinding(findingId: string): string {
+  return drillKeyOf(FINDING_DRILL_SOURCE, findingId);
+}
+
+/** The studio route for a drill key — the one place that path is spelled. */
+export function studioDrillPath(drillKey: string): string {
+  return `/practice/learn/studio/${encodeURIComponent(drillKey)}`;
+}
+
 /** Azure reports offsets and durations in 100-nanosecond units. */
 export const TICKS_PER_MS = 10_000;
 

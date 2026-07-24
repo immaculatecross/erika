@@ -25,6 +25,11 @@ let openDatabase: typeof import("@/lib/db").openDatabase;
 let createSession: typeof import("@/lib/sessions").createSession;
 let persistSegmentFindings: typeof import("@/lib/analysis/findings").persistSegmentFindings;
 let generateCards: typeof import("@/lib/cards").generateCards;
+let pinFinding: typeof import("@/lib/cards").pinFinding;
+let createCardForFinding: typeof import("@/lib/cards").createCardForFinding;
+let deriveFront: typeof import("@/lib/cards-view").deriveFront;
+let CLOZE_BLANK: typeof import("@/lib/cards-view").CLOZE_BLANK;
+let studioDrillPath: typeof import("@/lib/pronunciation").studioDrillPath;
 let listPronunciationDrills: typeof import("@/lib/pronunciation").listPronunciationDrills;
 let resolveDrill: typeof import("@/lib/pronunciation").resolveDrill;
 let pronunciationDrill: typeof import("@/lib/pronunciation").pronunciationDrill;
@@ -101,12 +106,19 @@ beforeAll(async () => {
   openDatabase = (await import("@/lib/db")).openDatabase;
   createSession = (await import("@/lib/sessions")).createSession;
   persistSegmentFindings = (await import("@/lib/analysis/findings")).persistSegmentFindings;
-  generateCards = (await import("@/lib/cards")).generateCards;
+  const cards = await import("@/lib/cards");
+  generateCards = cards.generateCards;
+  pinFinding = cards.pinFinding;
+  createCardForFinding = cards.createCardForFinding;
+  const cardsView = await import("@/lib/cards-view");
+  deriveFront = cardsView.deriveFront;
+  CLOZE_BLANK = cardsView.CLOZE_BLANK;
   const pron = await import("@/lib/pronunciation");
   listPronunciationDrills = pron.listPronunciationDrills;
   resolveDrill = pron.resolveDrill;
   pronunciationDrill = pron.pronunciationDrill;
   drillKeyForFinding = pron.drillKeyForFinding;
+  studioDrillPath = pron.studioDrillPath;
   scoreAttempt = pron.scoreAttempt;
   recordVisit = pron.recordVisit;
   createFixtureScorer = (await import("@/lib/pronunciation/fixture-scorer")).createFixtureScorer;
@@ -154,6 +166,51 @@ describe("E-37 criterion 4 — pronunciation signal routes to the studio", () =>
     expect(carded.map((c) => c.category)).toEqual(["grammar"]);
     // …and the one that lost its card is exactly the one the studio now owns.
     expect(listPronunciationDrills(db).map((d) => d.referenceText)).toEqual([PRON_FINDING.correction]);
+  });
+
+  // The bulk exclusion above and this pin are the ONLY two paths that mint a card, and
+  // they are pinned together deliberately: an explicit user act does not make an
+  // unanswerable card acceptable, it just means we broke it on request.
+  it("the deliberate Phrasebook PIN also refuses to mint a degraded pronunciation card", () => {
+    const db = freshDb();
+    seed(db, [PRON_FINDING, PLAIN_GRAMMAR]);
+    const pronId = findingIdByQuote(db, PRON_FINDING.quote);
+    const grammarId = findingIdByQuote(db, PLAIN_GRAMMAR.quote);
+
+    // This is what the pin WOULD have handed the learner: an unanswerable prompt,
+    // because the pronunciation finding's spelling was never wrong (RETRO-003).
+    expect(deriveFront(PRON_FINDING.quote, PRON_FINDING.correction, "pronunciation")).toBe(
+      `${CLOZE_BLANK} · pronunciation`,
+    );
+
+    const refused = pinFinding(db, pronId);
+    expect(refused.status).toBe("not_cardable");
+    expect(refused).toMatchObject({ category: "pronunciation" });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM cards WHERE finding_id = ?").get(pronId)).toEqual({ n: 0 });
+    // The legacy signature refuses too — no caller can slip past the rule.
+    expect(createCardForFinding(db, pronId)).toBeNull();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM cards WHERE finding_id = ?").get(pronId)).toEqual({ n: 0 });
+
+    // A normal finding still pins exactly as before — the rule is narrow.
+    const pinned = pinFinding(db, grammarId);
+    expect(pinned.status).toBe("pinned");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM cards WHERE finding_id = ?").get(grammarId)).toEqual({ n: 1 });
+
+    // A missing finding is still distinguishable from a refused one.
+    expect(pinFinding(db, "no-such-finding").status).toBe("not_found");
+  });
+
+  it("the learner is directed to the drill instead — the surface that can practise it", () => {
+    const db = freshDb();
+    seed(db, [PRON_FINDING]);
+    const pronId = findingIdByQuote(db, PRON_FINDING.quote);
+
+    // The route's pointer resolves to a real, resolvable drill for that same finding.
+    const key = drillKeyForFinding(pronId);
+    expect(studioDrillPath(key)).toBe(`/practice/learn/studio/${encodeURIComponent(key)}`);
+    const drill = resolveDrill(db, key);
+    expect(drill).not.toBeNull();
+    expect(drill!.referenceText).toBe(PRON_FINDING.correction); // the correct line (D-18)
   });
 
   it("resolves a drill only through its producer — an arbitrary key is refused", () => {

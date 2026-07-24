@@ -1,7 +1,17 @@
 import type { Db } from "../db";
 import type { Finding } from "../analysis/findings";
 import { getIncludedFinding, listIncludedFindings } from "../findings-model";
-import { MAX_DRILL_SECONDS } from "./types";
+import {
+  drillKeyForFinding,
+  drillKeyOf,
+  FINDING_DRILL_SOURCE,
+  MAX_DRILL_SECONDS,
+  studioDrillPath,
+} from "./types";
+
+// Re-exported so `lib/pronunciation` stays the one import site for drill addressing,
+// while the definitions live in the client-safe `types.ts` (see the note there).
+export { drillKeyForFinding, drillKeyOf, studioDrillPath };
 
 // What the studio drills, and where a drill COMES FROM (E-37, RETRO-002 P4 /
 // RETRO-003).
@@ -66,21 +76,12 @@ export interface DrillSource {
   get(db: Db, sourceRef: string): PronunciationDrill | null;
 }
 
-export function drillKeyOf(source: string, sourceRef: string): string {
-  return `${source}:${sourceRef}`;
-}
-
 /** Split a drill key into its producer and ref. The ref may itself contain colons, so
  *  only the FIRST separator is significant. */
 export function parseDrillKey(drillKey: string): { source: string; sourceRef: string } | null {
   const i = drillKey.indexOf(":");
   if (i <= 0 || i === drillKey.length - 1) return null;
   return { source: drillKey.slice(0, i), sourceRef: drillKey.slice(i + 1) };
-}
-
-/** The key a finding-sourced drill files attempts under. */
-export function drillKeyForFinding(findingId: string): string {
-  return drillKeyOf(FINDING_SOURCE_ID, findingId);
 }
 
 /**
@@ -104,7 +105,7 @@ function drillable(referenceText: string): boolean {
 
 // ---- the findings producer ------------------------------------------------
 
-const FINDING_SOURCE_ID = "finding";
+const FINDING_SOURCE_ID = FINDING_DRILL_SOURCE;
 
 /**
  * Whether a finding belongs in the studio: it is a pronunciation-category finding, OR

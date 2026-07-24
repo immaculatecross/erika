@@ -1,14 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
-import { Check, Plus } from "lucide-react";
+import { AudioLines, Check, Plus } from "lucide-react";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
 import { CompareControl } from "@/components/compare-control";
 import { AskErika } from "@/components/ask-erika";
 import { RevealableError } from "@/components/revealable-error";
+// Client-safe drill addressing only (lib/pronunciation/types.ts has no imports at all);
+// the studio's DB-backed modules must never enter a browser bundle.
+import { drillKeyForFinding, studioDrillPath } from "@/lib/pronunciation/types";
 import {
   filterEntries,
   CATEGORY_ORDER,
@@ -199,7 +203,20 @@ function Row({
           </span>
         </div>
 
-        {entry.inDeck ? (
+        {/* [E-37] A pronunciation recast cannot become an answerable card — its
+            spelling was never wrong, so a card front degrades to "____ · pronunciation"
+            (RETRO-003). It gets the surface that can actually drill it instead: hear the
+            correct line, say it back. Calm pointer, no apology, no error styling (D-24). */}
+        {entry.category === "pronunciation" ? (
+          <Link
+            href={studioDrillPath(drillKeyForFinding(entry.findingId))}
+            data-practise-in-studio
+            className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] px-3.5 py-1.5 text-[13px] font-medium text-ink transition-transform active:scale-[0.97] dark:bg-white/[0.08]"
+          >
+            <AudioLines size={16} strokeWidth={1.5} aria-hidden />
+            Practise in Studio
+          </Link>
+        ) : entry.inDeck ? (
           <span
             data-in-deck-marker
             className="inline-flex items-center gap-1.5 text-[13px] font-medium text-secondary"
