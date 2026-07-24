@@ -20,13 +20,19 @@ import { INCLUDED_FINDING_SCOPE, listAnalysedSessions, listIncludedFindingsWithS
 
 export type { Category } from "./analysis/findings";
 
-/** A slip is resolved after this many clean *analysed* sessions since its last
- *  occurrence. Below this (but > 0) it is in remission; 0 clean = still active. */
-export const RESOLVED_CLEAN_SESSIONS = 3;
-
-/** active = seen in the latest analysed session · remission = clean but < N ·
- *  resolved = clean for ≥ N analysed sessions. Green attaches only to the last two. */
-export type SlipState = "active" | "remission" | "resolved";
+// The active/remission/resolved state machine and its status copy live in
+// lib/slip-standing.ts (pure, client-safe, under the 500-line hook); re-exported
+// here so every `@/lib/slips` import is unchanged.
+export {
+  RESOLVED_CLEAN_SESSIONS,
+  computeSlipStanding,
+  shortDate,
+  statusLine,
+  type SlipState,
+  type SlipStanding,
+} from "./slip-standing";
+import { computeSlipStanding, statusLine } from "./slip-standing";
+import type { SlipState, SlipStanding } from "./slip-standing";
 
 // ── pure core ────────────────────────────────────────────────────────────────
 
@@ -157,50 +163,6 @@ export function clusterFindings(findings: readonly SlipFinding[]): SlipCluster[]
   return clusters;
 }
 
-/** A slip's computed standing: its state and the evidence behind it. */
-export interface SlipStanding {
-  state: SlipState;
-  /** The `created_at` of the most recent session this slip occurred in. */
-  lastOccurrenceAt: string;
-  /** Analysed sessions strictly after the last occurrence — all necessarily clean. */
-  cleanSessionsSince: number;
-}
-
-/**
- * Compute a slip's state from its last occurrence and the analysed sessions that
- * came after it. Every analysed session later than the last occurrence is clean by
- * construction (the slip did not recur in it), so the count of those is the whole
- * story: ≥ N ⇒ resolved, 1..N-1 ⇒ remission, 0 ⇒ still active. "Analysed" is the
- * canonical read-model's definition, so a FAILED run's completed segments count
- * exactly like a done run's — nothing about stopping early un-says the evidence.
- */
-export function computeSlipStanding(
-  lastOccurrenceAt: string,
-  analysedSessionDates: readonly string[],
-): SlipStanding {
-  const clean = analysedSessionDates.filter((d) => d > lastOccurrenceAt).length;
-  const state: SlipState =
-    clean >= RESOLVED_CLEAN_SESSIONS ? "resolved" : clean > 0 ? "remission" : "active";
-  return { state, lastOccurrenceAt, cleanSessionsSince: clean };
-}
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** A SQLite UTC timestamp → a short, locale-free "13 Jul" (deterministic in tests). */
-export function shortDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return iso;
-  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] ?? m[2]}`;
-}
-
-/** The one quiet status line a slip wears — real dates, never a cheer (DESIGN). */
-export function statusLine(standing: SlipStanding): string {
-  const since = shortDate(standing.lastOccurrenceAt);
-  if (standing.state === "active") return `Still active — last heard ${since}`;
-  const n = standing.cleanSessionsSince;
-  return `Not heard since ${since} · ${n} ${n === 1 ? "session" : "sessions"} clean`;
-}
-
 /** One row on a slip's dossier timeline — an occurrence, a card, or a mastery mark. */
 export type DossierItem =
   | {
@@ -276,6 +238,35 @@ function analysedSessionDates(db: Db): string[] {
   return listAnalysedSessions(db).map((s) => s.createdAt);
 }
 
+// [RETRO-002 P3] A slip's green (remission/resolved) requires a positive
+// production/drill event, not mere absence of recurrence. The event today is a
+// PASSING card grade (`good`/`easy`) on one of the slip's findings — the user
+// confronted the correction and reproduced it correctly. (`again` is a lapse and
+// never counts.) Spontaneous re-use in a later recording will also count once the
+// knowledge core links slips to items; until then the drill is the signal.
+
+/** Slip ids that carry ≥1 passing drill grade on one of their findings. */
+function positiveEventSlipIds(db: Db): Set<string> {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT fs.slip_id AS slip_id
+         FROM finding_slips fs
+         JOIN cards c ON c.finding_id = fs.finding_id
+        WHERE c.last_grade IN ('good','easy')`,
+    )
+    .all() as { slip_id: string }[];
+  return new Set(rows.map((r) => r.slip_id));
+}
+
+/** Finding ids that carry a passing drill grade — the cluster-keyed form of the
+ *  positive-event signal, for the pure-clustering `resolvedSlipCount`. */
+function positiveDrillFindingIds(db: Db): Set<string> {
+  const rows = db
+    .prepare("SELECT DISTINCT finding_id FROM cards WHERE last_grade IN ('good','easy')")
+    .all() as { finding_id: string }[];
+  return new Set(rows.map((r) => r.finding_id));
+}
+
 /**
  * Materialize the clustering: upsert one `slips` row per cluster (keyed by the
  * deterministic `slip_key`, so a re-analysis of the same findings keeps the same
@@ -321,6 +312,7 @@ interface SlipAggRow {
  */
 export function listSlips(db: Db): SlipSummary[] {
   const dates = analysedSessionDates(db);
+  const positive = positiveEventSlipIds(db);
   const rows = db
     .prepare(
       `SELECT sl.id AS id, sl.category AS category, sl.correction AS correction,
@@ -335,7 +327,7 @@ export function listSlips(db: Db): SlipSummary[] {
     .all() as SlipAggRow[];
 
   const summaries = rows.map((r): SlipSummary => {
-    const standing = computeSlipStanding(r.last_at, dates);
+    const standing = computeSlipStanding(r.last_at, dates, positive.has(r.id));
     return {
       id: r.id,
       category: r.category,
@@ -380,6 +372,7 @@ export function buildSlipsIndex(db: Db): SlipsIndex {
 export function resolvedSlipCount(db: Db): number {
   const clusters = clusterFindings(collectSlipFindings(db));
   const dates = analysedSessionDates(db);
+  const drilled = positiveDrillFindingIds(db);
   const findingSession = new Map<string, string>();
   for (const f of listIncludedFindingsWithSession(db)) findingSession.set(f.id, f.sessionCreatedAt);
   let resolved = 0;
@@ -389,7 +382,8 @@ export function resolvedSlipCount(db: Db): number {
       const at = findingSession.get(fid);
       if (at && at > lastAt) lastAt = at;
     }
-    if (lastAt && computeSlipStanding(lastAt, dates).state === "resolved") resolved++;
+    const hasPositive = c.findingIds.some((fid) => drilled.has(fid));
+    if (lastAt && computeSlipStanding(lastAt, dates, hasPositive).state === "resolved") resolved++;
   }
   return resolved;
 }
@@ -465,7 +459,8 @@ export function getSlipDossier(db: Db, id: string): SlipDossier | null {
 
   const dates = analysedSessionDates(db);
   const lastAt = occRows[occRows.length - 1].at;
-  const standing = computeSlipStanding(lastAt, dates);
+  const hasPositive = positiveEventSlipIds(db).has(id);
+  const standing = computeSlipStanding(lastAt, dates, hasPositive);
   return {
     id: slip.id,
     category: slip.category,

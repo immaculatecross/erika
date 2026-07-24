@@ -41,13 +41,17 @@ describe("settings persistence", () => {
     });
     db.close();
 
-    // Fresh connection = simulated reload.
+    // Fresh connection = simulated reload. Unset keys fall back to their defaults
+    // (the E-31 new-item caps were not written here).
     const reopened = openDatabase(p);
     expect(readSettings(reopened)).toEqual({
       targetLanguage: "German",
       nativeLanguage: "Spanish",
       modelTier: "deep",
       monthlyBudgetUsd: 40,
+      newVocabPerDay: 10,
+      newRulesPerDay: 3,
+      newPronPerDay: 10,
     });
     reopened.close();
   });
@@ -68,5 +72,17 @@ describe("settings persistence", () => {
   it("rejects an empty language and an unknown model tier", () => {
     expect(() => validateSettings({ targetLanguage: "   " })).toThrow(SettingsValidationError);
     expect(() => validateSettings({ modelTier: "turbo" })).toThrow(SettingsValidationError);
+  });
+
+  it("validates the new-item-per-day caps as whole non-negative numbers (E-31)", () => {
+    const db = openDatabase(tmpDbPath());
+    const saved = writeSettings(db, { newVocabPerDay: "12", newRulesPerDay: 0, newPronPerDay: 5 });
+    expect(saved.newVocabPerDay).toBe(12); // numeric string coerced, type kept
+    expect(saved.newRulesPerDay).toBe(0);
+    expect(saved.newPronPerDay).toBe(5);
+    db.close();
+    expect(() => validateSettings({ newVocabPerDay: -1 })).toThrow(SettingsValidationError);
+    expect(() => validateSettings({ newRulesPerDay: 2.5 })).toThrow(SettingsValidationError);
+    expect(() => validateSettings({ newPronPerDay: "abc" })).toThrow(SettingsValidationError);
   });
 });

@@ -211,6 +211,26 @@ describe("'known' needs corroboration (criterion 5, D-19)", () => {
     expect(getItem(db, item)!.status).toBe("lapsed"); // a slip since the last correct
   });
 
+  // [RETRO-002 P3/T3] Recognition positives must NOT corroborate `known` (D-19).
+  it("does NOT count a recognition positive toward 'known' — a spontaneous + a recognition-non-audio is not enough", () => {
+    const db = freshDb();
+    ensureLemmaItem(db, "parola", "NOUN");
+    ev(db, { polarity: 1, mode: "spontaneous", audio: true, day: "2026-01-01" }); // one real production positive
+    ev(db, { polarity: 1, mode: "recognition", audio: false, day: "2026-01-02" }); // recognition can't corroborate
+    // Before the fix this satisfied the gate (2 positives / 2 days / a non-audio one);
+    // now recognition is excluded from every clause, so only ONE corroborating positive remains.
+    expect(getItem(db, item)!.status).not.toBe("known");
+  });
+
+  it("reaches 'known' when the SECOND corroborating positive is a real (non-recognition) drill", () => {
+    const db = freshDb();
+    ensureLemmaItem(db, "parola", "NOUN");
+    ev(db, { polarity: 1, mode: "spontaneous", audio: true, day: "2026-01-01" });
+    ev(db, { polarity: 1, mode: "recognition", audio: false, day: "2026-01-02" }); // ignored for `known`
+    ev(db, { polarity: 1, mode: "cued", audio: false, day: "2026-01-03" }); // the real corroboration
+    expect(getItem(db, item)!.status).toBe("known");
+  });
+
   it("deriveStatus is a pure function of the event list", () => {
     // unseen with no evidence; introduced with only recognition.
     expect(deriveStatus([])).toBe("unseen");

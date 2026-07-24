@@ -2,6 +2,7 @@ import type { Db } from "../db";
 import { isPos } from "../lexicon/pos";
 import { attestsLemma } from "../lexicon/morphit";
 import { ensureLemmaItem, recordEvidence, UnvalidatedLemmaError } from "../knowledge";
+import { bumpYield } from "../knowledge/yield";
 import type { ProducedLemma } from "./audio-model";
 
 // Positive production evidence (E-28, D-19). The deep pass reports the lemmas the
@@ -31,6 +32,7 @@ import type { ProducedLemma } from "./audio-model";
  */
 export function recordProducedLemmas(db: Db, sessionId: string, produced: ProducedLemma[]): number {
   let written = 0;
+  const emitted = produced.length;
   for (const { lemma, pos } of produced) {
     // morph-it citation forms are lower-case; the model may capitalize.
     const canonical = lemma.toLowerCase();
@@ -54,6 +56,13 @@ export function recordProducedLemmas(db: Db, sessionId: string, produced: Produc
         // Intentionally quiet: enrichment is best-effort, not money or findings.
       }
     }
+  }
+  // [RETRO-002 T2] Record the yield so a near-empty attestation rate is visible in
+  // the dev knowledge inspector rather than silent. Best-effort; never fails the run.
+  try {
+    bumpYield(db, { emitted, attested: written, dropped: emitted - written });
+  } catch {
+    // observability must never break analysis (D-13).
   }
   return written;
 }

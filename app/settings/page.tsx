@@ -104,6 +104,32 @@ export default function SettingsPage() {
           />
         </label>
 
+        {/* The daily composer's new-item caps (E-31): how many new items at the
+            knowledge edge enter today's plan, per kind. Whole numbers ≥ 0. */}
+        <div className="flex flex-col gap-3 border-t border-hairline pt-4" data-new-item-caps>
+          <span className={LABEL}>New items per day</span>
+          <div className="grid grid-cols-3 gap-3">
+            {(
+              [
+                ["newVocabPerDay", "Words"],
+                ["newRulesPerDay", "Rules"],
+                ["newPronPerDay", "Sounds"],
+              ] as const
+            ).map(([key, label]) => (
+              <label key={key} className="flex flex-col gap-1.5">
+                <span className="text-[13px] text-secondary">{label}</span>
+                <input
+                  className={`${FIELD} tabular`}
+                  inputMode="numeric"
+                  data-cap={key}
+                  value={String(form[key])}
+                  onChange={(e) => set(key, e.target.value as unknown as Settings[typeof key])}
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+
         {/* Month-to-date spend from spend_ledger (E-18 criterion 4) — display
             only; the cap and every budget check live server-side, untouched.
             Red only when the cap is reached: that state carries meaning. */}
