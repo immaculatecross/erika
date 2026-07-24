@@ -104,7 +104,7 @@ describe("surface 3 — TTS instructions carry the dial", () => {
 describe("surface 4 — the tutor persona hook receives the dial (E-34 slot)", () => {
   it("builds a persona that carries the register instruction", () => {
     for (const r of REGISTERS as readonly Register[]) {
-      const persona = buildTutorPersona({ register: r, targetLanguage: "Italian" });
+      const persona = buildTutorPersona({ register: r, targetLanguage: "Italian", nativeLanguage: "English" });
       expect(persona).toContain(registerInstruction(r));
     }
   });

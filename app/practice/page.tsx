@@ -164,6 +164,22 @@ export default function LearnTodayPage() {
           )}
         </motion.section>
 
+        {/* The spoken tutor (E-34, D-24): a conversation steered toward your own
+            recurring mistakes; it records like any session, so it still yields
+            findings. Estimate + cap live on the tutor surface. */}
+        <motion.section variants={staggerItem(reduced)} data-today-tutor className="flex flex-col gap-3">
+          <span className={CAPTION}>Speak</span>
+          <Link href="/practice/tutor" data-open-tutor className={ROW}>
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="text-[17px] font-semibold text-ink">Talk with Erika</span>
+              <span className="text-[15px] text-secondary">
+                A spoken conversation, steered toward your slips and today&rsquo;s targets.
+              </span>
+            </span>
+            <ArrowRight size={20} strokeWidth={1.5} className="shrink-0 text-secondary" aria-hidden />
+          </Link>
+        </motion.section>
+
         {/* The one lesson the ranking prescribes (E-18, reused). */}
         {today.lesson && (
           <motion.section variants={staggerItem(reduced)} data-today-lesson className="flex flex-col gap-3">
