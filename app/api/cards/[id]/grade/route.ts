@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { getCard, gradeCard, toCardView } from "@/lib/cards";
+import { getCard, getCardView, gradeCard } from "@/lib/cards";
 import { isGrade } from "@/lib/cards-view";
 
 // Grade one card (E-5): the runner POSTs { grade: "again" | "hard" | "good" |
@@ -24,7 +24,7 @@ export async function POST(request: Request, { params }: Ctx) {
 
   const card = gradeCard(db, id, body.grade);
   return NextResponse.json({
-    card: toCardView(card),
+    card: getCardView(db, id),
     schedule: {
       ease: card.ease,
       intervalDays: card.intervalDays,

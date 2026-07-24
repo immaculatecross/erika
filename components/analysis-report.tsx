@@ -9,12 +9,14 @@ import { formatDuration } from "@/lib/format";
 import { SEVERITY_STYLES, type AnalysisView, type FindingView } from "@/lib/analysis-view";
 
 // The findings report (E-4 part 2 criterion 3): a row of per-category counts
-// across the five categories, then the findings themselves — each collapsed to
-// its quote and severity, expanding in place (layout animation) to reveal the
-// correction, the explanation, and a jump-to-audio control that seeks the reused
-// player to the finding's start. Severity styling comes whole from the shared
-// SEVERITY_STYLES (D-14, E-18 criterion 6): red high, orange medium, low neutral
-// — green is reserved for resolved/mastered/improving.
+// across the five categories, then the findings themselves. Correction-forward
+// (E-29, D-18): each row leads with the CORRECTION and its severity, expanding in
+// place (layout animation) to reveal the reason, the original quote shown exactly
+// once — subordinate and marked as the error, the one confrontation — and a
+// jump-to-audio control that seeks the reused player to the finding's start.
+// Severity styling comes whole from the shared SEVERITY_STYLES (D-14, E-18
+// criterion 6): red high, orange medium, low neutral — green is reserved for
+// resolved/mastered/improving.
 
 interface Props {
   view: AnalysisView;
@@ -79,21 +81,24 @@ function CountRow({ view }: { view: AnalysisView }) {
   );
 }
 
-function FindingRow({
+export function FindingRow({
   finding,
   onJump,
   highlighted = false,
   scrollTo = false,
   onSelect,
+  defaultOpen = false,
 }: {
   finding: FindingView;
   onJump: (startMs: number) => void;
   highlighted?: boolean;
   scrollTo?: boolean;
   onSelect?: (finding: FindingView) => void;
+  /** Seed the expanded state — used by render tests; the app starts collapsed. */
+  defaultOpen?: boolean;
 }) {
   const reduced = usePrefersReducedMotion();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const sev = SEVERITY_STYLES[finding.severity];
   const ref = useRef<HTMLLIElement>(null);
 
@@ -125,7 +130,9 @@ function FindingRow({
         className="flex w-full items-center gap-3 px-4 py-3 text-left transition-transform active:scale-[0.99]"
       >
         <span className={`h-2 w-2 shrink-0 rounded-full ${sev.dot}`} aria-hidden />
-        <span className="min-w-0 flex-1 truncate text-[17px] text-ink">“{finding.quote}”</span>
+        <span data-finding-correction className="min-w-0 flex-1 truncate text-[17px] text-ink">
+          “{finding.correction}”
+        </span>
         <span
           className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-[0.06em] ${sev.tint} ${sev.text}`}
         >
@@ -153,13 +160,24 @@ function FindingRow({
             className="overflow-hidden"
           >
             <div className="flex flex-col gap-3 px-4 pb-4">
-              <Line label="You said" value={`“${finding.quote}”`} />
-              <Line label="Erika's recast" value={`“${finding.correction}”`} accent />
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-secondary">
                   Why
                 </span>
                 <p className="text-[15px] leading-[1.47] text-ink">{finding.explanation}</p>
+              </div>
+              {/* The one confrontation (E-29, D-18): the original quote, shown once,
+                  subordinate to the correction above and marked as the error. */}
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-secondary">
+                  You said
+                </span>
+                <p
+                  data-finding-error
+                  className="text-[15px] leading-[1.47] text-severe line-through decoration-severe/60"
+                >
+                  “{finding.quote}”
+                </p>
               </div>
               <div className="flex items-center gap-3 pt-1">
                 <button
@@ -182,16 +200,5 @@ function FindingRow({
         )}
       </AnimatePresence>
     </motion.li>
-  );
-}
-
-function Line({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-secondary">
-        {label}
-      </span>
-      <p className={`text-[15px] leading-[1.47] ${accent ? "text-ink" : "text-secondary"}`}>{value}</p>
-    </div>
   );
 }

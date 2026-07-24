@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Download } from "lucide-react";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
-import { splitBack, type CardBrowserView } from "@/lib/cards-view";
+import { type CardBrowserView } from "@/lib/cards-view";
 
 // The card browser (E-5b): every card with its front, back, category, due date,
 // and suspended state, plus suspend/unsuspend, a confirm-guarded delete, and an
@@ -121,7 +121,6 @@ export default function CardBrowserPage() {
         className="flex flex-col gap-3"
       >
         {cards.map((card) => {
-          const { recast, why } = splitBack(card.back);
           const busy = pending === card.id;
           return (
             <motion.li
@@ -139,9 +138,22 @@ export default function CardBrowserPage() {
                   {card.suspended ? "Suspended" : dueLabel(card.due)}
                 </span>
               </div>
-              <p className="text-[17px] font-semibold leading-tight text-ink">“{card.front}”</p>
+              {/* Correction-forward (E-29): the meaning-first cue leads, the
+                  correct form is the answer, and the error shows once, marked. */}
+              <p className="text-[17px] font-semibold leading-tight text-ink">{card.front}</p>
               <p className="text-[15px] leading-[1.47] text-secondary">
-                “{recast}”{why ? ` — ${why}` : ""}
+                “{card.correction}”{card.why ? ` — ${card.why}` : ""}
+              </p>
+              <p className="flex flex-wrap items-baseline gap-1.5">
+                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-secondary">
+                  you said
+                </span>
+                <span
+                  data-card-error
+                  className="text-[13px] text-severe line-through decoration-severe/60"
+                >
+                  “{card.error}”
+                </span>
               </p>
 
               <div className="flex items-center gap-2 pt-1">

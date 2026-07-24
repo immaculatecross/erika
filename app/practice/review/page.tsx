@@ -143,7 +143,9 @@ export default function PracticeReviewPage() {
             >
               <Flashcard
                 front={current.front}
-                back={current.back}
+                correction={current.correction}
+                why={current.why}
+                error={current.error}
                 category={current.category}
                 flipped={flipped}
                 findingId={current.findingId}
