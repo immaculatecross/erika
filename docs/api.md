@@ -105,3 +105,49 @@ The weekly letter is the reference example of the reads-do-not-write rule:
   It is **forward-only**: re-posting an older or equal week never regresses the
   marker. The letter screen fires this after it has shown the letter, so the
   Practice plan's `letterUnread` flips exactly as before.
+
+## The realtime tutor (E-34)
+
+The spoken tutor is the most expensive money path AND an external contract, so its
+routes carry two never-waivable classes — secret exposure and spend.
+
+- `GET /api/tutor/session` — the pre-call estimate: the per-session cost, the
+  month-to-date spend, the cap, the remaining budget, and the tier model. No side
+  effects (a GET records nothing, D-25).
+- `POST /api/tutor/session` — **open** a session. It reserves the estimate against
+  the cap (`openTutorLease`, the ONE reserve-before-call spine — no forked money
+  path) and, only if the cap admits it, mints a **short-lived ephemeral client
+  secret** server-side (`POST https://api.openai.com/v1/realtime/client_secrets`,
+  authorized by the real `OPENAI_API_KEY`). The response carries **only** the
+  ephemeral secret + the session config (instructions, the `log_evidence` tool, the
+  voice) the browser needs — **the real key never reaches the client**
+  (secret-exposure, never-waivable). At the cap it returns `402` and mints nothing;
+  with no server key it returns `503` and mints nothing.
+- `POST /api/tutor/session/:id/heartbeat` (body `{ elapsedSeconds }`) — extend the
+  lease so its reservation stays ahead of the call; a `402` means the cap cannot
+  cover more and the client winds the call down. A long call can never silently
+  overshoot the budget.
+- `POST /api/tutor/session/:id/end` (body `{ elapsedSeconds }`) — finalize the lease
+  to the **actual** elapsed cost, clamped to what was reserved (the lease can't be
+  overshot): one committed ledger row per session. Money only — it writes no
+  findings or evidence.
+- `POST /api/tutor/evidence` (body `{ itemId, polarity, mode }`) — the `log_evidence`
+  tool bridge. The browser forwards each tool call the model makes; the server writes
+  one row to the append-only evidence log through the E-25 door on a **validated** id
+  (morph-it-attested lemma / seeded rule). An invalid id is rejected (`400`), never
+  minted.
+
+The call **records client-side** and, on end, lands as a **normal session** through
+the same `uploadAudio` → `finalizeStagedUpload` → ingest path as any capture, so its
+findings are the one truth (E-17) — there is no separate tutor findings channel.
+
+**The money lease reuses the ONE `spend_ledger`** (no new table): a session's
+reservations are `pending` rows keyed by `content_hash = tutor:<id>`, reserved
+through the shared `reserveSpend` (committed + pending ≤ cap, atomically), released
+by the existing startup sweep if a client stops heart-beating.
+
+**Operator-gated live smoke.** The live WebRTC call needs a configured
+`OPENAI_API_KEY` AND the egress proxy to allowlist `api.openai.com` (blocked in the
+build sandbox — a 403 host-not-allowlisted). Everything is built to mock + fixture
+behind seams (`lib/tutor/mint.ts`, `lib/tutor/realtime-client.ts`); the real
+end-to-end WebRTC conversation is an operator follow-up, documented, not faked.

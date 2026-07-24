@@ -38,3 +38,30 @@ Branch `feat/tutor` off latest `master`; empty commit + `git push -u origin feat
 
 ## Exit report
 Append to the WO per `task.md`: RESULT / PR / Changed / Verified (commands + the key-never-in-browser test + the log_evidence→evidence test + the record→ingest test + the money/lease/cap tests; note the operator-gated live WebRTC smoke) / Tests / Risks / Blocker.
+
+---
+
+## Exit report — 2026-07-24
+
+RESULT: done
+PR: feat/tutor → master (E-34, closes v0.5)
+Changed:
+- `lib/analysis/rates.ts` — realtime tier: `gpt-realtime-2.1` (flagship) / `-mini`, per-token audio in/out/cached rates, documented per-minute throughput knob, `realtimePerMinuteUsd`/`realtimeSessionCost`; `RealtimeModelId` added to `BillableModelId`.
+- `lib/tutor/money.ts` — per-session estimate + lease on the ONE reserve-before-call spine (no forked money path): `openTutorLease`/`ensureTutorLeaseCovers` (heartbeat)/`finalizeTutorLease` (one committed row, clamped to reserved)/`releaseTutorLease`; lease = `pending` rows keyed `content_hash='tutor:<id>'`, swept by the existing `sweepStaleReservations`. NO new table/migration.
+- `lib/tutor/mint.ts` — the ephemeral-mint seam (`POST /v1/realtime/client_secrets` with the real key server-side; returns only the ephemeral secret; `MinterUnavailableError` with no key).
+- `lib/tutor/persona.ts` — grown from the E-33 hook to the full instruction (profile L1 + slips + today targets + register + the `log_evidence` contract, D-18).
+- `lib/tutor/session-config.ts` — DB glue: collects profile/slips/composer-targets through the canonical readers, builds the persona, ships the Realtime session config + the `log_evidence` function tool.
+- `lib/tutor/log-evidence.ts` — the `log_evidence` → evidence bridge: validates ids (morph-it lemma / seeded rule), rejects invalid (never mints), writes append-only through the E-25 door (source `tutor`).
+- `lib/tutor/realtime-client.ts` — the WebRTC client seam (SDP offer/answer + data-channel + log_evidence dispatch), injectable/unit-tested; the browser uses ONLY the ephemeral secret.
+- Routes: `app/api/tutor/session` (GET estimate, POST open+mint), `.../session/[id]/heartbeat`, `.../session/[id]/end`, `app/api/tutor/evidence`.
+- UI: `components/tutor/dots-field.tsx` (D-24 dots, no avatar/waveform), `app/practice/tutor/page.tsx` (estimate → connect → record via `uploadAudio` → end), Learn home tutor row (`app/practice/page.tsx`).
+- `lib/settings.ts` + `app/settings/page.tsx` — removed the dead `modelTier` control [RETRO-002 P5]; added the `realtimeTier` flagship/mini switch (default flagship).
+- Docs/ritual: `docs/api.md` tutor section; `docs/schema.md` spend_ledger note (no migration); FEATURES E-34 → done; STATE regenerated (End of v0.5).
+Verified (exact commands):
+- `npx vitest run` → **708 passed** (100 files), up from 672. New: `tutor-money` (estimate/lease/heartbeat/finalize-clamp/release/cross-biller-cap/sweep), `tutor-persona` (payload has L1 + slips + today items + register + log_evidence), `tutor-evidence` (validated-id writes + reject unattested lemma/unknown rule + derived rebuild), `tutor-mint-route` (**the real key never appears in the client response** while it authorizes the mint server-side; 402 cap refusal mints no token; 503 with no key mints nothing), `tutor-record-ingest` (a tutor take lands as a normal session + queued ingest job; the end route writes no findings/evidence), `tutor-realtime-client` (handshake + log_evidence dispatch with the ephemeral secret), `tutor-dots-render` (dots only, no avatar/waveform).
+- `npm run lint` clean · `npm run typecheck` clean · `npm run build` OK (`/practice/tutor` + `/api/tutor/*` in the bundle).
+Tests changed/removed: `tests/settings.test.ts` — dropped the `modelTier` assertions (the control was removed, RETRO-002 P5), added `realtimeTier` persistence + a "modelTier is gone" assertion. `tests/register.test.ts` — the E-33 persona-hook call now passes `nativeLanguage` (persona input grew). No test was weakened.
+Risks:
+- Realtime rates + per-minute token throughput are documented approximations (no live key; T1 owed) — the cap guards the *modeled* budget, hard; pin the exact model ids/prices/voice against the account model list at real-run.
+- The live WebRTC call is unexercised here (no key AND the proxy blocks `api.openai.com`) — operator-gated smoke, documented in `docs/api.md`. Everything else is mock/fixture-tested behind seams.
+Blocker: none.
