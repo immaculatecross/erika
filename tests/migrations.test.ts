@@ -124,6 +124,19 @@ describe("migrations runner", () => {
     db.close();
   });
 
+  it("v18 seeds the grammar syllabus as rule: knowledge_items (E-26b)", () => {
+    const db = openDatabase(tmpDbPath());
+    const n = (db.prepare("SELECT COUNT(*) AS n FROM knowledge_items WHERE kind = 'rule'").get() as { n: number }).n;
+    expect(n).toBeGreaterThanOrEqual(250);
+    // Every seeded rule carries a cefr and a JSON prereqs array.
+    const sample = db.prepare("SELECT prereqs, cefr FROM knowledge_items WHERE id = 'rule:congiuntivo-presente'").get() as
+      | { prereqs: string; cefr: string }
+      | undefined;
+    expect(sample?.cefr).toBe("B1");
+    expect(Array.isArray(JSON.parse(sample!.prereqs))).toBe(true);
+    db.close();
+  });
+
   it("v8 collapses pre-existing duplicate findings so the unique index can build", () => {
     // A database written before the lease landed may already carry duplicates
     // from a double-run. Migrating must dedupe rather than fail to apply.
