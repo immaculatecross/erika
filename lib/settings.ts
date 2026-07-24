@@ -10,7 +10,16 @@ export interface Settings {
   nativeLanguage: string;
   modelTier: ModelTier;
   monthlyBudgetUsd: number;
+  // The daily composer's new-item caps (E-31, D-19): how many NEW items at the
+  // knowledge edge enter each day's plan, per kind. Defaults 10 / 3 / 10 (WO).
+  newVocabPerDay: number;
+  newRulesPerDay: number;
+  newPronPerDay: number;
 }
+
+/** The three new-item-per-day caps that are user-settable — the composer's
+ *  per-kind budget (its `dailyMax` ceiling is a composer constant, not a knob). */
+export const NEW_ITEM_CAP_KEYS = ["newVocabPerDay", "newRulesPerDay", "newPronPerDay"] as const;
 
 export const DEFAULT_SETTINGS: Settings = {
   targetLanguage: "Italian",
@@ -23,6 +32,9 @@ export const DEFAULT_SETTINGS: Settings = {
   // covers roughly a dump a day plus short captures. Still user-editable in
   // Settings; the hard cap (E-27 reserve-before-call) makes the spend safe.
   monthlyBudgetUsd: 50,
+  newVocabPerDay: 10,
+  newRulesPerDay: 3,
+  newPronPerDay: 10,
 };
 
 /** Read all four preferences, filling any unset key from DEFAULT_SETTINGS. */
@@ -33,11 +45,18 @@ export function readSettings(db: Db): Settings {
   }[];
   const stored = new Map(rows.map((r) => [r.key, r.value]));
   const budget = stored.get("monthlyBudgetUsd");
+  const capOr = (key: (typeof NEW_ITEM_CAP_KEYS)[number]): number => {
+    const v = stored.get(key);
+    return v !== undefined ? Number(v) : DEFAULT_SETTINGS[key];
+  };
   return {
     targetLanguage: stored.get("targetLanguage") ?? DEFAULT_SETTINGS.targetLanguage,
     nativeLanguage: stored.get("nativeLanguage") ?? DEFAULT_SETTINGS.nativeLanguage,
     modelTier: (stored.get("modelTier") as ModelTier) ?? DEFAULT_SETTINGS.modelTier,
     monthlyBudgetUsd: budget !== undefined ? Number(budget) : DEFAULT_SETTINGS.monthlyBudgetUsd,
+    newVocabPerDay: capOr("newVocabPerDay"),
+    newRulesPerDay: capOr("newRulesPerDay"),
+    newPronPerDay: capOr("newPronPerDay"),
   };
 }
 
@@ -75,6 +94,16 @@ export function validateSettings(patch: Record<string, unknown>): Partial<Settin
       throw new SettingsValidationError("monthlyBudgetUsd must be a number of dollars, 0 or more.");
     }
     out.monthlyBudgetUsd = n;
+  }
+
+  for (const key of NEW_ITEM_CAP_KEYS) {
+    if (patch[key] === undefined) continue;
+    const raw = patch[key];
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (typeof raw === "boolean" || raw === "" || raw === null || !Number.isInteger(n) || n < 0) {
+      throw new SettingsValidationError(`${key} must be a whole number of items, 0 or more.`);
+    }
+    out[key] = n;
   }
 
   return out;

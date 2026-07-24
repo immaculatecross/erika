@@ -3,6 +3,7 @@ import { INCLUDED_FINDING_SCOPE } from "./findings-model";
 import { retrievability, seedStability } from "./srs";
 import { materializeSlips, listSlips } from "./slips";
 import { nextLocalDay } from "./local-day";
+import { readSettings } from "./settings";
 import type { KnowledgeStatus } from "./knowledge";
 
 // The daily composer (E-31, D-19). `compose(day)` builds the learner's plan for a
@@ -51,6 +52,19 @@ export interface ComposeCaps {
 }
 
 export const DEFAULT_CAPS: ComposeCaps = { newVocab: 10, newRules: 3, newPron: 10, dailyMax: 40 };
+
+/** Build the composer's caps from Settings: the three new-item-per-day knobs the
+ *  user controls, plus the fixed `dailyMax` total-capacity ceiling (a constant, not
+ *  a knob — it exists only to create the spill pressure that defers new material). */
+export function capsFromSettings(db: Db): ComposeCaps {
+  const s = readSettings(db);
+  return {
+    newVocab: s.newVocabPerDay,
+    newRules: s.newRulesPerDay,
+    newPron: s.newPronPerDay,
+    dailyMax: DEFAULT_CAPS.dailyMax,
+  };
+}
 
 /** A grammar-rule prereq counts as satisfied once the user has REAL (non-recognition)
  *  evidence on it — it is being learned, known, or was (lapsed). Recognition-only
