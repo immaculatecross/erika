@@ -223,8 +223,9 @@ export default function LearnTodayPage() {
         )}
 
         {/* New material the composer queued at the knowledge edge. Grammar and
-            vocabulary are doable micro-lessons now (E-32); pronunciation routes to
-            the studio at E-37, so it stays informational for the moment. */}
+            vocabulary are doable micro-lessons (E-32); pronunciation ("sounds")
+            routes to the studio (E-37), where a sound is practised through a real
+            scored drill. */}
         {newTotal > 0 && (
           <motion.section variants={staggerItem(reduced)} data-today-new className="flex flex-col gap-3">
             <span className={CAPTION}>New today</span>
@@ -246,9 +247,12 @@ export default function LearnTodayPage() {
                 <ArrowRight size={20} strokeWidth={1.5} className="shrink-0 text-secondary" aria-hidden />
               </Link>
             ) : (
-              <p className="tabular text-[15px] text-secondary">
-                {today.newItems.pronunciation} sounds at your edge.
-              </p>
+              <Link href="/practice/learn/studio" data-today-new-sounds className={ROW}>
+                <span className="tabular text-[15px] text-secondary">
+                  {today.newItems.pronunciation} sounds at your edge.
+                </span>
+                <ArrowRight size={20} strokeWidth={1.5} className="shrink-0 text-secondary" aria-hidden />
+              </Link>
             )}
           </motion.section>
         )}
@@ -292,6 +296,15 @@ export default function LearnTodayPage() {
             className="text-[15px] font-medium text-secondary transition-colors hover:text-ink"
           >
             Shadow
+          </Link>
+          {/* The E-37 pronunciation studio (D-21): hear a correct line, say it back,
+              get a per-word and per-sound score. */}
+          <Link
+            href="/practice/learn/studio"
+            data-open-studio
+            className="text-[15px] font-medium text-secondary transition-colors hover:text-ink"
+          >
+            Studio
           </Link>
         </motion.div>
       </motion.div>

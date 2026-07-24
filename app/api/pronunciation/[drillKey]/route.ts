@@ -17,8 +17,8 @@ import {
   buildResultView,
   drillEstimateUsd,
   listAttemptsForDrill,
-  pronunciationDrill,
   pronunciationThresholds,
+  resolveDrill,
   resolvePronunciationScorer,
   scoreAttempt,
   BudgetExceededError,
@@ -28,6 +28,8 @@ import {
   PronunciationScorerUnavailableError,
   MAX_DRILL_SECONDS,
   UNCALIBRATED_NOTICE,
+  UNSCORED_NOTICE,
+  whatToListenFor,
 } from "@/lib/pronunciation";
 
 // One pronunciation drill (E-37, D-21/D-18).
@@ -45,7 +47,7 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Ctx = { params: Promise<{ findingId: string }> };
+type Ctx = { params: Promise<{ drillKey: string }> };
 
 /** A drill take is one short sentence; 12 MB of 16 kHz mono WAV is ~6 minutes, far
  *  above the 30 s the assessment path accepts. A generous ceiling that still refuses
@@ -53,9 +55,9 @@ type Ctx = { params: Promise<{ findingId: string }> };
 const MAX_TAKE_BYTES = 12 * 1024 * 1024;
 
 export async function GET(_request: Request, { params }: Ctx) {
-  const { findingId } = await params;
+  const { drillKey } = await params;
   const db = getDb();
-  const drill = pronunciationDrill(db, findingId);
+  const drill = resolveDrill(db, drillKey);
   if (!drill) return apiError("drill_not_found", "That drill is no longer available.", 404);
 
   const register = coerceRegister(readSettings(db).register);
@@ -66,15 +68,21 @@ export async function GET(_request: Request, { params }: Ctx) {
   return NextResponse.json({
     ...drill,
     register,
+    /** What to listen for, with no scorer involved — the primary guidance (D-21: the
+     *  LLM's read is a note, never a score). */
+    guidance: whatToListenFor(drill),
     /** The native rendition is rendered through the E-33 shadow endpoints — the same
      *  cached phrase render, billed once, replayed free. */
     renditionExists,
     renditionEstimateUsd: phraseRenderEstimateUsd(drill.referenceText),
-    available: resolvePronunciationScorer().isAvailable(),
+    /** Whether the OPTIONAL scoring layer can run here. False changes nothing about
+     *  the listen → say-it-back loop; it only hides the priced scoring control. */
+    scoringAvailable: resolvePronunciationScorer().isAvailable(),
     /** A modeled figure from rates.ts for a typical short take — never an invoice. */
     scoreEstimateUsd: drillEstimateUsd(Math.min(6, MAX_DRILL_SECONDS)),
     maxSeconds: MAX_DRILL_SECONDS,
     thresholds,
+    unscoredNotice: UNSCORED_NOTICE,
     notice: UNCALIBRATED_NOTICE,
     attempts: attempts.map((a) => ({
       id: a.id,
@@ -88,9 +96,9 @@ export async function GET(_request: Request, { params }: Ctx) {
 }
 
 export async function POST(request: Request, { params }: Ctx) {
-  const { findingId } = await params;
+  const { drillKey } = await params;
   const db = getDb();
-  const drill = pronunciationDrill(db, findingId);
+  const drill = resolveDrill(db, drillKey);
   if (!drill) return apiError("drill_not_found", "That drill is no longer available.", 404);
   if (!request.body) return apiError("empty_body", "Request body is empty.", 400);
 

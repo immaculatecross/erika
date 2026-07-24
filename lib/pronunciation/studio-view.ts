@@ -18,9 +18,10 @@ import type { KnowledgeStatus } from "../knowledge/types";
 //     exist because E-37 seeds them from real drill results, which is what finally
 //     makes the Settings "Sounds" cap a live control instead of an inert knob.
 //
-// `available` carries the honest state of the scorer: false means no key is configured
-// on this server, and the studio says so plainly rather than offering a button that
-// cannot work or, worse, a number nobody measured.
+// `scoringAvailable` carries the honest state of the OPTIONAL scoring layer: false
+// means no Azure key is configured, which changes nothing about the studio's actual
+// loop (hear the correct line → say it back → hear yourself). It only means no take
+// can be given a number — and Erika never shows a number it did not measure.
 
 export interface StudioDrillRow extends PronunciationDrill {
   /** How many takes have been scored for this drill. */
@@ -38,8 +39,8 @@ export interface StudioSoundRow {
 
 export interface StudioView {
   day: string;
-  /** Whether pronunciation scoring can actually run here. */
-  available: boolean;
+  /** Whether the optional Azure scoring layer can run here. The drills work either way. */
+  scoringAvailable: boolean;
   drills: StudioDrillRow[];
   sounds: StudioSoundRow[];
   thresholds: PronunciationThresholds;
@@ -54,7 +55,7 @@ export function phoneSymbolOf(itemId: string): string {
 
 export function buildStudioView(
   db: Db,
-  opts: { available: boolean; day?: string } = { available: false },
+  opts: { scoringAvailable: boolean; day?: string } = { scoringAvailable: false },
 ): StudioView {
   const day = opts.day ?? localDay();
   const counts = attemptCountsByDrill(db);
@@ -78,7 +79,7 @@ export function buildStudioView(
 
   return {
     day,
-    available: opts.available,
+    scoringAvailable: opts.scoringAvailable,
     drills,
     sounds,
     thresholds: pronunciationThresholds(),
