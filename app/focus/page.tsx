@@ -154,7 +154,7 @@ export default function FocusPage() {
             <div>
               <h2 className="text-[22px] font-semibold tracking-tight">When you slip</h2>
               <p className="mt-1 text-[13px] text-secondary">
-                Findings by hour of day (UTC).
+                Findings by hour of day, your local time.
                 {model.slipHours.peakHour !== null && (
                   <>
                     {" "}

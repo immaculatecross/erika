@@ -3,7 +3,16 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
-import { localDay, nextLocalDay, isLocalDay } from "@/lib/local-day";
+import {
+  localDay,
+  nextLocalDay,
+  isLocalDay,
+  previousLocalDay,
+  localMonth,
+  localWeekday,
+  localHour,
+  localDayBoundsUtc,
+} from "@/lib/local-day";
 import {
   cardsReviewedToday,
   completeDayIfMet,
@@ -66,6 +75,59 @@ describe("local-day basis (D-24 timezone stance)", () => {
     expect(localDay(beforeMidnight)).toBe("2026-06-30");
     expect(localDay(afterMidnight)).toBe("2026-07-01");
     expect(nextLocalDay(localDay(beforeMidnight))).toBe(localDay(afterMidnight));
+  });
+
+  // ── E-38 additions to the same seam (the streak and "when you slip" key on it) ──
+
+  it("steps BACK a local day across month, year and leap boundaries", () => {
+    expect(previousLocalDay("2026-02-01")).toBe("2026-01-31");
+    expect(previousLocalDay("2026-03-01")).toBe("2026-02-28"); // non-leap Feb
+    expect(previousLocalDay("2027-01-01")).toBe("2026-12-31");
+    expect(previousLocalDay(nextLocalDay("2026-07-24"))).toBe("2026-07-24"); // inverse
+  });
+
+  it("keys the local MONTH and names the local WEEKDAY (the repair ledger's keys)", () => {
+    expect(localMonth("2026-07-24")).toBe("2026-07");
+    expect(localMonth("2026-12-31")).toBe("2026-12");
+    expect(localWeekday("2026-07-24")).toBe("Fri");
+    expect(localWeekday("2026-07-21")).toBe("Tue");
+  });
+
+  it("bounds a local day as a UTC interval — including the DST-shortened one", () => {
+    const tzBefore = process.env.TZ;
+    try {
+      process.env.TZ = "Europe/Rome";
+      const normal = localDayBoundsUtc("2026-07-24");
+      expect(normal.endMs - normal.startMs).toBe(24 * 3_600_000);
+      // 2026-03-29 loses an hour; 2026-10-25 gains one. The interval is the REAL one.
+      const short = localDayBoundsUtc("2026-03-29");
+      expect(short.endMs - short.startMs).toBe(23 * 3_600_000);
+      const long = localDayBoundsUtc("2026-10-25");
+      expect(long.endMs - long.startMs).toBe(25 * 3_600_000);
+    } finally {
+      if (tzBefore === undefined) delete process.env.TZ;
+      else process.env.TZ = tzBefore;
+    }
+  });
+
+  it("reads the LOCAL hour of an instant, and answers DST as documented", () => {
+    const tzBefore = process.env.TZ;
+    try {
+      process.env.TZ = "Europe/Rome";
+      expect(localHour(new Date(Date.parse("2026-01-01T08:00:00Z")))).toBe(9); // CET
+      expect(localHour(new Date(Date.parse("2026-06-02T21:10:00Z")))).toBe(23); // CEST
+      // SPRING FORWARD: local 02:xx does not exist on 2026-03-29 — no instant maps to
+      // it, so its bucket can only ever be empty (nothing is lost).
+      expect(localHour(new Date(Date.parse("2026-03-29T00:59:00Z")))).toBe(1);
+      expect(localHour(new Date(Date.parse("2026-03-29T01:00:00Z")))).toBe(3);
+      // FALL BACK: two distinct instants legitimately share local hour 02 on
+      // 2026-10-25 — one bucket twice as wide, never a double count.
+      expect(localHour(new Date(Date.parse("2026-10-25T00:30:00Z")))).toBe(2);
+      expect(localHour(new Date(Date.parse("2026-10-25T01:30:00Z")))).toBe(2);
+    } finally {
+      if (tzBefore === undefined) delete process.env.TZ;
+      else process.env.TZ = tzBefore;
+    }
   });
 });
 

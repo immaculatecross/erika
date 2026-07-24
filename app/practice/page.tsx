@@ -8,6 +8,9 @@ import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
 import { GoalRing } from "@/components/goal-ring";
+import { StreakLine } from "@/components/streak-line";
+import { KnowledgeMap } from "@/components/knowledge-map";
+import { TodayThreadLine } from "@/components/today-thread";
 import { formatEstimate } from "@/lib/format";
 import type { TodayView } from "@/lib/today";
 
@@ -65,6 +68,9 @@ export default function LearnTodayPage() {
           letterUnread: false,
           newItems: { vocab: 0, rules: 0, pronunciation: 0 },
           placed: true,
+          streak: { currentRun: 0, repairedDays: [], repairsUsedThisMonth: 0, lastCompletedDay: null },
+          map: [],
+          thread: null,
         });
     });
     return () => {
@@ -157,7 +163,23 @@ export default function LearnTodayPage() {
           ) : (
             <p className="text-[15px] text-secondary">Nothing due — your day is clear.</p>
           )}
+          {/* The streak (E-38, D-24): one caption line, or nothing at all. A run of
+              zero renders NOTHING — no nag, no warning, no countdown. */}
+          <StreakLine streak={today.streak} today={today.day} />
+          {/* Today's thread (E-38, D-19): rendered only when a true one exists. */}
+          {today.thread && <TodayThreadLine thread={today.thread} />}
         </motion.section>
+
+        {/* The map strip (E-38, D-24 / DESIGN.md:47): category cells tinting toward
+            green ONLY as recurring mistakes get resolved — mastery, never activity. */}
+        {today.map.some((c) => c.slips > 0) && (
+          <motion.section variants={staggerItem(reduced)} data-today-map className="flex flex-col gap-3">
+            <span className={CAPTION}>Your map</span>
+            <div className="rounded-card bg-card p-5 shadow-card">
+              <KnowledgeMap cells={today.map} />
+            </div>
+          </motion.section>
+        )}
 
         {/* Review drill. */}
         <motion.section variants={staggerItem(reduced)} data-today-cards className="flex flex-col gap-3">
