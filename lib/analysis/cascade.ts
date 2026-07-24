@@ -28,6 +28,7 @@ import { sweepStaleReservations, type SpendReservation } from "./budget";
 import { BudgetHalt, withRepair } from "./reserved-call";
 import { recordProducedLemmas } from "./produced-lemmas";
 import { collectSpeakerProfile, resolveRecurrence, type SpeakerProfile } from "./profile";
+import { coerceRegister, type Register } from "../register";
 
 /**
  * Bounded per-segment concurrency (E-27). The pool runs at most this many model
@@ -226,7 +227,7 @@ async function deepListenSegment(
     db,
     client,
     seg,
-    { audioBase64: original, format: "wav", targetLanguage: ctx.targetLanguage, profile: ctx.profile },
+    { audioBase64: original, format: "wav", targetLanguage: ctx.targetLanguage, profile: ctx.profile, register: ctx.register },
     ctx.budget,
   );
   persistSegmentFindings(db, {
@@ -295,6 +296,8 @@ interface RunContext {
   targetLanguage: string;
   budget: number;
   profile: SpeakerProfile;
+  /** The register the correction voice is phrased in (E-33, D-23). */
+  register: Register;
   tempo: number;
   /** The short-capture full-deep path (E-28, D-20): skip triage, deep-listen every
    *  segment at native speed with the enriched prompt. Decided once per run. */
@@ -401,7 +404,9 @@ export async function runAnalysisJob(
   // older than the TTL are swept — never a live in-flight reservation.
   sweepStaleReservations(db);
 
-  const { targetLanguage, monthlyBudgetUsd: budget } = readSettings(db);
+  const settings = readSettings(db);
+  const { targetLanguage, monthlyBudgetUsd: budget } = settings;
+  const register = coerceRegister(settings.register);
   // The speaker profile (E-19), built ONCE per run from data already on disk —
   // no model call, read-only. It rides along in the prompt inputs only; it is
   // deliberately NOT part of the segment cache identity (content_hash), so a
@@ -413,7 +418,7 @@ export async function runAnalysisJob(
   // total speech so every segment takes the same path — and so it matches what the
   // pre-run estimate showed the user (the estimate uses the same `isFullDeepSession`).
   const fullDeep = isFullDeepSession(segments, opts.deepFullMaxMinutes);
-  const ctx: RunContext = { jobId, sessionId: job.sessionId, targetLanguage, budget, profile, tempo, fullDeep };
+  const ctx: RunContext = { jobId, sessionId: job.sessionId, targetLanguage, budget, profile, register, tempo, fullDeep };
   patchJob(db, jobId, { state: "processing", stage: fullDeep ? "deep-listening" : "analyzing", error: null });
 
   // Refresh the lease on an interval for the whole run, not once per segment: a long

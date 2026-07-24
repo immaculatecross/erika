@@ -1,4 +1,5 @@
 import type { Db } from "./db";
+import { REGISTERS, DEFAULT_REGISTER, isRegister, type Register } from "./register";
 
 // The four preferences E-1 persists. "modelTier" and "monthlyBudgetUsd" are
 // stored fields only — no behavior hangs off them until E-4 (see WO scope).
@@ -15,6 +16,11 @@ export interface Settings {
   newVocabPerDay: number;
   newRulesPerDay: number;
   newPronPerDay: number;
+  // The register dial (E-33, D-23): colloquiale → standard → colto → letterario,
+  // default colto. Injected into analysis recasts, lesson generation, TTS voice
+  // style, and the E-34 tutor persona (lib/register.ts). Style only, never
+  // correctness.
+  register: Register;
 }
 
 /** The three new-item-per-day caps that are user-settable — the composer's
@@ -35,6 +41,7 @@ export const DEFAULT_SETTINGS: Settings = {
   newVocabPerDay: 10,
   newRulesPerDay: 3,
   newPronPerDay: 10,
+  register: DEFAULT_REGISTER,
 };
 
 /** Read all four preferences, filling any unset key from DEFAULT_SETTINGS. */
@@ -57,6 +64,7 @@ export function readSettings(db: Db): Settings {
     newVocabPerDay: capOr("newVocabPerDay"),
     newRulesPerDay: capOr("newRulesPerDay"),
     newPronPerDay: capOr("newPronPerDay"),
+    register: isRegister(stored.get("register")) ? (stored.get("register") as Register) : DEFAULT_SETTINGS.register,
   };
 }
 
@@ -104,6 +112,13 @@ export function validateSettings(patch: Record<string, unknown>): Partial<Settin
       throw new SettingsValidationError(`${key} must be a whole number of items, 0 or more.`);
     }
     out[key] = n;
+  }
+
+  if (patch.register !== undefined) {
+    if (!isRegister(patch.register)) {
+      throw new SettingsValidationError(`register must be one of: ${REGISTERS.join(", ")}.`);
+    }
+    out.register = patch.register;
   }
 
   return out;

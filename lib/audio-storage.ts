@@ -95,6 +95,30 @@ export async function removeRenditionFile(filePath: string): Promise<void> {
   await rm(filePath, { force: true });
 }
 
+// Phrase renders (E-33): the shadow/reading formats render an arbitrary CORRECT
+// Italian phrase to cached audio, keyed by a content hash of (text + register +
+// voice) rather than by a finding — a per-phrase cache shared across formats so the
+// same phrase at the same register renders once, ever. They live under a flat
+// data/phrase-renders/ dir, named by hash; a hash is safe as a filename by
+// construction (hex).
+
+/** The phrase-renders dir: data/phrase-renders/. */
+export function phraseRendersDir(): string {
+  return path.join(dataDir(), "phrase-renders");
+}
+
+/** On-disk path of a rendered phrase clip (mp3), keyed by its content hash. */
+export function phraseRenderPath(hash: string): string {
+  return path.join(phraseRendersDir(), `${hash}.mp3`);
+}
+
+/** Ensure data/phrase-renders/ exists; returns its path. */
+export async function ensurePhraseRendersDir(): Promise<string> {
+  const dir = phraseRendersDir();
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
 /** Remove a session's whole directory (idempotent — no error if absent). */
 export async function removeSessionDir(id: string): Promise<void> {
   await rm(sessionDir(id), { recursive: true, force: true });

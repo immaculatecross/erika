@@ -24,8 +24,11 @@ export interface TtsResult {
 
 /** The seam the render engine depends on. The real impl calls OpenAI; tests mock it. */
 export interface TtsModelClient {
-  /** Synthesize `text` in `voice`, returning the audio bytes and their format. */
-  synthesize(input: { text: string; voice?: string }): Promise<TtsResult>;
+  /** Synthesize `text` in `voice`, returning the audio bytes and their format.
+   *  `instructions` is the register-aware delivery style (E-33, D-23) — a free-text
+   *  steer gpt-4o-mini-tts accepts; it changes HOW the phrase is spoken, never the
+   *  text. Optional: absent behaves exactly as before the dial existed. */
+  synthesize(input: { text: string; voice?: string; instructions?: string }): Promise<TtsResult>;
 }
 
 // ---- the real OpenAI client ---------------------------------------------
@@ -43,7 +46,7 @@ function apiKey(): string {
 
 /** The production client. Kept thin: send text → return audio bytes + format. */
 export const openAiTtsModel: TtsModelClient = {
-  async synthesize({ text, voice }) {
+  async synthesize({ text, voice, instructions }) {
     let res: Response;
     try {
       res = await fetch(OPENAI_URL, {
@@ -54,6 +57,9 @@ export const openAiTtsModel: TtsModelClient = {
           input: text,
           voice: voice ?? DEFAULT_VOICE,
           response_format: FORMAT,
+          // The register-aware delivery steer (E-33, D-23); omitted when absent so
+          // pre-dial behaviour is byte-identical.
+          ...(instructions ? { instructions } : {}),
         }),
       });
     } catch (err) {
