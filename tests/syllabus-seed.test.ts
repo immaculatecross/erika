@@ -126,8 +126,10 @@ describe("the seed is idempotent and never clobbers derived state (criterion 3, 
 
   it("does not touch lemma or phone rows (E-26a / E-37 are out of scope)", () => {
     const db = freshDb();
-    // A lemma and a phone row minted by hand (no morph-it needed via raw insert).
-    db.prepare(`INSERT INTO knowledge_items (id, kind, lemma, pos, freq_rank, cefr, status, recording_attested)
+    // A lemma row with sentinel values, set by hand. `casa#NOUN` is also seeded by the
+    // v17 lexicon (parallel milestone E-26a), so REPLACE to own the row's fields either way;
+    // the point is that the v18 syllabus seed must leave a lemma row untouched.
+    db.prepare(`INSERT OR REPLACE INTO knowledge_items (id, kind, lemma, pos, freq_rank, cefr, status, recording_attested)
                 VALUES ('lemma:casa#NOUN', 'lemma', 'casa', 'NOUN', 42, 'A1', 'known', 1)`).run();
     seedGrammarSyllabus(db);
     const lemma = db.prepare("SELECT * FROM knowledge_items WHERE id = 'lemma:casa#NOUN'").get() as RuleRow & {

@@ -114,10 +114,11 @@ describe("migrations runner", () => {
     expect(cardCols).toBeDefined();
     expect(cardCols!.notnull).toBe(0);
 
-    // evidence is append-only: UPDATE and DELETE are rejected by triggers.
-    db.prepare(`INSERT INTO knowledge_items (id, kind, lemma, pos) VALUES ('lemma:casa#NOUN', 'lemma', 'casa', 'NOUN')`).run();
+    // evidence is append-only: UPDATE and DELETE are rejected by triggers. Use a
+    // synthetic id so this raw insert does not collide with a v17-seeded lemma row.
+    db.prepare(`INSERT INTO knowledge_items (id, kind, lemma, pos) VALUES ('lemma:__evtest__#NOUN', 'lemma', '__evtest__', 'NOUN')`).run();
     db.prepare(
-      `INSERT INTO evidence (id, item_id, source, polarity, mode, weight) VALUES ('e1', 'lemma:casa#NOUN', 'exercise', 1, 'cued', 0.6)`,
+      `INSERT INTO evidence (id, item_id, source, polarity, mode, weight) VALUES ('e1', 'lemma:__evtest__#NOUN', 'exercise', 1, 'cued', 0.6)`,
     ).run();
     expect(() => db.prepare("UPDATE evidence SET polarity = 0 WHERE id = 'e1'").run()).toThrow(/append-only/);
     expect(() => db.prepare("DELETE FROM evidence WHERE id = 'e1'").run()).toThrow(/append-only/);
