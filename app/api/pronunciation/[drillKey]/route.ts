@@ -113,10 +113,12 @@ export async function POST(request: Request, { params }: Ctx) {
     );
   }
 
-  const attemptAudioId = randomUUID();
-  const staged = path.join(tmpdir(), `erika-drill-${attemptAudioId}.wav`);
+  // Mint the attempt id FIRST so the stored take, the attempt row and its `pa:<id>`
+  // ledger lease all carry one identifier.
+  const attemptId = randomUUID();
+  const staged = path.join(tmpdir(), `erika-drill-${attemptId}.wav`);
   await ensurePronunciationDir();
-  const takePath = pronunciationTakePath(attemptAudioId);
+  const takePath = pronunciationTakePath(attemptId);
 
   try {
     try {
@@ -136,7 +138,12 @@ export async function POST(request: Request, { params }: Ctx) {
       return apiError("take_unreadable", "That recording could not be read.", 400);
     }
 
-    const { attempt } = await scoreAttempt(db, scorer, { drill, audioPath: takePath, audioSeconds: seconds });
+    const { attempt } = await scoreAttempt(db, scorer, {
+      drill,
+      audioPath: takePath,
+      audioSeconds: seconds,
+      attemptId,
+    });
     return NextResponse.json(
       {
         attemptId: attempt.id,
