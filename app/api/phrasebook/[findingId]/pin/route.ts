@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { pinFinding } from "@/lib/cards";
+import { resolveDrill } from "@/lib/pronunciation";
 import { drillKeyForFinding, studioDrillPath } from "@/lib/pronunciation/types";
 
 // Pin a phrasebook entry into the flashcard deck (E-9). Ensures a card exists for
@@ -28,10 +29,21 @@ export async function POST(_request: Request, { params }: Ctx) {
     return NextResponse.json({ error: "Finding not found." }, { status: 404 });
   }
   if (outcome.status === "not_cardable") {
+    // Only promise the studio when a drill actually resolves there. A correction too
+    // long for the short-audio path has no drill, and handing back a path that renders
+    // "That drill is no longer available" would be a worse answer than a plain one.
+    const drill = resolveDrill(getDb(), drillKeyForFinding(findingId));
+    if (!drill) {
+      return NextResponse.json({
+        inDeck: false,
+        routedTo: null,
+        message: "This one is about how it sounds, and it is too long to drill — it stays in your phrasebook.",
+      });
+    }
     return NextResponse.json({
       inDeck: false,
       routedTo: "studio",
-      studioPath: studioDrillPath(drillKeyForFinding(findingId)),
+      studioPath: studioDrillPath(drill.drillKey),
       message: "This one is about how it sounds — practise it in the studio.",
     });
   }

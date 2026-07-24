@@ -114,3 +114,65 @@ export function ticksToMs(ticks: number): number {
  * reservation or call, so an over-long recording never costs anything.
  */
 export const MAX_DRILL_SECONDS = 30;
+
+/** Italian read aloud runs at roughly this many characters per second — deliberately
+ *  conservative, and a heuristic rather than a measurement. */
+export const READ_CHARS_PER_SECOND = 14;
+
+/**
+ * The longest reference text that can be a drill, derived from the two constants above
+ * (420 chars). A correction longer than this cannot be offered as a drill at all, so
+ * every surface that decides "is there a drill for this?" — the studio, the pin route,
+ * the Phrasebook row, AND the composer's spend clause — must agree, from this one
+ * number. They previously did not, which left a long correction unspendable forever.
+ */
+export const MAX_DRILL_REFERENCE_CHARS = MAX_DRILL_SECONDS * READ_CHARS_PER_SECOND;
+
+/** Whether a reference text can be a drill at all: non-blank and short enough for the
+ *  REST short-audio path. Pure and client-safe, so the browser and the composer apply
+ *  the identical rule. */
+export function drillFitsShortAudio(referenceText: string): boolean {
+  const text = referenceText.trim();
+  return text !== "" && text.length <= MAX_DRILL_REFERENCE_CHARS;
+}
+
+// ---- the drill gate -------------------------------------------------------
+
+export interface DrillGateState {
+  /** The native rendition has finished playing at least once. */
+  heard: boolean;
+  /** The rendition could not be played at all (budget refusal or a failed render). */
+  renditionUnavailable: boolean;
+}
+
+export interface DrillGate {
+  /** May the learner record? */
+  canRecord: boolean;
+  /** Does completing a lap count as a VISIT — i.e. may it spend the finding? */
+  visitCounts: boolean;
+}
+
+/**
+ * The two decisions the drill page makes, in one pure place — because getting their
+ * INTERACTION wrong is what shipped a defect once already.
+ *
+ * `canRecord` is deliberately permissive: when the rendition cannot be played (a
+ * monthly-cap refusal is a normal operating condition here — the reference is a billed
+ * TTS render under the same cap), the learner may still record and hear themselves
+ * back. Taking that away would leave them with a dead page.
+ *
+ * `visitCounts` is deliberately strict: a visit is what RETIRES the correction from the
+ * daily plan, permanently, and the reference comparison IS the drill. Recording without
+ * ever hearing the correct line is "say a sentence you were never shown how to say" — it
+ * is practice worth allowing, but it must never spend the finding. So an unheard lap
+ * unlocks practice and records nothing.
+ *
+ * The pair is exported and tested as a truth table so the permissive and the strict
+ * decision can never silently be conflated again.
+ */
+export function drillGate(state: DrillGateState): DrillGate {
+  return {
+    canRecord: state.heard || state.renditionUnavailable,
+    visitCounts: state.heard,
+  };
+}

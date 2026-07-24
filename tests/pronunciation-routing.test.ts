@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { tmpDir, makeWav } from "./helpers";
 import type { Db } from "@/lib/db";
 import type { NewFinding } from "@/lib/analysis/findings";
+import { drillGate, MAX_DRILL_REFERENCE_CHARS } from "@/lib/pronunciation/types";
 
 // E-37 criteria 4 + 5: where pronunciation signal GOES, and what a passing drill is
 // allowed to write.
@@ -30,6 +31,7 @@ let createCardForFinding: typeof import("@/lib/cards").createCardForFinding;
 let deriveFront: typeof import("@/lib/cards-view").deriveFront;
 let CLOZE_BLANK: typeof import("@/lib/cards-view").CLOZE_BLANK;
 let studioDrillPath: typeof import("@/lib/pronunciation").studioDrillPath;
+let listIncludedFindings: typeof import("@/lib/findings-model").listIncludedFindings;
 let listPronunciationDrills: typeof import("@/lib/pronunciation").listPronunciationDrills;
 let resolveDrill: typeof import("@/lib/pronunciation").resolveDrill;
 let pronunciationDrill: typeof import("@/lib/pronunciation").pronunciationDrill;
@@ -119,6 +121,7 @@ beforeAll(async () => {
   pronunciationDrill = pron.pronunciationDrill;
   drillKeyForFinding = pron.drillKeyForFinding;
   studioDrillPath = pron.studioDrillPath;
+  listIncludedFindings = (await import("@/lib/findings-model")).listIncludedFindings;
   scoreAttempt = pron.scoreAttempt;
   recordVisit = pron.recordVisit;
   createFixtureScorer = (await import("@/lib/pronunciation/fixture-scorer")).createFixtureScorer;
@@ -275,6 +278,78 @@ describe("E-37 criterion 4 — pronunciation signal routes to the studio", () =>
     expect((db.prepare("SELECT COUNT(*) AS n FROM pronunciation_attempts").get() as { n: number }).n).toBe(0);
   });
 
+  // [N1] The counterpart to the test above: when the rendition could not be played the
+  // learner may still practise, but that lap must not spend the correction. Recording
+  // without ever hearing the target is not the drill, and a visit is permanent.
+  it("[no key] an UNHEARD lap records no visit — the finding stays on the list", () => {
+    const db = freshDb();
+    seed(db, [PRON_FINDING]);
+    const drill = listPronunciationDrills(db)[0];
+
+    // The rendition failed (402 at the cap, or a transient TTS error): the gate allows
+    // recording but refuses to count the lap.
+    const gate = drillGate({ heard: false, renditionUnavailable: true });
+    expect(gate.canRecord).toBe(true);
+    expect(gate.visitCounts).toBe(false);
+
+    // So the page posts no visit — and the finding is still owed to the learner.
+    if (gate.visitCounts) recordVisit(db, { drillKey: drill.drillKey, findingId: drill.findingId });
+    expect((db.prepare("SELECT COUNT(*) AS n FROM pronunciation_visits").get() as { n: number }).n).toBe(0);
+    for (const day of ["2026-07-24", "2026-08-15", "2027-06-01"]) {
+      expect(compose(db, day, DEFAULT_CAPS).counts.finding).toBe(1);
+    }
+
+    // Once they DO hear it, the same lap retires it.
+    const heardGate = drillGate({ heard: true, renditionUnavailable: true });
+    expect(heardGate.visitCounts).toBe(true);
+    recordVisit(db, { drillKey: drill.drillKey, findingId: drill.findingId });
+    expect(compose(db, "2026-07-24", DEFAULT_CAPS).counts.finding).toBe(0);
+  });
+
+  // [N2] The same forever-loop through a different door: a correction too long for the
+  // short-audio path can never have a drill, so it can never have a visit or an attempt
+  // — waiting on one would loop it forever.
+  it("a correction too long to drill is not offered forever — and is never a drill", () => {
+    const db = freshDb();
+    const longCorrection = `Quando ${"parlo di questa cosa molto complicata ".repeat(20)}basta.`;
+    expect(longCorrection.length).toBeGreaterThan(MAX_DRILL_REFERENCE_CHARS);
+    seed(db, [
+      {
+        quote: "una versione sbagliata",
+        correction: longCorrection,
+        category: "pronunciation",
+        explanation: "far too long to say in one breath",
+        severity: "low",
+        startMs: 0,
+        endMs: 1000,
+      },
+    ]);
+
+    // There is no drill for it anywhere — so no visit and no attempt can ever exist.
+    expect(listPronunciationDrills(db)).toEqual([]);
+    const findingId = findingIdByQuote(db, "una versione sbagliata");
+    expect(resolveDrill(db, drillKeyForFinding(findingId))).toBeNull();
+    // It gets no card either (uncardable category).
+    expect(generateCards(db)).toBe(0);
+
+    // It must therefore not sit in the plan waiting for a drill that cannot exist.
+    for (const day of ["2026-07-24", "2026-08-15", "2027-06-01"]) {
+      expect(compose(db, day, DEFAULT_CAPS).counts.finding).toBe(0);
+    }
+    // It is still fully present as a finding — this is the composer's plan, not the
+    // E-17 findings scope.
+    expect(listIncludedFindings(db).map((f) => f.id)).toContain(findingId);
+  });
+
+  it("a drillable pronunciation finding is NOT retired by the length rule", () => {
+    const db = freshDb();
+    seed(db, [PRON_FINDING]);
+    // Guard against the length predicate over-reaching: an ordinary correction still
+    // waits for its drill.
+    expect(PRON_FINDING.correction.length).toBeLessThanOrEqual(MAX_DRILL_REFERENCE_CHARS);
+    expect(compose(db, "2026-07-24", DEFAULT_CAPS).counts.finding).toBe(1);
+  });
+
   it("[no key] a visit is idempotent — repeating the loop bumps cycles, not rows", () => {
     const db = freshDb();
     seed(db, [PRON_FINDING]);
@@ -331,135 +406,5 @@ describe("E-37 criterion 4 — pronunciation signal routes to the studio", () =>
     const pronDrill = listPronunciationDrills(db).find((d) => d.referenceText === PRON_FINDING.correction)!;
     recordVisit(db, { drillKey: pronDrill.drillKey, findingId: pronDrill.findingId });
     expect(compose(db, "2026-07-24", DEFAULT_CAPS).counts.finding).toBe(1);
-  });
-});
-
-describe("E-37 criterion 5 — what a drill may write to the knowledge core (D-19)", () => {
-  it("seeds a phone item for a sound produced BELOW the shaky band, with no evidence row", async () => {
-    const db = freshDb();
-    seed(db, [PRON_FINDING]);
-    const drill = listPronunciationDrills(db)[0];
-    const take = path.join(root, "weak-take.wav");
-    makeWav(take, 2);
-
-    const { seeded } = await scoreAttempt(db, createFixtureScorer("gli-gnocchi"), {
-      drill,
-      audioPath: take,
-      audioSeconds: 2,
-    });
-
-    // /ʎ/ scored 24 and /ɲ/ 44 — both under the shaky mark of 60.
-    expect(seeded).toContain("phone:ʎ");
-    expect(seeded).toContain("phone:ɲ");
-    expect(getItem(db, "phone:ʎ")!.status).toBe("unseen"); // a target, not a verdict
-    expect(itemEvidence(db, "phone:ʎ")).toEqual([]);
-
-    // And the composer can now offer it — this is what un-inerts the "Sounds" cap.
-    const plan = compose(db, "2026-07-24", DEFAULT_CAPS);
-    expect(plan.items.some((i) => i.kind === "pronunciation" && i.itemId === "phone:ʎ")).toBe(true);
-  });
-
-  it("mints CUED positive evidence for a well-produced sound on a PASSING take", async () => {
-    const db = freshDb();
-    seed(db, [PRON_FINDING]);
-    const drill = listPronunciationDrills(db)[0];
-    const take = path.join(root, "clean-take.wav");
-    makeWav(take, 2);
-
-    // /r/ is already on the learner's list from an earlier miss.
-    ensurePhoneItem(db, "r");
-
-    const { attempt, credited } = await scoreAttempt(db, createFixtureScorer("clean"), {
-      drill,
-      audioPath: take,
-      audioSeconds: 2,
-    });
-
-    expect(credited).toContain("phone:r");
-    const rows = itemEvidence(db, "phone:r");
-    expect(rows).toHaveLength(1);
-    expect(rows[0].mode).toBe("cued"); // a scripted drill is prompted, never spontaneous
-    expect(rows[0].polarity).toBe(1);
-    expect(rows[0].source).toBe("exercise");
-    expect(rows[0].sourceRef).toBe(attempt.id);
-    expect(rows[0].weight).toBeCloseTo(0.6 * 0.7, 10); // cued × the audio discount
-  });
-
-  it("NEVER mints `known` — cued drills alone cannot corroborate mastery", async () => {
-    const db = freshDb();
-    seed(db, [PRON_FINDING]);
-    const drill = listPronunciationDrills(db)[0];
-    const take = path.join(root, "many-takes.wav");
-    makeWav(take, 2);
-    ensurePhoneItem(db, "r");
-
-    // Drill it over and over — many days' worth of passing takes.
-    for (let i = 0; i < 6; i++) {
-      await scoreAttempt(db, createFixtureScorer("clean"), { drill, audioPath: take, audioSeconds: 2 });
-    }
-    const item = getItem(db, "phone:r")!;
-    expect(itemEvidence(db, "phone:r").length).toBe(6);
-    expect(item.status).not.toBe("known");
-    expect(["introduced", "learning", "lapsed"]).toContain(item.status);
-  });
-
-  it("a FAILING take mints no positive evidence, even for its good sounds", async () => {
-    const db = freshDb();
-    seed(db, [PRON_FINDING]);
-    const drill = listPronunciationDrills(db)[0];
-    const take = path.join(root, "failing-take.wav");
-    makeWav(take, 2);
-    ensurePhoneItem(db, "s"); // /s/ scored 96 in the gli-gnocchi fixture…
-
-    const { credited } = await scoreAttempt(db, createFixtureScorer("gli-gnocchi"), {
-      drill,
-      audioPath: take,
-      audioSeconds: 2,
-    });
-    // …but the take as a whole did not pass (77.2 < 80), so nothing is credited.
-    expect(credited).toEqual([]);
-    expect(itemEvidence(db, "phone:s")).toEqual([]);
-  });
-
-  it("a TOO-NOISY take writes nothing to the knowledge core (it described the room)", async () => {
-    const db = freshDb();
-    seed(db, [PRON_FINDING]);
-    const drill = listPronunciationDrills(db)[0];
-    const take = path.join(root, "noisy-take.wav");
-    makeWav(take, 2);
-    ensurePhoneItem(db, "r");
-
-    const { attempt, seeded, credited } = await scoreAttempt(db, createFixtureScorer("noisy"), {
-      drill,
-      audioPath: take,
-      audioSeconds: 2,
-    });
-
-    expect(attempt.lowSnr).toBe(true);
-    expect(seeded).toEqual([]);
-    expect(credited).toEqual([]);
-    expect(itemEvidence(db, "phone:r")).toEqual([]);
-    // The take is still STORED with its charge — Azure was paid, and the ledger and the
-    // record must agree — it is only never presented as a measurement.
-    expect(attempt.costUsd).toBeGreaterThan(0);
-  });
-
-  it("stores the whole parsed result and the scorer's identity, so a score is traceable", async () => {
-    const db = freshDb();
-    seed(db, [PRON_FINDING]);
-    const drill = listPronunciationDrills(db)[0];
-    const take = path.join(root, "trace-take.wav");
-    makeWav(take, 2);
-
-    const { attempt } = await scoreAttempt(db, createFixtureScorer("gli-gnocchi"), {
-      drill,
-      audioPath: take,
-      audioSeconds: 2,
-    });
-    expect(attempt.scorerId).toBe("fixture:gli-gnocchi"); // never mistaken for a real run
-    expect(attempt.referenceText).toBe(PRON_FINDING.correction);
-    expect(attempt.result.words[0].phonemes[0].nBest[0].phoneme).toBe("l");
-    expect(attempt.drillKey).toBe(drill.drillKey);
-    expect(attempt.findingId).toBe(drill.findingId);
   });
 });

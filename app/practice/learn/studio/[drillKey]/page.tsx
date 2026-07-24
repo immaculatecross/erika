@@ -9,6 +9,7 @@ import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { ListenButton } from "@/components/listen-button";
 import { DrillRecorder } from "@/components/drill-recorder";
 import { PronunciationResult } from "@/components/pronunciation-result";
+import { drillGate } from "@/lib/pronunciation/types";
 import type { DrillGuidance, ResultView } from "@/lib/pronunciation";
 
 // One pronunciation drill (E-37, D-21/D-18/D-24).
@@ -72,6 +73,13 @@ export default function StudioDrillPage({ params }: { params: Promise<{ drillKey
       alive = false;
     };
   }, [drillKey]);
+
+  // The two decisions, taken together in one pure place (lib/pronunciation/types.ts)
+  // because getting their INTERACTION wrong shipped a defect: recording stays unlocked
+  // when the rendition cannot play, but a lap the learner never heard the line for must
+  // NOT count as a visit — a visit retires the correction permanently, and the
+  // comparison against the native rendition IS the drill.
+  const gate = drillGate({ heard, renditionUnavailable });
 
   const onScored = useCallback((body: unknown) => setScored(body as ScoredBody), []);
 
@@ -158,8 +166,9 @@ export default function StudioDrillPage({ params }: { params: Promise<{ drillKey
           )}
           {renditionUnavailable && (
             <p data-drill-rendition-unavailable className="text-[15px] text-secondary">
-              The line could not be played just now. You can still record your take and listen back
-              — say it as you think it should sound, and try the rendition again later.
+              The line could not be played just now. You can still record your take and listen
+              back, but this one stays on your list until you have heard it said correctly —
+              comparing is the practice.
             </p>
           )}
         </motion.section>
@@ -169,11 +178,11 @@ export default function StudioDrillPage({ params }: { params: Promise<{ drillKey
             <span className="text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">Your take</span>
             <DrillRecorder
               scoreUrl={status.scoringAvailable ? `/api/pronunciation/${encodeURIComponent(drillKey)}` : null}
-              enabled={heard || renditionUnavailable}
+              enabled={gate.canRecord}
               maxSeconds={status.maxSeconds}
               scoreEstimateUsd={status.scoreEstimateUsd}
               onScored={onScored}
-              onCycleComplete={onCycleComplete}
+              onCycleComplete={gate.visitCounts ? onCycleComplete : undefined}
             />
             <p data-drill-unscored-notice className="text-[13px] leading-[1.5] text-secondary">
               {status.scoringAvailable

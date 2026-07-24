@@ -56,9 +56,14 @@ export function DrillRecorder({
   maxSeconds: number;
   scoreEstimateUsd: number;
   onScored: (body: unknown) => void;
-  /** Fired the first time the learner completes the whole loop — recorded a take AND
-   *  played it back. That is what the studio records as a visit, and it is the only
-   *  practice signal that exists on a server with no scorer. */
+  /** Fired once per recorded take, when the learner plays that take back. That is the
+   *  practice signal the studio records as a visit, and it is the only one that exists
+   *  on a server with no scorer.
+   *
+   *  The PARENT decides whether a lap counts: it passes `undefined` while the learner
+   *  has not yet heard the native rendition, so an unheard lap is still allowed and
+   *  still useful practice but does not spend the correction (lib/pronunciation/types.ts
+   *  `drillGate`). This component never makes that judgement itself. */
   onCycleComplete?: () => void;
 }) {
   const reduced = usePrefersReducedMotion();
@@ -86,6 +91,7 @@ export function DrillRecorder({
     const recorded = await stop();
     if (!recorded) return;
     setFailure(null);
+    cycleReported.current = false; // a new take is a new lap to report
     setTake((prev) => {
       if (prev) URL.revokeObjectURL(prev.url);
       return { blob: recorded.blob, url: URL.createObjectURL(recorded.blob) };
@@ -97,8 +103,9 @@ export function DrillRecorder({
     if (!audio || !take) return;
     audio.src = take.url;
     void audio.play().catch(() => {});
-    // Heard the line, recorded, heard yourself: the loop is complete. Report it once
-    // per mounted drill — the server-side upsert is idempotent anyway.
+    // Recorded, and now heard yourself back: one lap. Reported once per TAKE (a fresh
+    // recording re-arms it below), so "Said N×" counts real laps rather than page
+    // visits; the server-side upsert is idempotent regardless.
     if (!cycleReported.current) {
       cycleReported.current = true;
       onCycleComplete?.();

@@ -9,6 +9,11 @@ import { recordVisit, resolveDrill } from "@/lib/pronunciation";
 // answerable on a server with no Azure key, which is what lets the composer retire a
 // pronunciation finding (it no longer gets a card, so a card can never retire it).
 //
+// The "heard the correct line" half is enforced by the CLIENT (`drillGate`): a lap taken
+// when the rendition could not be played does not reach this route at all. That matters
+// because a visit is permanent — it retires the correction from the daily plan — and
+// recording without ever hearing the target is not the drill this record claims it is.
+//
 // Deliberately NOT evidence: a visit records an activity, never a claim about how well
 // it went. Nothing here touches `evidence` or a knowledge item — D-19 is emphatic that
 // green means mastery, never activity, and a lap in the studio is activity.

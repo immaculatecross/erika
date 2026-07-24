@@ -12,7 +12,7 @@ import { AskErika } from "@/components/ask-erika";
 import { RevealableError } from "@/components/revealable-error";
 // Client-safe drill addressing only (lib/pronunciation/types.ts has no imports at all);
 // the studio's DB-backed modules must never enter a browser bundle.
-import { drillKeyForFinding, studioDrillPath } from "@/lib/pronunciation/types";
+import { drillFitsShortAudio, drillKeyForFinding, studioDrillPath } from "@/lib/pronunciation/types";
 import {
   filterEntries,
   CATEGORY_ORDER,
@@ -171,6 +171,9 @@ function Row({
   onPin: () => void;
 }) {
   const sev = SEVERITY_STYLES[entry.severity];
+  // The SAME drillability rule the studio, the pin route and the composer apply.
+  const isPronunciation = entry.category === "pronunciation";
+  const hasDrill = isPronunciation && drillFitsShortAudio(entry.correction);
   return (
     <motion.li
       variants={staggerItem(reduced)}
@@ -203,39 +206,54 @@ function Row({
           </span>
         </div>
 
-        {/* [E-37] A pronunciation recast cannot become an answerable card — its
-            spelling was never wrong, so a card front degrades to "____ · pronunciation"
+        {/* [E-37] A pronunciation recast cannot become an answerable card — its spelling
+            was never wrong, so a card front degrades to "____ · pronunciation"
             (RETRO-003). It gets the surface that can actually drill it instead: hear the
-            correct line, say it back. Calm pointer, no apology, no error styling (D-24). */}
-        {entry.category === "pronunciation" ? (
-          <Link
-            href={studioDrillPath(drillKeyForFinding(entry.findingId))}
-            data-practise-in-studio
-            className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] px-3.5 py-1.5 text-[13px] font-medium text-ink transition-transform active:scale-[0.97] dark:bg-white/[0.08]"
-          >
-            <AudioLines size={16} strokeWidth={1.5} aria-hidden />
-            Practise in Studio
-          </Link>
-        ) : entry.inDeck ? (
-          <span
-            data-in-deck-marker
-            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-secondary"
-          >
-            <Check size={16} strokeWidth={1.5} aria-hidden />
-            In deck
-          </span>
-        ) : (
-          <button
-            type="button"
-            data-pin
-            disabled={busy}
-            onClick={onPin}
-            className="inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-1.5 text-[13px] font-medium text-accent-ink transition-transform active:scale-[0.97] disabled:opacity-40"
-          >
-            <Plus size={16} strokeWidth={1.5} aria-hidden />
-            {busy ? "Pinning…" : "Pin to deck"}
-          </button>
-        )}
+            correct line, say it back. Calm pointer, no apology, no error styling (D-24).
+
+            The deck marker is independent of that, so a card pinned BEFORE E-37 still
+            reads "In deck" alongside the studio link; and a correction too long to drill
+            offers no link at all rather than one that leads to a dead page. */}
+        <div className="flex items-center gap-3">
+          {entry.inDeck && (
+            <span
+              data-in-deck-marker
+              className="inline-flex items-center gap-1.5 text-[13px] font-medium text-secondary"
+            >
+              <Check size={16} strokeWidth={1.5} aria-hidden />
+              In deck
+            </span>
+          )}
+          {isPronunciation ? (
+            hasDrill ? (
+              <Link
+                href={studioDrillPath(drillKeyForFinding(entry.findingId))}
+                data-practise-in-studio
+                className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] px-3.5 py-1.5 text-[13px] font-medium text-ink transition-transform active:scale-[0.97] dark:bg-white/[0.08]"
+              >
+                <AudioLines size={16} strokeWidth={1.5} aria-hidden />
+                Practise in Studio
+              </Link>
+            ) : (
+              <span data-too-long-to-drill className="text-[13px] text-secondary">
+                Too long to drill — kept here for reference.
+              </span>
+            )
+          ) : (
+            !entry.inDeck && (
+              <button
+                type="button"
+                data-pin
+                disabled={busy}
+                onClick={onPin}
+                className="inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-1.5 text-[13px] font-medium text-accent-ink transition-transform active:scale-[0.97] disabled:opacity-40"
+              >
+                <Plus size={16} strokeWidth={1.5} aria-hidden />
+                {busy ? "Pinning…" : "Pin to deck"}
+              </button>
+            )
+          )}
+        </div>
       </div>
     </motion.li>
   );

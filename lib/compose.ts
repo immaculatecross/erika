@@ -5,6 +5,8 @@ import { materializeSlips, listSlips } from "./slips";
 import { nextLocalDay } from "./local-day";
 import { readSettings } from "./settings";
 import type { KnowledgeStatus } from "./knowledge";
+import { UNCARDABLE_CATEGORIES } from "./cards";
+import { MAX_DRILL_REFERENCE_CHARS } from "./pronunciation/types";
 
 // The daily composer (E-31, D-19). `compose(day)` builds the learner's plan for a
 // local day from THEIR OWN recorded material first, making ZERO model calls — it is
@@ -30,6 +32,16 @@ import type { KnowledgeStatus } from "./knowledge";
 // the `planned_for = nextDay` rows each run (delete-all + reinsert), so running it
 // many times a day converges to the same queue and the plan is stable. Nothing
 // here touches money, and the whole read is a fixed number of statements.
+
+// The two rules the unspent-findings clause borrows rather than restates, so the
+// composer can never drift from the surfaces that own them: what can become a card
+// (lib/cards.ts) and what can become a drill (lib/pronunciation/types.ts). Both are
+// derived from their single source constant; the values are internal literals from
+// closed vocabularies, never user input.
+const CARDABLE_CATEGORY_SQL = `f.category NOT IN (${[...UNCARDABLE_CATEGORIES]
+  .map((c) => `'${c}'`)
+  .join(", ")})`;
+const DRILLABLE_CORRECTION_SQL = `(trim(f.correction) <> '' AND length(trim(f.correction)) <= ${MAX_DRILL_REFERENCE_CHARS})`;
 
 export type NewKind = "vocab" | "rule" | "pronunciation";
 export type PlanItemKind = "review" | "slip" | "finding" | NewKind;
@@ -294,17 +306,34 @@ function readReviews(db: Db): ReviewCandidate[] {
  *     correct line, record, hear yourself back; no key, no score, no money) or a scored
  *     **attempt** where a scorer happens to be configured.
  *
- * The studio clause is scoped to `f.category = 'pronunciation'` on purpose. Studio
- * drills also come from the `notes.pronunciation` note riding on findings of OTHER
- * categories, so an unscoped clause would let one pronunciation take silently retire a
- * grammar correction whose own card had never been graded — losing the grammar lesson.
- * The rule is therefore: a studio visit or attempt spends a finding only where a card
+ * The studio clause is scoped to the UNCARDABLE categories on purpose — and it reads
+ * that set from `lib/cards.ts`, the same constant both card paths use, so a second
+ * uncardable category can never silently inherit "waits on a studio drill" without
+ * someone deciding it does. Studio drills also come from the `notes.pronunciation` note
+ * riding on findings of OTHER categories, so an unscoped clause would let one
+ * pronunciation take silently retire a grammar correction whose own card had never been
+ * graded. The rule is: a studio visit or attempt spends a finding only where a card
  * cannot.
  *
  * The visit half is what makes this true on the shipped default. Gating on a scored
  * attempt alone would make a pronunciation finding unspendable without an Azure key,
  * and it would re-enter the plan every day forever, silently consuming a `dailyMax`
  * slot ahead of fresh material.
+ *
+ * The DRILLABILITY half closes the same hole through the other door. A correction too
+ * long for the short-audio path is never offered as a drill, so no visit and no attempt
+ * can ever exist for it — waiting on one would loop it forever. Such a finding is
+ * retired here instead: there is no surface that can practise it, so it must not hold a
+ * daily slot. It remains fully present in the Phrasebook, the Archive and the report
+ * (this is the composer's plan, not the E-17 findings scope).
+ *
+ * [Known asymmetry — owed to E-39] One studio lap retires a pronunciation correction
+ * for good. Every other category's finding is retired by a card and then keeps
+ * returning on an FSRS schedule; this one is offered once and never re-scheduled. The
+ * drill stays listed in the studio so a learner can return to it deliberately, but
+ * nothing brings it back. That is a deliberate choice for now — better than looping
+ * forever — not an oversight, and re-scheduling drilled sounds belongs with the
+ * knowledge core's own scheduling work.
  */
 function readUnspentFindings(db: Db): FindingCandidate[] {
   const rows = db
@@ -315,9 +344,10 @@ function readUnspentFindings(db: Db): FindingCandidate[] {
           AND NOT EXISTS (SELECT 1 FROM deleted_findings d WHERE d.finding_id = f.id)
           AND NOT EXISTS (SELECT 1 FROM cards c WHERE c.finding_id = f.id AND (c.repetitions > 0 OR c.suspended = 1))
           AND (
-            f.category <> 'pronunciation'
+            ${CARDABLE_CATEGORY_SQL}
             OR (
-              NOT EXISTS (SELECT 1 FROM pronunciation_visits pv WHERE pv.finding_id = f.id)
+              ${DRILLABLE_CORRECTION_SQL}
+              AND NOT EXISTS (SELECT 1 FROM pronunciation_visits pv WHERE pv.finding_id = f.id)
               AND NOT EXISTS (SELECT 1 FROM pronunciation_attempts pa WHERE pa.finding_id = f.id)
             )
           )

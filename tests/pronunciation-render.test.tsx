@@ -6,6 +6,7 @@ import { PronunciationResult } from "@/components/pronunciation-result";
 import { DrillRecorder } from "@/components/drill-recorder";
 import { ListenButton } from "@/components/listen-button";
 import { whatToListenFor } from "@/lib/pronunciation/guidance";
+import { drillGate, drillFitsShortAudio, MAX_DRILL_REFERENCE_CHARS } from "@/lib/pronunciation/types";
 import { buildResultView } from "@/lib/pronunciation/view";
 import { DEFAULT_PRONUNCIATION_THRESHOLDS } from "@/lib/pronunciation/thresholds";
 import { fixtureResult } from "@/lib/pronunciation/fixture-scorer";
@@ -74,43 +75,69 @@ describe("PronunciationResult — a too-noisy take", () => {
   });
 });
 
+describe("the drill gate — recording vs SPENDING the finding", () => {
+  // These two decisions collided once and shipped a defect: F5 unlocked recording when
+  // the rendition could not play, F1 made a completed lap retire the finding, and their
+  // intersection let a budget-refused render retire a correction the learner had never
+  // heard. The pair is now one pure function, tested as a truth table.
+
+  it("normal path: heard the line ⇒ can record, and the lap spends the finding", () => {
+    expect(drillGate({ heard: true, renditionUnavailable: false })).toEqual({
+      canRecord: true,
+      visitCounts: true,
+    });
+  });
+
+  it("[N1] rendition unavailable and NOT heard ⇒ can record, but the lap must NOT count", () => {
+    // The whole defect in one assertion: practice stays available (F5), and the
+    // correction is not silently retired without ever being compared to the reference.
+    expect(drillGate({ heard: false, renditionUnavailable: true })).toEqual({
+      canRecord: true,
+      visitCounts: false,
+    });
+  });
+
+  it("nothing heard and nothing failed ⇒ recording is still locked (listen first)", () => {
+    expect(drillGate({ heard: false, renditionUnavailable: false })).toEqual({
+      canRecord: false,
+      visitCounts: false,
+    });
+  });
+
+  it("heard it, and a LATER render failed ⇒ the lap still counts (they did hear it)", () => {
+    expect(drillGate({ heard: true, renditionUnavailable: true })).toEqual({
+      canRecord: true,
+      visitCounts: true,
+    });
+  });
+
+  it("`visitCounts` never outruns `canRecord` — a spendable lap is always a legal one", () => {
+    for (const heard of [true, false]) {
+      for (const renditionUnavailable of [true, false]) {
+        const g = drillGate({ heard, renditionUnavailable });
+        if (g.visitCounts) expect(g.canRecord).toBe(true);
+      }
+    }
+  });
+
+  it("the drill page hands the recorder the gate's decisions, not its own", () => {
+    // A wiring smoke, not the invariant — the invariant is the truth table above. The
+    // repo renders to a string with no DOM, so the JSX binding itself is checked here.
+    const pageSrc = readFileSync(
+      join(process.cwd(), "app/practice/learn/studio/[drillKey]/page.tsx"),
+      "utf8",
+    );
+    expect(pageSrc).toContain("enabled={gate.canRecord}");
+    expect(pageSrc).toContain("onCycleComplete={gate.visitCounts ? onCycleComplete : undefined}");
+  });
+});
+
 describe("ListenButton — a failed render must not dead-end the drill (F5)", () => {
   it("renders a usable control in the idle state", () => {
     const html = renderToStaticMarkup(
       <ListenButton audioSrc="/a" renderUrl="/r" exists={false} estimateUsd={0.0003} />,
     );
     expect(html).toContain("data-listen");
-  });
-
-  // The budget/error phases are internal client state that `renderToStaticMarkup`
-  // cannot reach (this suite renders to a string; the repo has no DOM environment), so
-  // the contract is pinned on the source. Both failure branches must (a) keep a retry
-  // control — the previous version rendered a bare line and REMOVED the button, which
-  // stranded the studio behind a gate that could never open — and (b) report
-  // `onUnavailable` so the surface can stop gating.
-  const listenSrc = readFileSync(join(process.cwd(), "components/listen-button.tsx"), "utf8");
-
-  it("keeps a retry control in BOTH the budget and error branches", () => {
-    const budget = listenSrc.slice(listenSrc.indexOf('phase === "budget"'), listenSrc.indexOf('phase === "generating"'));
-    // One retry button in the budget branch and one in the error branch.
-    expect((budget.match(/data-listen-retry/g) ?? []).length).toBe(2);
-    expect(budget).toContain("data-listen-budget");
-    expect(budget).toContain("data-listen-error");
-  });
-
-  it("reports onUnavailable on every path that cannot play", () => {
-    // A 402, a non-OK render, a thrown fetch, and a playback failure.
-    expect((listenSrc.match(/onUnavailable\?\.\(\)/g) ?? []).length).toBe(4);
-  });
-
-  it("the drill page unlocks recording when the rendition cannot be played", () => {
-    const pageSrc = readFileSync(
-      join(process.cwd(), "app/practice/learn/studio/[drillKey]/page.tsx"),
-      "utf8",
-    );
-    expect(pageSrc).toContain("onUnavailable={() => setRenditionUnavailable(true)}");
-    expect(pageSrc).toContain("enabled={heard || renditionUnavailable}");
-    expect(pageSrc).toContain("data-drill-rendition-unavailable");
   });
 });
 

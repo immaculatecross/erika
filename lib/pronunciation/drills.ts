@@ -2,16 +2,19 @@ import type { Db } from "../db";
 import type { Finding } from "../analysis/findings";
 import { getIncludedFinding, listIncludedFindings } from "../findings-model";
 import {
+  drillFitsShortAudio,
   drillKeyForFinding,
   drillKeyOf,
   FINDING_DRILL_SOURCE,
-  MAX_DRILL_SECONDS,
   studioDrillPath,
 } from "./types";
 
-// Re-exported so `lib/pronunciation` stays the one import site for drill addressing,
-// while the definitions live in the client-safe `types.ts` (see the note there).
-export { drillKeyForFinding, drillKeyOf, studioDrillPath };
+// Re-exported so `lib/pronunciation` stays the one import site for drill addressing and
+// drill eligibility, while the definitions live in the client-safe `types.ts` (see the
+// note there). `drillFitsShortAudio` in particular MUST be the same rule everywhere:
+// the studio, the pin route, the Phrasebook row and the composer's spend clause all ask
+// "is there a drill for this?", and a disagreement left a long correction unspendable.
+export { drillFitsShortAudio, drillKeyForFinding, drillKeyOf, studioDrillPath };
 
 // What the studio drills, and where a drill COMES FROM (E-37, RETRO-002 P4 /
 // RETRO-003).
@@ -84,24 +87,9 @@ export function parseDrillKey(drillKey: string): { source: string; sourceRef: st
   return { source: drillKey.slice(0, i), sourceRef: drillKey.slice(i + 1) };
 }
 
-/**
- * A rough drill-length guard. Azure's REST short-audio path caps assessed audio at 30
- * seconds; a one-sentence recast is far below that, but a correction that is really a
- * paragraph would produce a take that must be refused AFTER the learner has already
- * spoken. Estimating from the reference text (Italian is read at roughly 14 characters
- * per second aloud, deliberately conservative) lets the studio simply not offer such a
- * drill. A heuristic, not a measurement — the real length check is on the recording.
- */
-const READ_CHARS_PER_SECOND = 14;
-
-export function drillFitsShortAudio(referenceText: string): boolean {
-  return referenceText.length / READ_CHARS_PER_SECOND <= MAX_DRILL_SECONDS;
-}
-
-/** Is this a line we can honestly offer as a drill at all? */
-function drillable(referenceText: string): boolean {
-  return referenceText.trim() !== "" && drillFitsShortAudio(referenceText);
-}
+/** Is this a line we can honestly offer as a drill at all? One rule, defined once in
+ *  `types.ts` and shared by every surface that asks the question. */
+const drillable = drillFitsShortAudio;
 
 // ---- the findings producer ------------------------------------------------
 
