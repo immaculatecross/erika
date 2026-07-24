@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { type Settings } from "@/lib/settings";
 import { ACTIVE_NEW_ITEM_KNOBS, PENDING_NEW_ITEM_KNOBS } from "@/lib/settings-knobs";
 import { REGISTERS, type Register } from "@/lib/register";
@@ -169,6 +170,22 @@ export default function SettingsPage() {
               {label} — {note}.
             </p>
           ))}
+        </div>
+
+        {/* Re-run placement (E-35). The vocabulary check is re-runnable; a new run
+            re-seeds recognition evidence and can record a fresh enrollment take. */}
+        <div className="flex flex-col gap-1.5 border-t border-hairline pt-4" data-placement-entry>
+          <span className={LABEL}>Placement</span>
+          <p className="text-[13px] text-secondary">
+            Re-take the quick vocabulary check to re-estimate your level, or record a new enrollment take.
+          </p>
+          <Link
+            href="/practice/placement"
+            data-rerun-placement
+            className="mt-1 inline-flex w-fit rounded-full bg-black/[0.06] px-4 py-2 text-[15px] font-medium text-ink transition-transform active:scale-[0.98] dark:bg-white/[0.08]"
+          >
+            Run placement
+          </Link>
         </div>
 
         {/* Month-to-date spend from spend_ledger (E-18 criterion 4) — display

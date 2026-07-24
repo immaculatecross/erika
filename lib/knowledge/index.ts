@@ -20,6 +20,11 @@ export {
 } from "./items";
 export { recordEvidence, bridgeFinding, getEvidence } from "./evidence";
 export {
+  seedPlacement,
+  type SeedPlacementInput,
+  type SeedPlacementResult,
+} from "./seed-placement";
+export {
   evidenceToGrade,
   deriveStatus,
   deriveRecordingAttested,
