@@ -38,3 +38,44 @@ Erika learns Italian's vocabulary, so the future daily composer (v0.5) has a rea
 <!-- Append per playbooks/task.md: RESULT / PR / Changed / Verified (exact commands + the
      achieved lemma count and cutoff) / Tests changed-removed / Risks / Blocker. Verify
      against DISPOSABLE state. If a clean source can't be reached, report `blocked`. -->
+
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/43 (branch feat/lexicon)
+Changed:
+  - scripts/build-lexicon.ts — new provenance generator: clones→lemmatizes→validates→bands→emits the asset (not in CI).
+  - lib/lexicon/frequency-lexicon.tsv.gz — new committed, reduced, attributed asset (30,786 rows, 226 KB gz).
+  - lib/lexicon/frequency-lexicon.ts — new module-relative asset loader + rankToBand (frequency-derived band).
+  - lib/knowledge/seed-lexicon.ts — new bulk seed helper: idempotent upsert of freq_rank+cefr only.
+  - lib/migrations/v17-lexicon.ts + index.ts — migration v17 seeds knowledge_items from the asset.
+  - lib/lexicon/NOTICE.md — added FrequencyWords (CC BY-SA) attribution + derivation/regeneration notes.
+  - docs/schema.md — v17 row, latest version v17, knowledge_items reference-column note.
+  - tests/lexicon-seed.test.ts — new; proves criterion-4 properties on the real seeded data.
+  - tests/{knowledge,migrations,richness-dial}.test.ts — rescoped 4 pre-seed empty-table assertions.
+Verified (against disposable ERIKA_DB_PATH, never data/erika.db):
+  - npm run typecheck — clean; npm run lint — no warnings/errors.
+  - npm run test — 74 files, 530 passed. npm run build — success (asset traced module-relative).
+  - Disposable DB: 30,786 morph-it-validated lemma rows, rank 1 = e#CCONJ, dense 1..30786,
+    re-open applies no migrations and count is stable (idempotent); data/ untouched.
+  - Achieved lemma count: 30,786 (POS: NOUN 16005, ADJ 7676, VERB 5593, ADV 788, PRON 315,
+    DET 225, INTJ 72, ADP 58, CCONJ 51, AUX 3). Cutoff rule: every morph-it-validated (lemma,POS)
+    whose aggregated (fractional) OpenSubtitles-2018 frequency >= 2 — a noise-floor, not a
+    round-number truncation; ~2x the 15k floor, deep into the colto/literary tail.
+Tests changed/removed:
+  - tests/knowledge.test.ts: two total-count `.toBe(1)/.toBe(0)` and one `rebuildAllDerived===3`
+    assertion rescoped to the ids under test / to before.length — they assumed an empty
+    knowledge_items, which the seed now populates. Behaviour under test unchanged.
+  - tests/migrations.test.ts: v14 evidence-trigger test now inserts a synthetic id
+    ('lemma:__evtest__#NOUN') instead of 'lemma:casa#NOUN' to avoid colliding with a seeded row.
+  - tests/richness-dial.test.ts: the "unattested produced lemma dropped" test asserted total
+    knowledge_items==0; rescoped to assert the specific fabricated ids are absent (seed now non-empty).
+  - No test deleted; no coverage weakened.
+Risks:
+  - Every fresh DB now runs the ~30k-row seed (~250 ms/open); the full suite stayed at ~38 s wall.
+    If a future high-volume test path opens many DBs this could add up — mitigable by a one-time
+    fixture DB if it ever bites.
+  - The `cefr` band is a coarse FREQUENCY-derived proxy (rankToBand), not a measured CEFR level;
+    documented in the asset header, NOTICE.md, schema.md, and code so it is never mistaken for
+    Kelly's (CC BY-NC) bands. E-31 should treat freq_rank as the ordering authority.
+  - Context-free lemmatization splits an ambiguous wordform's count equally across readings; a
+    minor ranking approximation for homographs, acceptable for an edge-ordering signal (no model
+    call, deterministic, rebuildable).
