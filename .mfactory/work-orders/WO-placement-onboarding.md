@@ -61,3 +61,10 @@ Risks:
 - Grammar seeding is blanket-by-level (no per-rule recognition signal) — deliberate; only marks sub-level rules `introduced` (never `known`, never prereq-satisfying, D-19).
 - Optional speaking-sample analysis stops at the honest missing-key wall in the sandbox (no `OPENAI_API_KEY`), by design.
 Blocker: none.
+
+### Repair cycle (E-35 fresh Full review — 3 findings, all fixed)
+
+- **Finding #1 (High) — a placed learner was offered ZERO new grammar.** Seeding sub-level rules `introduced` both excluded them from `readFresh` (needs `unseen`) and BLOCKED every higher rule, because their prereqs were now `introduced` and the eligibility set excluded it. **Case verified:** the set (`PREREQ_SATISFIED`) was consumed ONLY by `ruleEligible` in `compose.ts` — never by `deriveStatus`/the `known` path — so the minimal widen is safe. **Fix:** renamed it `TEACH_ELIGIBLE_PREREQ` and added `introduced` (teaching-eligibility ≠ the `known` corroboration gate, which stays recognition-excluded in `derive.ts`, D-19 untouched). Seeding now marks rules strictly BELOW the placed level, leaving the level's own rules `unseen` as the offered edge. **Verified against a fresh B1-seeded DB:** the composer now offers 48 rules — 33 at B1, 13 B2, 2 C1, and ZERO A1/A2.
+- **Finding #2 (Med) — weak test.** The end-to-end test only asserted the negative (no A1). Strengthened to also require `after.length > 0` AND ≥1 offered rule at B1/B2. **Proved it FAILS pre-fix:** temporarily reverting the widening makes the composer offer 0 rules and the test errors `expected 0 to be greater than 0`.
+- **Finding #3 (Low) — two pseudowords resembled real words.** Swapped `bordino` (real: edge/surname) and `pilucare` (near `piluccare`) for `frebusto` and `gliandeco` (unambiguous invented non-words); the morph-it non-attestation test stays green.
+- Re-ran all gates: `typecheck`/`lint` clean, `vitest run` → **736 passed**, `build` succeeds. D-19 recognition-never-`known` test still green.
