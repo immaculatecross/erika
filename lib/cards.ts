@@ -170,9 +170,19 @@ interface GeneratableFinding {
  *
  * Which findings are eligible is NOT decided here: `INCLUDED_FINDING_SCOPE` is the
  * canonical read-model's scope (lib/findings-model.ts, E-17), the same one the
- * Phrasebook, the Archive, the lesson patterns, Focus and the letter read. The two
+ * Phrasebook, the Archive, the lesson patterns, Focus and the letter read. The other
  * `NOT EXISTS` clauses on top are deck bookkeeping — already carded, or tombstoned
  * by a deliberate delete — not a second opinion about what a finding is.
+ *
+ * [E-37] PRONUNCIATION findings are excluded: a typed cloze cannot test a
+ * mispronunciation. `deriveFront` degrades them to a bare "____ · pronunciation"
+ * prompt — a card that asks you to type a word whose SPELLING was never wrong
+ * (RETRO-003). Those findings now route to the pronunciation studio, where the
+ * learner hears the correct rendition and re-records it for a real per-phoneme score
+ * (lib/pronunciation/drills.ts). This is a routing decision about a card's *format*,
+ * not a second findings gate: the finding is as included as it ever was, and the
+ * deliberate Phrasebook pin (`createCardForFinding`) still works if a user explicitly
+ * wants one in the deck.
  */
 export function generateCards(db: Db): number {
   const findings = db
@@ -180,6 +190,7 @@ export function generateCards(db: Db): number {
       `SELECT f.id, f.session_id, f.quote, f.correction, f.explanation, f.category, f.start_ms
          FROM findings f
         WHERE ${INCLUDED_FINDING_SCOPE}
+          AND f.category <> 'pronunciation'
           AND NOT EXISTS (SELECT 1 FROM cards c WHERE c.finding_id = f.id)
           AND NOT EXISTS (SELECT 1 FROM deleted_findings d WHERE d.finding_id = f.id)`,
     )
