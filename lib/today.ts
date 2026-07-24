@@ -4,6 +4,9 @@ import { compose, capsFromSettings } from "./compose";
 import { dayGoal, getDayCompletion } from "./day-ledger";
 import { localDay } from "./local-day";
 import { placementStatus } from "./placement/status";
+import { buildStreak, type StreakView } from "./streak/store";
+import { buildKnowledgeMap, type MapCell } from "./knowledge-map";
+import { buildTodayThread, type TodayThread } from "./today-thread";
 
 // The Learn TODAY read-model (E-31, D-24). Composes today's plan (draining the spill
 // queue, writing tomorrow's overflow — the composer's only, idempotent side effect,
@@ -37,6 +40,14 @@ export interface TodayView {
   /** Has the learner run placement yet? False → the Learn first-run entry shows a
    *  calm prompt to find their level (E-35), so the composer isn't guessing A1. */
   placed: boolean;
+  /** The calm habit layer (E-38, D-24): the consecutive-day run and the repairs it
+   *  stands on. A zero run renders nothing — never a nag, never a warning. */
+  streak: StreakView;
+  /** The map strip (E-38): one cell per category, green ONLY via resolved slips. */
+  map: MapCell[];
+  /** One factual beat tying today's plan to what the learner actually said today,
+   *  or null — in which case the surface shows NOTHING (E-38, D-19). */
+  thread: TodayThread | null;
 }
 
 export function buildToday(db: Db, day: string = localDay()): TodayView {
@@ -59,5 +70,16 @@ export function buildToday(db: Db, day: string = localDay()): TodayView {
       pronunciation: plan.counts.pronunciation,
     },
     placed: placementStatus(db).placed,
+    streak: buildStreak(db, day),
+    map: buildKnowledgeMap(db),
+    // Today's targets are the composed plan's own item ids — reusing the plan
+    // already computed above rather than re-composing (`collectTutorTargets` does
+    // the same reduction for the tutor persona, bounded to 8; the beat wants the
+    // whole day's plan, so it reduces the plan directly).
+    thread: buildTodayThread(
+      db,
+      day,
+      plan.items.map((i) => i.itemId).filter((id): id is string => !!id),
+    ),
   };
 }
