@@ -58,6 +58,73 @@ describe("buildTutorPersona — the instruction payload (WO criterion 2)", () =>
   });
 });
 
+// The error-flagging mandate. These are PROMPT-CONTENT assertions: they prove the
+// instruction we send contains the mandate, the priorities, and the guardrail — they
+// cannot prove the model obeys them. Behavioural validation needs a live API key and
+// a real Realtime call, which this suite deliberately does not make.
+describe("buildTutorPersona — the error-flagging mandate", () => {
+  const minimal = () =>
+    buildTutorPersona({ register: "colto", targetLanguage: "Italian", nativeLanguage: "English" });
+
+  it("tells the tutor that naming the learner's mistakes is its core job", () => {
+    const persona = minimal();
+    expect(persona).toContain("Finding and naming the learner's mistakes is your most important job");
+    expect(persona.toLowerCase()).toContain("do not politely let errors slide");
+  });
+
+  it("makes final-vowel / -o/-a agreement the top-priority error class, with a worked example", () => {
+    const persona = minimal();
+    expect(persona).toContain("FINAL VOWELS AND AGREEMENT (-o/-a, -i/-e)");
+    expect(persona).toContain("highest priority");
+    // The final vowel carries gender AND number — the reason this class leads.
+    expect(persona).toMatch(/final vowel carries gender and number/);
+    // Says what was said and what it should be.
+    expect(persona).toContain('you said la ragazzo — it\'s il ragazzo');
+    expect(persona).toContain("le case sono belle");
+    // A swallowed/centralised ending counts too, not just an outright wrong letter.
+    expect(persona.toLowerCase()).toMatch(/swallowed, cut short, or centralised/);
+  });
+
+  it("names the other pronunciation errors and grammar/word choice, below final vowels", () => {
+    const persona = minimal();
+    for (const cue of ["gli", "gn", "DOUBLE CONSONANTS", "geminates", "stress"]) {
+      expect(persona).toContain(cue);
+    }
+    expect(persona.toLowerCase()).toContain("grammar and word-choice errors you are confident about");
+    // Priority order is explicit: final vowels are 1, the rest follow.
+    expect(persona.indexOf("FINAL VOWELS")).toBeLessThan(persona.indexOf("DOUBLE CONSONANTS"));
+  });
+
+  it("carries the never-invent-an-error guardrail (D-19 honesty)", () => {
+    const persona = minimal();
+    expect(persona).toContain("Never invent an error");
+    expect(persona).toContain("If you did not clearly hear it, do not flag it");
+    expect(persona.toLowerCase()).toContain("regional or otherwise acceptable variant");
+    expect(persona).toContain("A false correction is worse than a missed one");
+  });
+
+  it("keeps correction in the flow rather than a nag (D-24 calm, D-18 correction-forward)", () => {
+    const persona = minimal();
+    expect(persona).toContain("Stay a conversation, not a lecture");
+    expect(persona.toLowerCase()).toContain("never stop to teach a mini-lesson after every sentence");
+    expect(persona.toLowerCase()).toContain("do not re-drill an error you have already corrected");
+    // D-18 still holds alongside the aggressive mandate.
+    expect(persona.toLowerCase()).toContain("never make the learner repeat their own error");
+  });
+
+  it("composes with the D-23 register dial instead of overriding it", () => {
+    for (const register of ["colloquiale", "standard", "colto", "letterario"] as const) {
+      const persona = buildTutorPersona({ register, targetLanguage: "Italian", nativeLanguage: "English" });
+      // The register line survives verbatim, and the mandate rides alongside it.
+      expect(persona).toContain(registerInstruction(register));
+      expect(persona).toContain("FINAL VOWELS AND AGREEMENT (-o/-a, -i/-e)");
+      expect(persona).toContain("Never invent an error");
+      // The register line comes first: the mandate says what is an error, not how to speak.
+      expect(persona.indexOf(registerInstruction(register))).toBeLessThan(persona.indexOf("Never invent an error"));
+    }
+  });
+});
+
 describe("logEvidenceTool schema", () => {
   it("declares a function tool with itemId/polarity/mode", () => {
     const tool = logEvidenceTool();
@@ -81,6 +148,16 @@ describe("buildTutorSessionConfig — the wired config", () => {
     expect(config.instructions).toContain(l1Line("English"));
     // [T2b] the config carries a server-chosen HARD max-duration ceiling (seconds).
     expect(config.maxSessionSeconds).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("ships the error-flagging mandate and its guardrail alongside the register line", () => {
+    const db = freshDb();
+    writeSettings(db, { register: "colto" });
+    const { config } = buildTutorSessionConfig(db);
+    expect(config.instructions).toContain(registerInstruction("colto"));
+    expect(config.instructions).toContain("FINAL VOWELS AND AGREEMENT (-o/-a, -i/-e)");
+    expect(config.instructions).toContain("Never invent an error");
     db.close();
   });
 
