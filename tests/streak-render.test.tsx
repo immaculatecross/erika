@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { StreakLine } from "@/components/streak-line";
 import { KnowledgeMap } from "@/components/knowledge-map";
 import { streakCaption, repairLabel } from "@/lib/streak/caption";
+import { computeStreak } from "@/lib/streak/compute";
 import { buildMapCells } from "@/lib/knowledge-map";
 
 // E-38 criterion 2 (DESIGN.md:42-49, D-24). The streak's rendered surface is one
@@ -46,6 +47,8 @@ describe("the streak caption — 'Day 14', and nothing more", () => {
     expect(html).toContain("Day 14");
     expect(html).toContain('data-streak-run="14"');
     expect(html).toContain("text-secondary"); // caption style, not a headline
+    // [review F4] Sentence case, not the uppercase section-label token (DESIGN:53).
+    expect(html).not.toContain("uppercase");
   });
 
   it("acknowledges a repair factually — 'repaired Tue'", () => {
@@ -62,6 +65,21 @@ describe("the streak caption — 'Day 14', and nothing more", () => {
     expect(html.toLowerCase()).not.toContain("remaining");
   });
 
+  it("renders the operator's example from the real computation: Day 14 · repaired Tue", () => {
+    // 11–24 July with the 21st (a Tuesday) missed: a 14-day SPAN, 13 completed, one
+    // bridged and disclosed. The number is the span; the disclosure keeps it honest.
+    const completedDays = Array.from({ length: 14 }, (_, i) => `2026-07-${String(11 + i).padStart(2, "0")}`).filter(
+      (d) => d !== "2026-07-21",
+    );
+    const streak = computeStreak({ completedDays, today: TODAY });
+    expect(streak.currentRun).toBe(14);
+    expect(completedDays).toHaveLength(13); // the run is 14 long; 13 days were done
+
+    const html = renderToStaticMarkup(<StreakLine streak={streak} today={TODAY} />);
+    expect(html).toContain("Day 14 · repaired Tue");
+    expect(html).toContain('data-streak-run="14"');
+  });
+
   it("names an older repair by date rather than a stale weekday", () => {
     expect(repairLabel("2026-07-21", TODAY)).toBe("Tue"); // within the week
     expect(repairLabel("2026-07-02", TODAY)).toBe("2 Jul"); // older than a week
@@ -76,6 +94,67 @@ describe("the streak caption — 'Day 14', and nothing more", () => {
       ],
     };
     expect(streakCaption(two, TODAY)).toBe("Day 18 · repaired Tue, 10 Jul");
+  });
+
+  it("SUMMARISES a long repair list instead of enumerating it — nothing dropped", () => {
+    // [review F2] Repairs accrue at 2/month with no cap on run length, so a committed
+    // learner reaches double digits. Enumerating them would render a ~100-character
+    // itemised list of every day they missed — not "a number and a word" (DESIGN:45),
+    // and the closest this surface could come to a guilt ledger.
+    const repairedDays = Array.from({ length: 12 }, (_, i) => ({
+      localDay: `2026-0${1 + Math.floor(i / 2)}-${i % 2 === 0 ? "09" : "19"}`,
+      chargedMonth: `2026-0${1 + Math.floor(i / 2)}`,
+    }));
+    const long = { currentRun: 162, repairedDays };
+
+    const caption = streakCaption(long, TODAY)!;
+    expect(caption).toBe("Day 162 · 12 repaired");
+    // The DISCLOSED count accounts for every repair — nothing is silently dropped.
+    expect(caption).toContain(String(repairedDays.length));
+    expect(caption.length).toBeLessThanOrEqual(40); // stays a caption on a phone
+
+    const html = renderToStaticMarkup(<StreakLine streak={long} today={TODAY} />);
+    expect(html).toContain("12 repaired");
+    // Still no guilt: the individual missed days are not itemised under the ring.
+    expect(html).not.toContain("9 Jan");
+    expect(html).not.toContain("19 Jan");
+  });
+
+  it("INVARIANT: a span wider than the days completed always discloses 'repaired'", () => {
+    // The property the span reading depends on (reviewer's pre-registered invariant):
+    // `currentRun > completedDaysInRun` ⟹ the caption says "repaired". Swept across
+    // every gap position in a 20-day window, plus the no-gap and two-gap shapes.
+    const window = Array.from(
+      { length: 20 },
+      (_, i) => `2026-07-${String(5 + i).padStart(2, "0")}`,
+    );
+    const shapes: string[][] = [[], ...window.map((d) => [d]), [window[4], window[12]]];
+
+    for (const missing of shapes) {
+      const completedDays = window.filter((d) => !missing.includes(d));
+      const streak = computeStreak({ completedDays, today: "2026-07-24" });
+      const completedInRun = streak.currentRun - streak.repairedDays.length;
+      const caption = streakCaption(streak, "2026-07-24");
+      if (streak.currentRun > completedInRun) {
+        expect(caption).not.toBeNull();
+        expect(caption!).toContain("repaired");
+      }
+      // And the span is always exactly completed + disclosed repairs.
+      expect(streak.currentRun).toBe(completedInRun + streak.repairedDays.length);
+    }
+  });
+
+  it("discloses the repair when the run's most recent day is itself repaired", () => {
+    // The reviewer's pre-registered edge: 01–12 July completed, the 13th missed and
+    // bridged, and today (the 14th) still in progress. The span reaches the bridged
+    // day, so the number must be 13 AND the caption must say so.
+    const completedDays = Array.from({ length: 12 }, (_, i) => `2026-07-${String(i + 1).padStart(2, "0")}`);
+    const streak = computeStreak({ completedDays, today: "2026-07-14" });
+    expect(streak.currentRun).toBe(13); // 12 completed + the bridged 13th
+    expect(streak.lastCompletedDay).toBe("2026-07-12"); // their last real practice
+    expect(streak.repairedDays).toEqual([{ localDay: "2026-07-13", chargedMonth: "2026-07" }]);
+    const html = renderToStaticMarkup(<StreakLine streak={streak} today="2026-07-14" />);
+    expect(html).toContain("Day 13 · repaired Mon"); // 2026-07-13 is a Monday
   });
 
   it("renders NOTHING for a zero run — no nag, no warning, no 'start a streak'", () => {

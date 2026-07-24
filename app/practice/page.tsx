@@ -68,7 +68,7 @@ export default function LearnTodayPage() {
           letterUnread: false,
           newItems: { vocab: 0, rules: 0, pronunciation: 0 },
           placed: true,
-          streak: { currentRun: 0, repairedDays: [], repairsUsedThisMonth: 0, lastCompletedDay: null },
+          streak: { currentRun: 0, repairedDays: [], lastCompletedDay: null },
           map: [],
           thread: null,
         });

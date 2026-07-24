@@ -32,6 +32,19 @@ import { parseItemId, getItem } from "./knowledge/items";
 //    renders nothing — no manufactured connection, no generic encouragement, no
 //    "keep going". Silence is the honest output (D-24 bans the nag anyway).
 //
+// WHEN THEY SPOKE ≠ WHEN WE NOTICED (review F1). Both load-bearing facts in the
+// sentence — which local day it belongs to, and "this morning/afternoon/evening" —
+// are read from the SESSION'S CAPTURE TIME plus the segment's offset into the
+// recording: exactly the instant `lib/slip-hours.ts` bins on, so a 24-hour dump bins
+// correctly WITHIN itself. They are emphatically NOT read from `evidence.created_at`,
+// which is `datetime('now')` at MINT time — the moment the deep pass ran. Under
+// Erika's day-scale async capture with a user-triggered Analyze, capture ≠ analysis
+// is the NORMAL case: a learner who dumps a day of audio and hits Analyze after
+// dinner would otherwise be told "this evening's recording" whenever they actually
+// spoke, and would get no beat at all on the day they really said it. A session whose
+// capture time is missing or unreadable is SKIPPED, not cited — the same
+// "unverifiable ⇒ not a claim we make" stance as the rest of this module.
+//
 // This module WRITES NOTHING: `evidence` is append-only and read-only to E-38.
 
 /** The one beat, or null when nothing true can be said. */
@@ -48,8 +61,20 @@ interface ProducedRow {
   item_id: string;
   source_ref: string;
   session_id: string | null;
-  created_at: string;
+  /** The SESSION's capture time — when the learner actually spoke. NULL when the
+   *  session is gone, in which case the row is skipped rather than cited. */
+  session_created_at: string | null;
 }
+
+/**
+ * How far back the capture-time prefilter reaches before the target local day. A
+ * segment's offset can carry a spoken instant hours or a day past its session's
+ * capture time (a 24 h dump), so a session captured BEFORE the day can still hold
+ * speech that falls inside it. This margin is only a performance bound — the exact
+ * answer is the per-row reduction below — so it is set far beyond any plausible
+ * single recording rather than tuned.
+ */
+const CAPTURE_PREFILTER_DAYS = 31;
 
 /** SQLite UTC text ("YYYY-MM-DD HH:MM:SS") → epoch ms, or NaN — the day-ledger
  *  reduction pattern (lib/day-ledger.ts), reused so there is one parse in the app. */
@@ -76,43 +101,60 @@ export function contentHashOfSourceRef(sourceRef: string): string | null {
 }
 
 /**
- * Spontaneous production positives the learner themself produced on local day `day`.
+ * Spontaneous production positives the learner themself SPOKE on local day `day`.
  * There is no "evidence on local day D" query anywhere else in the app — this is it.
- * The UTC `created_at` text is prefiltered to the local day's real UTC interval and
- * then reduced per row (the day-ledger pattern), so a DST-shortened or -lengthened
- * day still selects exactly the rows that fell inside it.
+ *
+ * The instant a row is judged on is the SESSION'S CAPTURE TIME plus the segment's
+ * offset into the recording, summed in epoch ms and only then reduced to a local day
+ * / local hour — the same order `lib/slip-hours.ts` uses, so an offset that crosses
+ * an hour or a midnight lands in the right place. `evidence.created_at` (the mint
+ * instant) is deliberately unused for anything the learner is told (review F1).
+ *
+ * SQL prefilters on capture time only as a bound (a spoken instant is never EARLIER
+ * than its capture, so `< dayEnd` is exact; the lower side uses
+ * `CAPTURE_PREFILTER_DAYS`); the exact answer is the per-row reduction below, so a
+ * DST-shortened or -lengthened day still selects exactly the rows inside it.
  */
-function producedOnLocalDay(db: Db, day: string): { itemId: string; hour: number; at: string }[] {
+function producedOnLocalDay(db: Db, day: string): { itemId: string; spokenMs: number }[] {
   const { startMs, endMs } = localDayBoundsUtc(day);
   const rows = db
     .prepare(
       `SELECT e.item_id AS item_id, e.source_ref AS source_ref, e.session_id AS session_id,
-              e.created_at AS created_at
+              s.created_at AS session_created_at
          FROM evidence e
          LEFT JOIN sessions s ON s.id = e.session_id
         WHERE e.source = 'finding' AND e.mode = 'spontaneous' AND e.polarity = 1
           AND e.source_ref IS NOT NULL
           AND COALESCE(s.exclude_from_evidence, 0) = 0
-          AND e.created_at >= ? AND e.created_at < ?
-        ORDER BY e.created_at DESC, e.id`,
+          AND s.created_at IS NOT NULL
+          AND s.created_at >= ? AND s.created_at < ?`,
     )
-    .all(sqliteUtc(startMs), sqliteUtc(endMs)) as ProducedRow[];
+    .all(sqliteUtc(startMs - CAPTURE_PREFILTER_DAYS * 86_400_000), sqliteUtc(endMs)) as ProducedRow[];
 
-  const segmentVerdict = db.prepare(
-    "SELECT is_user FROM segments WHERE session_id = ? AND content_hash = ? LIMIT 1",
+  // Every segment carrying this audio in this session. A hash can repeat within a
+  // session, so the verdict is taken over ALL of them and fails safe: if any copy was
+  // attributed to somebody else, we cannot say the learner spoke it.
+  const segmentsFor = db.prepare(
+    "SELECT start_ms, is_user FROM segments WHERE session_id = ? AND content_hash = ? ORDER BY start_ms",
   );
 
-  const out: { itemId: string; hour: number; at: string }[] = [];
+  const out: { itemId: string; spokenMs: number }[] = [];
   for (const r of rows) {
-    const ms = utcMs(r.created_at);
-    if (Number.isNaN(ms) || localDay(new Date(ms)) !== day) continue; // exact local-day reduction
+    if (!r.session_created_at || !r.session_id) continue; // no capture time ⇒ never cited
+    const captureMs = utcMs(r.session_created_at);
+    if (Number.isNaN(captureMs)) continue; // unreadable capture time ⇒ never cited
     const hash = contentHashOfSourceRef(r.source_ref);
-    if (!hash || !r.session_id) continue; // unverifiable provenance ⇒ never cited
-    const seg = segmentVerdict.get(r.session_id, hash) as { is_user: number | null } | undefined;
-    if (!seg) continue; // the segment is gone — we cannot say whose voice it was
-    if (seg.is_user === 0) continue; // attributed to somebody else (E-36, D-22)
-    out.push({ itemId: r.item_id, hour: localHour(new Date(ms)), at: r.created_at });
+    if (!hash) continue; // unverifiable provenance ⇒ never cited
+    const segs = segmentsFor.all(r.session_id, hash) as { start_ms: number; is_user: number | null }[];
+    if (segs.length === 0) continue; // the segment is gone — we cannot say whose voice it was
+    if (segs.some((s) => s.is_user === 0)) continue; // attributed to somebody else (E-36, D-22)
+    // The moment they spoke: capture time + the segment's offset into the recording.
+    const spokenMs = captureMs + Math.max(0, segs[0].start_ms);
+    if (localDay(new Date(spokenMs)) !== day) continue; // exact local-day reduction
+    out.push({ itemId: r.item_id, spokenMs });
   }
+  // Most recently spoken first, deterministic on ties.
+  out.sort((a, b) => b.spokenMs - a.spokenMs || (a.itemId < b.itemId ? -1 : 1));
   return out;
 }
 
@@ -127,9 +169,9 @@ function labelFor(db: Db, itemId: string): string {
 }
 
 /**
- * The beat for `day`: the most recent knowledge item that is BOTH on today's plan
- * and carries a qualifying production from today. Null when nothing qualifies —
- * which is the common case and the correct output, not a gap to fill.
+ * The beat for `day`: the most recently SPOKEN knowledge item that is BOTH on today's
+ * plan and carries a qualifying production from that day. Null when nothing qualifies
+ * — which is the common case and the correct output, not a gap to fill.
  */
 export function buildTodayThread(
   db: Db,
@@ -143,7 +185,7 @@ export function buildTodayThread(
     return {
       itemId: produced.itemId,
       label: labelFor(db, produced.itemId),
-      partOfDay: partOfDay(produced.hour),
+      partOfDay: partOfDay(localHour(new Date(produced.spokenMs))),
     };
   }
   return null;

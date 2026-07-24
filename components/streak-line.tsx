@@ -11,6 +11,12 @@ import type { StreakRepair } from "@/lib/streak/compute";
 // alarm styling for a missed day, and no copy at all when the run is zero — a
 // learner who missed yesterday is shown NOTHING rather than a nag. Green is not
 // spent here: showing up is not mastery (D-14/D-24).
+//
+// SENTENCE CASE, not the uppercase `CAPTION` token (review F4, operator ruling). That
+// token is reserved for SECTION LABELS ("REVIEW", "YOUR MAP"); this is a sentence, and
+// DESIGN:53 says sentence case everywhere. "Day 14 · repaired Tue" is information, and
+// setting it in caps reads louder than the number deserves. Caption WEIGHT and size
+// are kept — it is still a caption, just not a label.
 
 export function StreakLine({
   streak,
@@ -25,7 +31,7 @@ export function StreakLine({
     <p
       data-streak
       data-streak-run={streak.currentRun}
-      className="tabular text-[13px] font-medium uppercase tracking-[0.06em] text-secondary"
+      className="tabular text-[13px] font-medium text-secondary"
     >
       {caption}
     </p>

@@ -191,6 +191,90 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
     db.close();
   });
 
+  // ── [review F1] the beat is about WHEN THEY SPOKE, not when we noticed ─────────
+
+  it("keys the day on the SESSION'S CAPTURE TIME, not the evidence mint time", async () => {
+    const db = ws();
+    seed(db, "s", ["userhash"]);
+    setSegmentAttribution(db, listSegments(db, "s")[0].id, 0.95, 1);
+    // Capture on Tuesday morning; the deep pass runs now (Friday evening, whenever
+    // "now" is) — Erika's normal day-scale async case: dump today, Analyze later.
+    db.prepare("UPDATE sessions SET created_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
+    await analyse(db, "s");
+    // Sanity: the two instants really do differ, so this test can fail.
+    const mintDay = localDay(
+      new Date(
+        Date.parse(
+          (db.prepare("SELECT created_at AS c FROM evidence LIMIT 1").get() as { c: string }).c.replace(" ", "T") +
+            "Z",
+        ),
+      ),
+    );
+    expect(mintDay).not.toBe("2026-07-21");
+
+    // The beat belongs to the day they SPOKE…
+    const spoken = buildTodayThread(db, "2026-07-21", [ITEM]);
+    expect(spoken).not.toBeNull();
+    // …and NOT to the day we happened to analyse it.
+    expect(buildTodayThread(db, mintDay, [ITEM])).toBeNull();
+    db.close();
+  });
+
+  it("says the part of day they SPOKE, not the part of day we analysed", async () => {
+    const tzBefore = process.env.TZ;
+    process.env.TZ = "Europe/Rome"; // 05:00Z ⇒ 07:00 local, unambiguously morning
+    try {
+      const db = ws();
+      seed(db, "s", ["userhash"]);
+      setSegmentAttribution(db, listSegments(db, "s")[0].id, 0.95, 1);
+      db.prepare("UPDATE sessions SET created_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
+      await analyse(db, "s");
+      expect(buildTodayThread(db, "2026-07-21", [ITEM])!.partOfDay).toBe("this morning");
+      db.close();
+    } finally {
+      if (tzBefore === undefined) delete process.env.TZ;
+      else process.env.TZ = tzBefore;
+    }
+  });
+
+  it("adds the segment's offset, so a 24-hour dump bins correctly WITHIN itself", async () => {
+    const tzBefore = process.env.TZ;
+    process.env.TZ = "Europe/Rome";
+    try {
+      const db = ws();
+      // One session captured at 07:00 local; the segment carrying the lemma sits
+      // 13 hours into the recording — i.e. the learner said it at 20:00, that evening.
+      seed(db, "s", ["userhash"]);
+      const seg = listSegments(db, "s")[0];
+      setSegmentAttribution(db, seg.id, 0.95, 1);
+      db.prepare("UPDATE sessions SET created_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
+      await analyse(db, "s");
+      db.prepare("UPDATE segments SET start_ms = ? WHERE id = ?").run(13 * 3_600_000, seg.id);
+      expect(buildTodayThread(db, "2026-07-21", [ITEM])!.partOfDay).toBe("this evening");
+
+      // Push the offset past local midnight: the speech now belongs to the NEXT day.
+      db.prepare("UPDATE segments SET start_ms = ? WHERE id = ?").run(20 * 3_600_000, seg.id);
+      expect(buildTodayThread(db, "2026-07-21", [ITEM])).toBeNull();
+      expect(buildTodayThread(db, "2026-07-22", [ITEM])).not.toBeNull();
+      db.close();
+    } finally {
+      if (tzBefore === undefined) delete process.env.TZ;
+      else process.env.TZ = tzBefore;
+    }
+  });
+
+  it("does not cite a row whose session capture time is unreadable", async () => {
+    const db = ws();
+    seed(db, "s", ["userhash"]);
+    setSegmentAttribution(db, listSegments(db, "s")[0].id, 0.95, 1);
+    await analyse(db, "s");
+    const day = localDay();
+    expect(buildTodayThread(db, day, [ITEM])).not.toBeNull();
+    db.prepare("UPDATE sessions SET created_at = 'not-a-date' WHERE id = 's'").run();
+    expect(buildTodayThread(db, day, [ITEM])).toBeNull(); // unverifiable ⇒ not a claim
+    db.close();
+  });
+
   it("does not cite a NEGATIVE production event as a success", () => {
     const db = ws();
     ensureLemmaItem(db, "casa", "NOUN");

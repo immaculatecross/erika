@@ -28,10 +28,25 @@ import { localMonth, previousLocalDay } from "../local-day";
 // streak that "breaks" at 00:01 would be both false and exactly the loss-aversion
 // pressure D-24 forbids.
 //
-// WHAT THE NUMBER MEANS (D-19 honesty). `currentRun` counts only days the learner
-// ACTUALLY completed. A repaired day is bridged, not credited: Erika never says you
-// practised on a day you did not. The repairs are reported alongside, factually
-// ("repaired Tue"), which is what explains why the number did not reset.
+// WHAT THE NUMBER MEANS — THE RUN'S SPAN (operator ruling, 2026-07-24). `currentRun`
+// is the INCLUSIVE SPAN of the current run: the days the learner completed PLUS the
+// repaired days bridging them. A 14-day run containing one repaired day reads
+// "Day 14 · repaired Tue", not "Day 13".
+//
+// The reasoning, recorded so the next reader does not "fix" this back to a count of
+// completed days: the repair exists precisely to keep the run intact, so a repair
+// that still costs the learner a number is a weaker promise than D-24 makes. The
+// under-count also creates an off-by-one the learner cannot explain — they know they
+// started 14 days ago and the app says 13. **The disclosure is what makes the span
+// honest**: "· repaired Tue" states plainly that the run includes a bridged day, so
+// nothing is hidden and D-19 is satisfied by TRANSPARENCY rather than by
+// under-counting.
+//
+// The honesty invariant that does NOT move: a repaired day is never recorded as
+// COMPLETED anywhere. `day_ledger` is untouched (a row still exists only when the
+// goal was met), `repairedDays` stays a separate, disclosed list, and
+// `lastCompletedDay` remains the last day actually completed. Only the displayed run
+// length counts the bridge.
 
 /** Repair credits granted per calendar month (D-24). Earned, never purchasable. */
 export const REPAIRS_PER_MONTH = 2;
@@ -53,9 +68,12 @@ export interface StreakInput {
 }
 
 export interface StreakResult {
-  /** Consecutive days COMPLETED in the current run (repaired days not counted). */
+  /** The current run's inclusive SPAN in local days: days completed PLUS the
+   *  repaired days bridging them. The repairs are disclosed in `repairedDays` and
+   *  in the caption, which is what keeps the span honest (see the note above). */
   currentRun: number;
-  /** The repairs the current run is standing on, most recent first. */
+  /** The repairs the current run is standing on, most recent first — the disclosure
+   *  the span depends on. A repaired day is bridged, never recorded as completed. */
   repairedDays: StreakRepair[];
   /** Repair credits already charged to `today`'s calendar month (0..2). */
   repairsUsedThisMonth: number;
@@ -86,7 +104,9 @@ export function computeStreak(input: StreakInput): StreakResult {
   const spent = new Map<string, number>();
   for (const r of ledger) spent.set(r.chargedMonth, (spent.get(r.chargedMonth) ?? 0) + 1);
 
-  let currentRun = 0;
+  // `completed` is tracked apart from the span so the "a repaired day is never
+  // credited as completed" invariant stays legible: the span is the sum of the two.
+  let completed = 0;
   let lastCompletedDay: string | null = null;
   const repairedDays: StreakRepair[] = [];
   const newRepairs: StreakRepair[] = [];
@@ -95,14 +115,14 @@ export function computeStreak(input: StreakInput): StreakResult {
   // treated as a miss — the day is still in progress (see the note above).
   let cursor = input.today;
   if (complete.has(cursor)) {
-    currentRun += 1;
+    completed += 1;
     lastCompletedDay = cursor;
   }
   cursor = previousLocalDay(cursor);
 
   for (;;) {
     if (complete.has(cursor)) {
-      currentRun += 1;
+      completed += 1;
       if (lastCompletedDay === null) lastCompletedDay = cursor;
       cursor = previousLocalDay(cursor);
       continue;
@@ -131,11 +151,16 @@ export function computeStreak(input: StreakInput): StreakResult {
     cursor = before;
   }
 
-  // A run of zero completed days stands on nothing — never report repairs for it.
-  if (currentRun === 0) {
+  // A run with no COMPLETED day stands on nothing — never report repairs for it.
+  if (completed === 0) {
     repairedDays.length = 0;
     newRepairs.length = 0;
   }
+
+  // The span: completed days plus the repaired days bridging them. Every repaired
+  // day here lies strictly inside the run (a repair requires the day before it to be
+  // complete), so the sum is exactly the run's inclusive length in local days.
+  const currentRun = completed === 0 ? 0 : completed + repairedDays.length;
 
   const thisMonth = localMonth(input.today);
   const persistedThisMonth = ledger.filter((r) => r.chargedMonth === thisMonth).length;

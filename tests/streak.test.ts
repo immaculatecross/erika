@@ -4,7 +4,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { computeStreak, REPAIRS_PER_MONTH } from "@/lib/streak/compute";
-import { buildStreak, listStreakRepairs, recordStreakRepairs } from "@/lib/streak/store";
+import { buildStreak, listStreakRepairs, recordStreakRepairs, repairsUsedInMonth } from "@/lib/streak/store";
+import { streakCaption } from "@/lib/streak/caption";
 import { recordDayComplete } from "@/lib/day-ledger";
 
 // E-38 criterion 1 (D-24). The streak's brain is PURE — day keys in, a run out — so
@@ -16,6 +17,12 @@ import { recordDayComplete } from "@/lib/day-ledger";
 // The mechanic under test, verbatim from D-24: two AUTOMATIC, SILENT repairs per
 // calendar month, earned not bought. Nothing in these tests (or the code) prompts,
 // warns, counts down or charges — when the credits are gone the run simply ends.
+//
+// `currentRun` is the run's inclusive SPAN (operator ruling, 2026-07-24): completed
+// days PLUS the repaired days bridging them, with the repairs disclosed alongside.
+// Every expectation below is derived that way, and the honesty invariant is asserted
+// separately: a repaired day is never recorded as COMPLETED (`day_ledger` untouched,
+// `lastCompletedDay` is a real completed day, `repairedDays` stays its own list).
 
 /** Consecutive local days, oldest first, starting at `from`. */
 function days(from: string, n: number): string[] {
@@ -64,20 +71,36 @@ describe("computeStreak — the consecutive-day run", () => {
 });
 
 describe("computeStreak — earned, silent repairs (two per calendar month)", () => {
-  it("bridges ONE missed day automatically and counts only days actually completed", () => {
-    // 11th–24th July except the 18th.
+  it("bridges ONE missed day automatically, keeping the run's SPAN intact", () => {
+    // 11th–24th July except the 18th: a 14-day span, 13 of them completed.
     const completed = days("2026-07-11", 14).filter((d) => d !== "2026-07-18");
     const r = computeStreak({ completedDays: completed, today: "2026-07-24" });
-    expect(r.currentRun).toBe(13); // 13 real days — a repaired day is bridged, never credited
+    expect(r.currentRun).toBe(14); // the span — the repair keeps the run whole
     expect(r.repairedDays).toEqual([{ localDay: "2026-07-18", chargedMonth: "2026-07" }]);
     expect(r.newRepairs).toHaveLength(1);
     expect(r.repairsUsedThisMonth).toBe(1);
+    // …and the bridged day is NOT claimed as practice: it is disclosed as a repair,
+    // and the run's last completed day is a day the learner really did.
+    expect(completed).not.toContain("2026-07-18");
+    expect(r.lastCompletedDay).toBe("2026-07-24");
+    expect(r.currentRun).toBe(completed.length + r.repairedDays.length);
+  });
+
+  it("pins the operator's example end to end: Day 14 · repaired Tue", () => {
+    // 2026-07-21 is a Tuesday; 2026-07-24 (today) is a Friday.
+    const completed = days("2026-07-11", 14).filter((d) => d !== "2026-07-21");
+    const r = computeStreak({ completedDays: completed, today: "2026-07-24" });
+    expect(r.currentRun).toBe(14);
+    expect(r.repairedDays).toEqual([{ localDay: "2026-07-21", chargedMonth: "2026-07" }]);
+    expect(streakCaption(r, "2026-07-24")).toBe("Day 14 · repaired Tue");
   });
 
   it("bridges a SECOND gap in the same month — both credits spent, run intact", () => {
+    // 5th–24th July (a 20-day span) with the 10th and 18th missed: 18 completed + 2 bridged.
     const completed = days("2026-07-05", 20).filter((d) => d !== "2026-07-10" && d !== "2026-07-18");
     const r = computeStreak({ completedDays: completed, today: "2026-07-24" });
-    expect(r.currentRun).toBe(18);
+    expect(r.currentRun).toBe(20);
+    expect(completed).toHaveLength(18); // only 18 days were actually completed
     expect(r.repairedDays.map((x) => x.localDay)).toEqual(["2026-07-18", "2026-07-10"]);
     expect(r.repairsUsedThisMonth).toBe(REPAIRS_PER_MONTH);
   });
@@ -88,8 +111,10 @@ describe("computeStreak — earned, silent repairs (two per calendar month)", ()
     );
     const r = computeStreak({ completedDays: completed, today: "2026-07-24" });
     // Walking back: 24→19 complete (6), 18 repaired, 17→13 (5), 12 repaired, 11→07 (5),
-    // then 06 has no credit left ⇒ the run stops there. 6+5+5 = 16.
-    expect(r.currentRun).toBe(16);
+    // then 06 has no credit left ⇒ the run stops there. 16 completed + 2 bridged = an
+    // 18-day span (07–24 July inclusive).
+    expect(r.currentRun).toBe(18);
+    expect(r.lastCompletedDay).toBe("2026-07-24");
     expect(r.repairedDays.map((x) => x.localDay)).toEqual(["2026-07-18", "2026-07-12"]);
     expect(r.repairsUsedThisMonth).toBe(REPAIRS_PER_MONTH);
     // The third gap is simply where the run ends: no extra credit was charged.
@@ -110,7 +135,8 @@ describe("computeStreak — earned, silent repairs (two per calendar month)", ()
       (d) => !["2026-06-24", "2026-06-27", "2026-07-06", "2026-07-14"].includes(d),
     );
     const r = computeStreak({ completedDays: completed, today: "2026-07-24" });
-    expect(r.currentRun).toBe(31); // 35 calendar days in the span, minus the 4 bridged
+    expect(r.currentRun).toBe(35); // the span: 31 completed + the 4 bridged days
+    expect(completed).toHaveLength(31);
     expect(r.repairedDays.map((x) => x.localDay)).toEqual([
       "2026-07-14",
       "2026-07-06",
@@ -129,7 +155,7 @@ describe("computeStreak — earned, silent repairs (two per calendar month)", ()
     const r = computeStreak({ completedDays: completed, today: "2026-07-24" });
     expect(r.repairedDays).toEqual([{ localDay: "2026-06-30", chargedMonth: "2026-06" }]);
     expect(r.repairsUsedThisMonth).toBe(0); // July's two credits are untouched
-    expect(r.currentRun).toBe(29); // 5 June days + 24 July days actually completed
+    expect(r.currentRun).toBe(30); // the span 25 Jun–24 Jul: 29 completed + 1 bridged
   });
 });
 
@@ -156,7 +182,7 @@ describe("computeStreak — DST boundaries (the day key is local, never UTC)", (
     process.env.TZ = "Europe/Rome";
     const completed = days("2026-03-25", 8).filter((d) => d !== "2026-03-29");
     const r = computeStreak({ completedDays: completed, today: "2026-04-01" });
-    expect(r.currentRun).toBe(7);
+    expect(r.currentRun).toBe(8); // the 8-day span: 7 completed + the bridged DST day
     expect(r.repairedDays).toEqual([{ localDay: "2026-03-29", chargedMonth: "2026-03" }]);
   });
 
@@ -188,7 +214,8 @@ describe("computeStreak — idempotent recomputation never double-spends", () =>
     const r = computeStreak({ completedDays: completed, repairs: ledger, today: "2026-07-24" });
     expect(r.repairedDays).toEqual([{ localDay: "2026-07-23", chargedMonth: "2026-07" }]);
     expect(r.repairsUsedThisMonth).toBe(2); // the old charge still counts — history stands
-    expect(r.currentRun).toBe(2);
+    expect(r.currentRun).toBe(3); // the span 22–24 July: 2 completed + 1 bridged
+    expect(r.lastCompletedDay).toBe("2026-07-24");
   });
 
   it("refuses a third repair when the ledger already shows the month's two spent", () => {
@@ -231,7 +258,7 @@ describe("the repair ledger (v25) — the store", () => {
     }
 
     const first = buildStreak(db, "2026-07-24");
-    expect(first.currentRun).toBe(13);
+    expect(first.currentRun).toBe(14); // the span; 13 days were actually completed
     expect(first.repairedDays.map((r) => r.localDay)).toEqual(["2026-07-18"]);
     expect(listStreakRepairs(db)).toHaveLength(1);
 
@@ -242,8 +269,43 @@ describe("the repair ledger (v25) — the store", () => {
     // And again the next day, with the day completed — still one row.
     recordDayComplete(db, "2026-07-25", { cardsDone: 4 });
     const third = buildStreak(db, "2026-07-25");
-    expect(third.currentRun).toBe(14);
+    expect(third.currentRun).toBe(15);
     expect(listStreakRepairs(db)).toHaveLength(1);
+    db.close();
+  });
+
+  it("counts the span but records only COMPLETED days — the ledgers disagree honestly", () => {
+    const db = freshDb();
+    for (const d of days("2026-07-11", 14)) {
+      if (d === "2026-07-18") continue;
+      recordDayComplete(db, d, { cardsDone: 9 });
+    }
+    const view = buildStreak(db, "2026-07-24");
+    const completedRows = (db.prepare("SELECT COUNT(*) AS n FROM day_ledger").get() as { n: number }).n;
+    expect(view.currentRun).toBe(14); // the span the learner lived
+    expect(completedRows).toBe(13); // the days they actually completed
+    expect(view.currentRun).toBe(completedRows + view.repairedDays.length);
+    // The bridged day is in the repair ledger and NOWHERE in the completion ledger.
+    expect(listStreakRepairs(db).map((r) => r.localDay)).toEqual(["2026-07-18"]);
+    expect(db.prepare("SELECT 1 FROM day_ledger WHERE local_day = '2026-07-18'").get()).toBeUndefined();
+    db.close();
+  });
+
+  it("keeps the credit BALANCE server-side — it never reaches the view (D-24)", () => {
+    // [review F5] `repairsUsedThisMonth` is a credit balance; shipping it in the
+    // /api/learn/today JSON would leave it one interpolation away from the countdown
+    // D-24 bans. It lives on the pure result and this server-only accessor instead.
+    const db = freshDb();
+    for (const d of days("2026-07-11", 14)) {
+      if (d === "2026-07-18") continue;
+      recordDayComplete(db, d, { cardsDone: 9 });
+    }
+    const view = buildStreak(db, "2026-07-24");
+    expect(Object.keys(view).sort()).toEqual(["currentRun", "lastCompletedDay", "repairedDays"]);
+    expect(JSON.stringify(view)).not.toContain("repairsUsed");
+    // …while the server can still audit it.
+    expect(repairsUsedInMonth(db, "2026-07-24")).toBe(1);
+    expect(repairsUsedInMonth(db, "2026-08-01")).toBe(0); // a new month, a clean balance
     db.close();
   });
 
