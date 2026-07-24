@@ -6,11 +6,7 @@ import { listSlips } from "../slips";
 import { compose } from "../compose";
 import { parseItemId } from "../knowledge/items";
 import { localDay } from "../local-day";
-import {
-  realtimeModelForTier,
-  type RealtimeModelId,
-  type RealtimeTier,
-} from "../analysis/rates";
+import { realtimeModelForTier, type RealtimeModelId } from "../analysis/rates";
 import { buildTutorPersona } from "./persona";
 import { TUTOR_EVIDENCE_MODES } from "./log-evidence";
 
