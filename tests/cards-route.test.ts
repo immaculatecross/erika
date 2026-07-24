@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { tmpDir } from "./helpers";
+import { parseCsv } from "@/lib/cards-csv";
 
 // The three card routes (E-5): POST generate (idempotent), GET the due queue, and
 // POST grade (SM-2 persist, with 404/400 guards). Real DB under a throwaway dir;
@@ -74,9 +75,24 @@ describe("GET /api/cards?due=1", () => {
     const body = await (await dueGET()).json();
     expect(body.dueCount).toBe(2);
     expect(body.cards).toHaveLength(2);
-    // The view carries the drill fields plus findingId (for the back's Compare
-    // control, E-21) — no SM-2/session plumbing leaks out.
-    expect(Object.keys(body.cards[0]).sort()).toEqual(["back", "category", "findingId", "front", "id"]);
+    // Correction-forward view (E-29): a meaning-first `front`, the `correction`
+    // target, the `why`, and the `error` (shown once on the back) — plus findingId
+    // for the back's Compare control (E-21). No SM-2/session plumbing leaks out.
+    expect(Object.keys(body.cards[0]).sort()).toEqual([
+      "category",
+      "correction",
+      "error",
+      "findingId",
+      "front",
+      "id",
+      "why",
+    ]);
+    // D-18: the error is never the stimulus — the front never carries the raw quote.
+    for (const c of body.cards) {
+      expect(c.error).toMatch(/^q\d$/); // the user's utterance rides on `error`
+      expect(c.correction).toMatch(/^c\d$/); // the correct form is the target
+      expect(c.front).not.toContain(c.error); // …but never appears on the front
+    }
   });
 });
 
@@ -115,7 +131,16 @@ describe("GET /api/cards (browser: all cards)", () => {
     await generatePOST();
     const body = await (await allGET()).json();
     expect(body.cards).toHaveLength(2);
-    expect(Object.keys(body.cards[0]).sort()).toEqual(["back", "category", "due", "front", "id", "suspended"]);
+    expect(Object.keys(body.cards[0]).sort()).toEqual([
+      "category",
+      "correction",
+      "due",
+      "error",
+      "front",
+      "id",
+      "suspended",
+      "why",
+    ]);
   });
 });
 
@@ -153,7 +178,7 @@ describe("DELETE /api/cards/[id]", () => {
 });
 
 describe("GET /api/cards/export", () => {
-  it("returns a downloadable CSV with the right headers and both fields escaped", async () => {
+  it("exports correction-forward rows, escaped, with the error carried once on the back (E-29)", async () => {
     seed("exp", 1);
     // A finding whose quote carries a comma, a quote, and a newline exercises escaping.
     persistSegmentFindings(getDb(), {
@@ -171,6 +196,14 @@ describe("GET /api/cards/export", () => {
     expect(res.headers.get("Content-Type")).toBe("text/csv; charset=utf-8");
     expect(res.headers.get("Content-Disposition")).toBe('attachment; filename="erika-cards.csv"');
     const text = await res.text();
-    expect(text).toContain('"he said, ""hi""\nthere"'); // RFC 4180 escaped in the body
+    // RFC 4180 escaping still round-trips: the nasty field is quoted, its quotes doubled.
+    expect(text).toContain('""hi""');
+
+    // Parse back and find the nasty row: the error rides on the Back (once, labelled),
+    // never on the Front (D-18 — the error is never the drill stimulus).
+    const nasty = parseCsv(text).find((r) => r[1].includes("You said: he said"));
+    expect(nasty).toBeDefined();
+    expect(nasty![1]).toContain('You said: he said, "hi"\nthere'); // survived escaping, intact
+    expect(nasty![0]).not.toContain("he said"); // the Front omits the raw error
   });
 });

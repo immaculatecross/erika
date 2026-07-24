@@ -49,8 +49,10 @@ function seedFindings(n: number): string {
       deepDone: true,
       findings: [
         {
-          quote: `phrase ${i}`,
-          correction: `recast ${i}`,
+          // Quote and correction share context (…a scuola ${i}) so the derived
+          // meaning-first front is a distinct context gap per card (E-29).
+          quote: `vado a scuola ${i}`,
+          correction: `sono andato a scuola ${i}`,
           category: "grammar" as Category,
           explanation: "why this reads as non-native",
           severity: "high" as Severity,

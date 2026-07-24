@@ -50,7 +50,7 @@ function seedFindings(rows: { quote: string; correction: string; category: Categ
 }
 
 test.describe("phrasebook screen", () => {
-  test("renders recasts side by side and marks the already-in-deck entry truthfully", async ({ page }) => {
+  test("leads with the correct form and keeps the error behind tap-to-reveal (E-29)", async ({ page }) => {
     seedFindings([{ quote: "he go to work", correction: "he goes to work", category: "grammar" }]);
     generateCards(db()); // v0.1 auto-generates a card, so this entry is already in the deck
 
@@ -58,8 +58,15 @@ test.describe("phrasebook screen", () => {
     await expect(page.locator("[data-phrasebook]")).toBeVisible();
 
     const entry = page.locator("[data-entry]").first();
-    await expect(entry).toContainText("he go to work"); // you say
-    await expect(entry).toContainText("he goes to work"); // natives say
+    await expect(entry).toContainText("he goes to work"); // the correct form leads
+    // Correction-forward (D-18): the error is hidden until the user taps to reveal.
+    const reveal = entry.locator("[data-revealable-error]");
+    await expect(reveal).toHaveAttribute("data-revealed", "false");
+    await expect(reveal).not.toContainText("he go to work");
+    await entry.locator("[data-reveal-error]").click();
+    await expect(reveal).toHaveAttribute("data-revealed", "true");
+    await expect(reveal.locator("[data-error-text]")).toContainText("he go to work"); // shown, once
+
     await expect(entry).toHaveAttribute("data-in-deck", "true");
     await expect(entry.locator("[data-in-deck-marker]")).toBeVisible();
     await expect(entry.locator("[data-pin]")).toHaveCount(0); // no pin button when already in deck
