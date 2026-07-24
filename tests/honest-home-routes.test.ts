@@ -102,7 +102,7 @@ describe("GET /api/settings — month-to-date spend (criterion 4)", () => {
 
     const body = (await (await GET_SETTINGS()).json()) as { monthlyBudgetUsd: number; spentThisMonth: number };
     expect(body.spentThisMonth).toBeCloseTo(1.75, 10);
-    expect(body.monthlyBudgetUsd).toBe(25); // the cap itself is untouched
+    expect(body.monthlyBudgetUsd).toBe(50); // E-28 default cap (25 → 50, D-20); display only
   });
 });
 

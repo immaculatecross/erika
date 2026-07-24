@@ -93,7 +93,11 @@ function mockClient(opts: MockOpts) {
 
 function run(db: Db, sessionId: string, client: AudioModelClient) {
   const job = enqueueAnalysis(db, sessionId);
-  return runAnalysisJob(db, job.id, client, { tempo: TEMPO });
+  // These tests exercise the CASCADE (triage → deep). `deepFullMaxMinutes: 0` pins
+  // every session above the short-capture threshold so it takes the cascade path
+  // regardless of its (short) test duration; the full-deep path has its own tests
+  // below. (Pre-E-28 there was only the cascade, so this restores that behaviour.)
+  return runAnalysisJob(db, job.id, client, { tempo: TEMPO, deepFullMaxMinutes: 0 });
 }
 
 describe("cascade shape (criterion 1)", () => {
@@ -325,8 +329,8 @@ describe("spend is recorded when a call resolves, not after parsing (E-16 defect
     // The mini triage (which parsed fine) AND *both* unparseable deep calls — the
     // first attempt and E-16b's single repair retry. Both resolved, both charged.
     expect(rows.map((r) => r.model)).toEqual(["gpt-audio-1.5", "gpt-audio-1.5", "gpt-audio-mini"]);
-    // 60 s of deep audio at $0.06/min = $0.06 — the real charge, not zero.
-    expect(rows[0].cost_usd).toBeCloseTo(0.06, 9);
+    // 60 s of deep audio at the E-28-recalibrated $0.03/min = $0.03 — the real charge, not zero.
+    expect(rows[0].cost_usd).toBeCloseTo(0.03, 9);
     db.close();
   });
 

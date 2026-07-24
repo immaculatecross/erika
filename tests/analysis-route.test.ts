@@ -57,7 +57,7 @@ describe("GET analysis estimate", () => {
     const body = await (await estimateGET(req(), ctx("est"))).json();
     expect(body.estimate.pendingCount).toBe(1);
     expect(body.estimate.totalUsd).toBeGreaterThan(0);
-    expect(body.budgetUsd).toBe(25);
+    expect(body.budgetUsd).toBe(50); // E-28 raised the default cap 25 → 50 (D-20)
     expect(body.remainingUsd).toBeGreaterThan(0);
   });
 });

@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import type { Db } from "../db";
 import type { Finding } from "../analysis/findings";
 import { readSettings } from "../settings";
-import { recordSpend, wouldExceedBudget } from "../analysis/budget";
+import { reserveSpend, finalizeReservation, releaseReservation } from "../analysis/budget";
 import { TTS_MODEL, ttsCallCost } from "../analysis/rates";
 import { BudgetExceededError } from "../lessons/billing";
 import { ensureRenditionsDir, renditionPath } from "../audio-storage";
@@ -82,23 +82,38 @@ export async function renderCorrection(
     return { rendition: getRendition(db, finding.id)!, generated: false };
   }
 
+  // RESERVE-BEFORE-CALL (E-28 criterion 5b): the cap must count this in-flight cost
+  // so a concurrent analysis cascade cannot reserve on top of it and push committed
+  // spend over the cap. `reserveSpend` inserts a PENDING ledger row atomically iff
+  // committed + pending + cost ≤ cap — the same guard the cascade uses (E-27), now
+  // shared, so the cross-biller path is pending-aware in BOTH directions. A refused
+  // reservation is a budget halt: release the claim, make no call, no row survives.
+  const { monthlyBudgetUsd } = readSettings(db);
+  const reservation = reserveSpend(
+    db,
+    { model: TTS_MODEL, contentHash: finding.contentHash, costUsd },
+    monthlyBudgetUsd,
+  );
+  if (!reservation) {
+    deleteRendition(db, finding.id);
+    throw new BudgetExceededError();
+  }
+
   let result;
   try {
-    const { monthlyBudgetUsd } = readSettings(db);
-    if (wouldExceedBudget(db, costUsd, monthlyBudgetUsd)) {
-      throw new BudgetExceededError();
-    }
     result = await client.synthesize({ text: finding.correction });
   } catch (err) {
-    // Budget refusal or a failed synthesize — NOTHING has been billed yet: release
-    // the claim so a legitimate retry can re-lease and render.
+    // A failed synthesize — NOTHING was billed: release the reservation (frees the
+    // cap) and the claim so a legitimate retry can re-lease and render.
+    releaseReservation(db, reservation);
     deleteRendition(db, finding.id);
     throw err;
   }
 
   // The provider was charged. From here the claim MUST stand and the spend MUST be
-  // recorded — never release the row past this point, or a retry would re-bill.
-  recordSpend(db, { model: TTS_MODEL, contentHash: finding.contentHash, costUsd });
+  // committed — never release the row past this point, or a retry would re-bill. The
+  // TTS cost is known up front (estimate == actual), so finalize at the reserved cost.
+  finalizeReservation(db, reservation, costUsd);
   await ensureRenditionsDir();
   await writeFile(path, result.audio); // if this fails the row+ledger stay; playback is orphan-safe
 

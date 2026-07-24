@@ -1,8 +1,7 @@
 import type { Db } from "../db";
 import { readSettings } from "../settings";
-import { recordSpend } from "../analysis/budget";
+import { finalizeReservation } from "../analysis/budget";
 import { collectSpeakerProfile, profileBlock, type SpeakerProfile } from "../analysis/profile";
-import { TEXT_MODEL } from "../analysis/rates";
 import { extractJsonObject, TextModelParseError, type TextModelClient } from "./text-model";
 import { EXERCISE_TYPES, insertLesson, getLessonByPattern, type Exercise, type Lesson, type NewLesson } from "./lessons";
 import { parseBilledResponse, runBilledTextCall } from "./billing";
@@ -110,18 +109,17 @@ export async function generateLessonForPattern(
 
   const { targetLanguage } = readSettings(db);
   const prompt = lessonPrompt(targetLanguage, pattern, collectSpeakerProfile(db));
-  const { completion, costUsd } = await runBilledTextCall(db, client, {
+  const { completion, costUsd, reservation } = await runBilledTextCall(db, client, {
     prompt,
     maxOutputTokens: LESSON_MAX_OUTPUT_TOKENS,
+    contentHash: pattern.key,
   });
-  // The call resolved, so it was billed: a malformed reply still ledgers the
+  // The call resolved, so it was billed: a malformed reply still finalizes the
   // charge (E-16 defect 4) before rethrowing. No lesson is persisted either way.
-  const parsed = parseBilledResponse(db, { contentHash: pattern.key, costUsd }, () =>
-    parseLessonResponse(completion.text),
-  );
+  const parsed = parseBilledResponse(db, { reservation, costUsd }, () => parseLessonResponse(completion.text));
 
   const lesson = db.transaction(() => {
-    recordSpend(db, { model: TEXT_MODEL, contentHash: pattern.key, costUsd });
+    finalizeReservation(db, reservation, costUsd);
     return insertLesson(db, pattern.key, parsed);
   })();
   return { lesson, cached: false };

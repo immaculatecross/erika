@@ -22,6 +22,7 @@ export { recordEvidence, bridgeFinding, getEvidence } from "./evidence";
 export {
   evidenceToGrade,
   deriveStatus,
+  deriveRecordingAttested,
   deriveItemState,
   itemEvidence,
   rebuildItem,

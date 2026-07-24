@@ -99,7 +99,10 @@ describe("the cap is hard with the whole pool racing (criterion 2, end-to-end)",
     };
 
     const job = enqueueAnalysis(db, "s1");
-    const done = await runAnalysisJob(db, job.id, client, { tempo: TEMPO, concurrency: 8 });
+    // Pin the cascade path (`deepFullMaxMinutes: 0`): this test's cap-hardness math
+    // is built on the mini triage cost, and a short session would otherwise take the
+    // full-deep path (no triage) under E-28. The reservation gate it proves is the same.
+    const done = await runAnalysisJob(db, job.id, client, { tempo: TEMPO, concurrency: 8, deepFullMaxMinutes: 0 });
     expect(done.state).toBe("halted");
     expect(triageCalls).toBe(5); // only the 5 that reserved ever called the model
     expect(monthToDateSpend(db)).toBeCloseTo(0.02, 9); // exactly the cap...

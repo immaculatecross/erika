@@ -1,6 +1,27 @@
-import { isCategory, isSeverity, type NewFinding } from "./findings";
-import { profileBlock, type SpeakerProfile } from "./profile";
+import { isCategory, isSeverity, sanitizeNotes, type NewFinding } from "./findings";
+import type { SpeakerProfile } from "./profile";
 import { MINI_MODEL, type ModelId } from "./rates";
+import {
+  triagePrompt,
+  deepPrompt,
+  STRICT_JSON_INSTRUCTION,
+  DOMINANT_SPEAKER_INSTRUCTION,
+  RECURRENCE_INSTRUCTION,
+  ENRICHED_NOTES_INSTRUCTION,
+  PRODUCED_LEMMAS_INSTRUCTION,
+} from "./prompts";
+
+// Prompt builders live in ./prompts (500-line hook); re-exported here so the
+// cascade and the criterion-tests keep importing them from audio-model.
+export {
+  triagePrompt,
+  deepPrompt,
+  STRICT_JSON_INSTRUCTION,
+  DOMINANT_SPEAKER_INSTRUCTION,
+  RECURRENCE_INSTRUCTION,
+  ENRICHED_NOTES_INSTRUCTION,
+  PRODUCED_LEMMAS_INSTRUCTION,
+};
 
 // The ONE module that talks to OpenAI's audio models (D-3, D-10). Everything
 // network- and prompt-shaped is isolated here behind a typed `AudioModelClient`
@@ -38,13 +59,39 @@ export interface DeepInput {
   profile?: SpeakerProfile;
 }
 
+/** One correctly-produced (lemma, POS) the deep pass reports the speaker using
+ *  well (E-28, D-19). The POS is the model's claim in the knowledge scheme; both
+ *  are validated against morph-it before any evidence is written — an unattested
+ *  pair is dropped, never minted (lib/analysis/produced-lemmas.ts). */
+export interface ProducedLemma {
+  lemma: string;
+  pos: string;
+}
+
 export interface DeepResult {
   /** Findings with offsets *relative to the segment start*, in ms. `recurrenceId`
    *  is the model's optional claim that a finding recurs a numbered profile entry
    *  ("R1"…); it is advisory — the cascade resolves it, and an unknown id is
-   *  simply ignored (D-13). */
+   *  simply ignored (D-13). `notes` is the optional enriched channel (E-28). */
   findings: (NewFinding & { relStartMs?: number; relEndMs?: number; recurrenceId?: string })[];
+  /** Correctly-produced lemmas the speaker used well (E-28) — positive production
+   *  evidence, morph-it-validated downstream. Optional: the parser always sets it
+   *  (possibly []), but a hand-built `DeepResult` (a test mock) may omit it, in
+   *  which case there is simply no produced evidence. */
+  produced?: ProducedLemma[];
 }
+
+/**
+ * Output-token ceilings for the two calls. The deep ceiling is generous (E-28): the
+ * enriched reply now also carries `notes` and a `produced` list, so a small budget
+ * would clip a real answer and trip the truncation-repair path on every rich
+ * segment. Raising it keeps the E-16 truncation repair (`ModelTruncatedError` +
+ * one strict retry) RARE rather than removing it — a genuinely runaway reply still
+ * hits the ceiling and is repaired. Triage answers one boolean, so its ceiling
+ * stays tight, which also bounds a mini stuck in a bad mode.
+ */
+export const DEEP_MAX_OUTPUT_TOKENS = 4000;
+export const TRIAGE_MAX_OUTPUT_TOKENS = 400;
 
 /** Per-call knobs the cascade uses for its one bounded repair retry. */
 export interface CallOpts {
@@ -114,61 +161,6 @@ export function describeResponseShape(raw: string, finishReason: string | null):
   return parts.join(" ");
 }
 
-// ---- prompts -------------------------------------------------------------
-
-/** The profile block as prompt lines — empty when no profile was provided. */
-function profileLines(profile?: SpeakerProfile): string[] {
-  return profile ? [profileBlock(profile)] : [];
-}
-
-export function triagePrompt(targetLanguage: string, profile?: SpeakerProfile): string {
-  return [
-    `You are triaging a language learner's ${targetLanguage} speech. The audio is time-compressed.`,
-    ...profileLines(profile),
-    "Focus ONLY on the dominant/primary speaker; ignore background or bystander voices.",
-    "Decide whether the dominant speaker makes any notable non-native error (grammar, vocabulary,",
-    "phrasing, idiom, or pronunciation) worth a detailed review.",
-    'Respond with JSON only: {"flagged": boolean, "reason": string}.',
-  ].join(" ");
-}
-
-/**
- * Appended on the one repair retry. The models have no JSON response_format, so
- * the only lever is the wording — and a reply that arrived wrapped in prose or a
- * fence usually complies when asked this bluntly.
- */
-export const STRICT_JSON_INSTRUCTION =
-  "IMPORTANT: your previous reply could not be parsed. Reply with the raw JSON object ONLY —" +
-  " no prose, no explanation, no markdown code fence, nothing before the opening brace or after" +
-  " the closing brace. Keep it short enough to finish.";
-
-// The dominant-speaker instruction is prompt-level for v1; true voice enrollment
-// and diarization are E-13. Tests assert this instruction is present.
-export const DOMINANT_SPEAKER_INSTRUCTION =
-  "Focus ONLY on the dominant/primary speaker; ignore background or bystander voices (bystanders are never analyzed).";
-
-/** Asked only when the profile carries numbered entries the model can cite. */
-export const RECURRENCE_INSTRUCTION =
-  'If a finding repeats one of the numbered recurring errors above, add "recurrenceId" with' +
-  ' that entry\'s id (e.g. "R1") to that finding. Omit it otherwise.';
-
-export function deepPrompt(targetLanguage: string, profile?: SpeakerProfile): string {
-  const hasEntries = (profile?.entries.length ?? 0) > 0;
-  return [
-    `You are an expert ${targetLanguage} coach reviewing a learner's speech at native speed.`,
-    ...profileLines(profile),
-    DOMINANT_SPEAKER_INSTRUCTION,
-    "Identify each genuine error the dominant speaker makes. For each, give the quote, a correction,",
-    "a category (one of: grammar, vocabulary, phrasing, idiom, pronunciation), a short explanation,",
-    "a severity (high, medium, low), and its approximate start/end time within this clip in",
-    "milliseconds (relStartMs, relEndMs).",
-    'Respond with JSON only: {"findings": [{"quote": string, "correction": string,',
-    '"category": string, "explanation": string, "severity": string, "relStartMs": number,',
-    '"relEndMs": number}]}. Return an empty findings array if the speaker made no errors.',
-    ...(hasEntries ? [RECURRENCE_INSTRUCTION] : []),
-  ].join(" ");
-}
-
 // ---- pure parsers (tested directly) -------------------------------------
 
 /**
@@ -234,6 +226,10 @@ export function parseDeepResponse(raw: string): DeepResult {
       typeof f.recurrenceId === "string" && f.recurrenceId.trim() !== ""
         ? f.recurrenceId.trim()
         : undefined;
+    // The enriched channel is optional and defensively sanitized (E-28): a
+    // malformed or over-generous `notes` object keeps only the three known string
+    // fields, and reduces to null otherwise — it never fails the finding.
+    const notes = sanitizeNotes(f.notes);
     return {
       quote: (f.quote as string).trim(),
       correction: (f.correction as string).trim(),
@@ -245,9 +241,31 @@ export function parseDeepResponse(raw: string): DeepResult {
       relStartMs,
       relEndMs,
       recurrenceId,
+      notes,
     };
   });
-  return { findings };
+  return { findings, produced: parseProduced(obj.produced) };
+}
+
+/**
+ * Extract the optional `produced` lemma list (E-28) defensively: a missing,
+ * non-array, or partly-malformed value yields the valid entries only, never an
+ * error. Each entry needs a non-empty `lemma` and a `pos` string; morph-it
+ * validation (drop of an unattested pair) happens downstream, not here — this
+ * layer only shapes the reply. A garbage `produced` can never fail the segment or
+ * the run (E-16 d4 / D-13), exactly like `notes`.
+ */
+export function parseProduced(raw: unknown): ProducedLemma[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ProducedLemma[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const r = item as Record<string, unknown>;
+    const lemma = typeof r.lemma === "string" ? r.lemma.trim() : "";
+    const pos = typeof r.pos === "string" ? r.pos.trim() : "";
+    if (lemma !== "" && pos !== "") out.push({ lemma, pos });
+  }
+  return out;
 }
 
 function numberOrUndefined(v: unknown): number | undefined {
@@ -336,7 +354,12 @@ interface RawReply {
   finishReason: string | null;
 }
 
-async function callModelOnce(model: ModelId, prompt: string, input: TriageInput | DeepInput): Promise<RawReply> {
+async function callModelOnce(
+  model: ModelId,
+  prompt: string,
+  input: TriageInput | DeepInput,
+  maxOutputTokens: number,
+): Promise<RawReply> {
   let res: Response;
   try {
     res = await fetch(OPENAI_URL, {
@@ -346,8 +369,11 @@ async function callModelOnce(model: ModelId, prompt: string, input: TriageInput 
         // These audio models take audio in and return text; they do not support a
         // JSON response_format, so JSON is requested in the prompt and extracted
         // by the parser. `modalities: ["text"]` keeps the reply text-only.
+        // `max_completion_tokens` caps the reply — generous on deep so the enriched
+        // answer is not clipped into the truncation-repair path (E-28), tight on triage.
         model,
         modalities: ["text"],
+        max_completion_tokens: maxOutputTokens,
         messages: [
           {
             role: "user",
@@ -387,8 +413,13 @@ async function callModelOnce(model: ModelId, prompt: string, input: TriageInput 
  *  backoff (E-27 criterion 5). The retries are invisible to the cascade — one call
  *  in, one completion out — so a call reserves and bills exactly once regardless of
  *  how many 429s it weathered. */
-async function callModel(model: ModelId, prompt: string, input: TriageInput | DeepInput): Promise<RawReply> {
-  return retryOnRateLimit(() => callModelOnce(model, prompt, input));
+async function callModel(
+  model: ModelId,
+  prompt: string,
+  input: TriageInput | DeepInput,
+  maxOutputTokens: number,
+): Promise<RawReply> {
+  return retryOnRateLimit(() => callModelOnce(model, prompt, input, maxOutputTokens));
 }
 
 /**
@@ -419,10 +450,10 @@ const strict = (prompt: string, opts?: CallOpts): string =>
 export const openAiAudioModel: AudioModelClient = {
   async triage(input, opts) {
     const prompt = strict(triagePrompt(input.targetLanguage, input.profile), opts);
-    return interpret(MINI_MODEL, await callModel(MINI_MODEL, prompt, input), parseTriageResponse);
+    return interpret(MINI_MODEL, await callModel(MINI_MODEL, prompt, input, TRIAGE_MAX_OUTPUT_TOKENS), parseTriageResponse);
   },
   async deepListen(model, input, opts) {
     const prompt = strict(deepPrompt(input.targetLanguage, input.profile), opts);
-    return interpret(model, await callModel(model, prompt, input), parseDeepResponse);
+    return interpret(model, await callModel(model, prompt, input, DEEP_MAX_OUTPUT_TOKENS), parseDeepResponse);
   },
 };

@@ -1,7 +1,6 @@
 import type { Db } from "../db";
 import { readSettings } from "../settings";
-import { recordSpend } from "../analysis/budget";
-import { TEXT_MODEL } from "../analysis/rates";
+import { finalizeReservation } from "../analysis/budget";
 import { extractJsonObject, TextModelParseError, type TextModelClient } from "./text-model";
 import { parseBilledResponse, runBilledTextCall } from "./billing";
 
@@ -64,16 +63,15 @@ export async function gradeRewrite(
 ): Promise<GradeResult> {
   const { targetLanguage } = readSettings(db);
   const prompt = gradePrompt(targetLanguage, input.target, input.rewrite);
-  const { completion, costUsd } = await runBilledTextCall(db, client, {
+  const ledgerKey = `grade:${input.patternKey}`;
+  const { completion, costUsd, reservation } = await runBilledTextCall(db, client, {
     prompt,
     maxOutputTokens: GRADE_MAX_OUTPUT_TOKENS,
+    contentHash: ledgerKey,
   });
-  const ledgerKey = `grade:${input.patternKey}`;
-  // The call resolved, so it was billed: a malformed reply still ledgers the
+  // The call resolved, so it was billed: a malformed reply still finalizes the
   // charge (E-16 defect 4) before rethrowing, rather than silently eating it.
-  const result = parseBilledResponse(db, { contentHash: ledgerKey, costUsd }, () =>
-    parseGradeResponse(completion.text),
-  );
-  recordSpend(db, { model: TEXT_MODEL, contentHash: ledgerKey, costUsd });
+  const result = parseBilledResponse(db, { reservation, costUsd }, () => parseGradeResponse(completion.text));
+  finalizeReservation(db, reservation, costUsd);
   return result;
 }

@@ -59,6 +59,29 @@ export interface DerivedState {
   srsDifficulty: number | null;
   srsLastEventAt: string | null;
   status: KnowledgeStatus;
+  /** True once the user produced this lemma CORRECTLY in a recording (E-28, D-19):
+   *  a spontaneous, audio-derived, finding-sourced positive evidence row exists. A
+   *  DERIVED flag — rebuilt from the evidence log like the rest of this cache — that
+   *  the future daily composer (E-31) reads to EXCLUDE recording-attested lemmas from
+   *  new-item selection. Persisted on `knowledge_items.recording_attested`. */
+  recordingAttested: boolean;
+}
+
+/**
+ * Whether the evidence log attests this item was PRODUCED CORRECTLY in a recording
+ * (E-28): at least one positive, spontaneous, audio-derived, finding-sourced row.
+ * That combination is exactly what `recordProducedLemmas` writes and what a produced
+ * lemma means — distinct from a cued review (not spontaneous) or a typed exercise
+ * (not audio-derived) or an error finding (polarity 0).
+ */
+export function deriveRecordingAttested(evidence: Evidence[]): boolean {
+  return evidence.some(
+    (e) =>
+      e.source === "finding" &&
+      e.polarity === 1 &&
+      e.mode === "spontaneous" &&
+      isAudioDerived(e.mode, e.weight),
+  );
 }
 
 /**
@@ -68,7 +91,7 @@ export interface DerivedState {
  */
 export function deriveItemState(evidence: Evidence[]): DerivedState {
   if (evidence.length === 0) {
-    return { srsStability: null, srsDifficulty: null, srsLastEventAt: null, status: "unseen" };
+    return { srsStability: null, srsDifficulty: null, srsLastEventAt: null, status: "unseen", recordingAttested: false };
   }
 
   // FSRS fold over the review-grade events, in real elapsed time.
@@ -114,6 +137,7 @@ export function deriveItemState(evidence: Evidence[]): DerivedState {
     srsDifficulty: difficulty,
     srsLastEventAt: lastEventAt,
     status: deriveStatus(evidence),
+    recordingAttested: deriveRecordingAttested(evidence),
   };
 }
 
@@ -193,9 +217,9 @@ export function itemEvidence(db: Db, itemId: string): Evidence[] {
 export function writeDerived(db: Db, itemId: string, s: DerivedState): void {
   db.prepare(
     `UPDATE knowledge_items
-        SET srs_stability = ?, srs_difficulty = ?, srs_last_event_at = ?, status = ?
+        SET srs_stability = ?, srs_difficulty = ?, srs_last_event_at = ?, status = ?, recording_attested = ?
       WHERE id = ?`,
-  ).run(s.srsStability, s.srsDifficulty, s.srsLastEventAt, s.status, itemId);
+  ).run(s.srsStability, s.srsDifficulty, s.srsLastEventAt, s.status, s.recordingAttested ? 1 : 0, itemId);
 }
 
 /** Re-derive one item's cache from its evidence (the incremental maintenance step). */
