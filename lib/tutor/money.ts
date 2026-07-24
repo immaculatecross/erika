@@ -23,9 +23,12 @@ import { realtimeSessionCost, type RealtimeModelId } from "../analysis/rates";
 //   * FINALIZE — on end, release every pending row for the session and commit ONE
 //             row for the ACTUAL elapsed cost, clamped to what was reserved (the
 //             lease can't be overshot). Exactly one committed ledger row per session.
-//   * RELEASE — an abandoned/failed session drops its pending rows (no charge); the
-//             existing startup sweep (`sweepStaleReservations`) also reclaims a lease
-//             whose client stopped heart-beating, so a crashed tab frees the cap.
+//   * RELEASE — a session that failed BEFORE opening (a mint failure) drops its
+//             pending rows (no charge). But an ABANDONED live session whose client
+//             stopped heart-beating is COMMITTED, not released: the startup sweep
+//             (`sweepStaleReservations`) commits the reserved amount for a stale
+//             `tutor:` lease ([T2a]) — a live session assumed to have run must not
+//             vanish from the ledger. Only a pre-open failure gives money back.
 //
 // The cap-hard guarantee is inherited verbatim from `reserveSpend`; this module adds
 // only the session-scoped grouping and the finalize-to-one-committed-row step.
@@ -49,6 +52,22 @@ export function tutorExtendMinutes(raw: string | undefined = process.env.TUTOR_E
   return Number.isFinite(n) && n > 0 ? n : 2;
 }
 
+/**
+ * [T2b — money] The server-chosen HARD ceiling on a single tutor session, in minutes.
+ * Placed into the Realtime session config so the call cannot run unbounded (a bound
+ * the client cannot lengthen), and an independent second guard alongside the
+ * per-heartbeat cap. Tunable via env; a conservative 30-minute default. */
+export function maxTutorSessionMinutes(raw: string | undefined = process.env.TUTOR_MAX_SESSION_MINUTES): number {
+  const n = raw === undefined || raw === "" ? NaN : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 30;
+}
+
+/** The [T2b] max-session ceiling in seconds — the unit the Realtime session config
+ *  carries. */
+export function maxTutorSessionSeconds(): number {
+  return Math.round(maxTutorSessionMinutes() * 60);
+}
+
 /** The per-session estimate shown before the call (WO criterion 5). */
 export function estimateTutorSessionUsd(model: RealtimeModelId, minutes: number): number {
   return realtimeSessionCost(model, minutes);
@@ -62,6 +81,24 @@ export function tutorReservedUsd(db: Db, tutorId: string): number {
     )
     .get(tutorContentHash(tutorId)) as { total: number };
   return row.total;
+}
+
+/**
+ * [T2c — money] The server's own record of when a tutor session opened: the EARLIEST
+ * `reserved_at` across the lease's pending rows (the open lease reserved at OPEN),
+ * parsed to epoch ms, or null if the session has no open lease. Used to FLOOR the
+ * finalized duration at the real server-tracked elapsed time so a client cannot
+ * under-report a long call to under-pay — the server never trusts client elapsed alone.
+ */
+export function tutorLeaseOpenedAtMs(db: Db, tutorId: string): number | null {
+  const row = db
+    .prepare(
+      "SELECT MIN(reserved_at) AS opened FROM spend_ledger WHERE content_hash = ? AND state = 'pending'",
+    )
+    .get(tutorContentHash(tutorId)) as { opened: string | null };
+  if (!row.opened) return null;
+  const ms = new Date(`${row.opened.replace(" ", "T")}Z`).getTime();
+  return Number.isFinite(ms) ? ms : null;
 }
 
 /** The realtime model an open lease reserved under (read from its pending rows), or
@@ -116,10 +153,16 @@ export function ensureTutorLeaseCovers(
 
 /**
  * Finalize a tutor session to its ACTUAL elapsed cost: release every pending row for
- * the session and write exactly ONE committed row for `actualMinutes` of `model`,
+ * the session and write exactly ONE committed row for the elapsed cost of `model`,
  * clamped so the committed charge never exceeds what was reserved (the lease can't be
  * overshot). Runs in one transaction so the release and the commit are atomic.
  * Returns the committed USD. A session with nothing reserved commits nothing.
+ *
+ * [T2c — money] The billed minutes are `max(clientMinutes, serverMinutes)`: the
+ * server-tracked elapsed time (now − the lease's open `reserved_at`) FLOORS the
+ * client-reported figure, so a client cannot under-report a long call to under-pay.
+ * The server figure is read BEFORE the pending rows are deleted. Clamping to the
+ * reserved amount still holds, so a floored duration can never overshoot the lease.
  */
 export function finalizeTutorLease(
   db: Db,
@@ -131,7 +174,10 @@ export function finalizeTutorLease(
   const hash = tutorContentHash(tutorId);
   return db.transaction((): number => {
     const reserved = tutorReservedUsd(db, tutorId);
-    const actual = estimateTutorSessionUsd(model, Math.max(0, actualMinutes));
+    const openedAt = tutorLeaseOpenedAtMs(db, tutorId);
+    const serverMinutes = openedAt !== null ? Math.max(0, (date.getTime() - openedAt) / 60000) : 0;
+    const billedMinutes = Math.max(Math.max(0, actualMinutes), serverMinutes);
+    const actual = estimateTutorSessionUsd(model, billedMinutes);
     const committed = Math.min(actual, reserved);
     db.prepare("DELETE FROM spend_ledger WHERE content_hash = ? AND state = 'pending'").run(hash);
     if (committed > 0) {

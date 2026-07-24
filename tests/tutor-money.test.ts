@@ -150,15 +150,65 @@ describe("release + the hard cross-biller cap", () => {
     db.close();
   });
 
-  it("a stale tutor lease is reclaimed by the existing startup sweep", () => {
+  it("[T2a] a stale/abandoned tutor lease COMMITS the reserved amount on sweep (not $0)", () => {
     const db = freshDb();
     openTutorLease(db, "t10", FLAG, 10, 100);
-    // Backdate the reservation past the TTL, then sweep.
+    const reserved = tutorReservedUsd(db, "t10");
+    expect(reserved).toBeGreaterThan(0);
+    // Backdate the reservation past the TTL, then sweep — the client never finalized.
     db.prepare("UPDATE spend_ledger SET reserved_at = datetime('now','-30 minutes') WHERE content_hash = ?").run(
       tutorContentHash("t10"),
     );
     expect(sweepStaleReservations(db)).toBeGreaterThanOrEqual(1);
+    // The lease's pending rows are gone, but its cost was COMMITTED, not released to $0:
+    // an abandoned live session must not vanish from the ledger (T2, never-waivable).
     expect(pendingRows(db, "t10")).toBe(0);
+    const c = committedRows(db, "t10");
+    expect(c.n).toBe(1);
+    expect(c.total).toBeCloseTo(reserved);
+    expect(monthToDateSpend(db)).toBeCloseTo(reserved);
+    db.close();
+  });
+
+  it("[T2a] the sweep still RELEASES a stale non-tutor reservation (no charge)", () => {
+    const db = freshDb();
+    reserveSpend(db, { model: "gpt-4.1-mini", contentHash: "cascade-seg", costUsd: 0.02 }, 100);
+    db.prepare("UPDATE spend_ledger SET reserved_at = datetime('now','-30 minutes') WHERE content_hash = ?").run(
+      "cascade-seg",
+    );
+    expect(sweepStaleReservations(db)).toBeGreaterThanOrEqual(1);
+    expect(monthToDateSpend(db)).toBe(0); // released, nothing committed
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n,
+    ).toBe(0);
+    db.close();
+  });
+});
+
+describe("[T2c] finalize floors the billed duration at the server-tracked elapsed time", () => {
+  it("bills max(clientElapsed, serverElapsed) — a client under-report cannot under-pay", () => {
+    const db = freshDb();
+    openTutorLease(db, "t11", FLAG, 30, 100); // room for a long call
+    // The server saw the session open ~12 minutes ago (backdate the lease open time).
+    db.prepare("UPDATE spend_ledger SET reserved_at = datetime('now','-12 minutes') WHERE content_hash = ?").run(
+      tutorContentHash("t11"),
+    );
+    // The client claims only 1 minute — but the server-tracked elapsed (~12 min) floors it.
+    const committed = finalizeTutorLease(db, "t11", FLAG, 1);
+    // Billed for ~12 server-tracked minutes (plus the sub-second test runtime), NOT the
+    // client's claimed 1 minute — bounded to just over 12 min.
+    expect(committed).toBeGreaterThan(estimateTutorSessionUsd(FLAG, 11.9));
+    expect(committed).toBeLessThan(estimateTutorSessionUsd(FLAG, 12.5));
+    expect(committedRows(db, "t11").n).toBe(1);
+    db.close();
+  });
+
+  it("still trusts the client when it reports MORE than the server saw (max, clamped to lease)", () => {
+    const db = freshDb();
+    openTutorLease(db, "t12", FLAG, 30, 100);
+    // Fresh lease (server elapsed ≈ 0): the client's 5-minute report wins.
+    const committed = finalizeTutorLease(db, "t12", FLAG, 5);
+    expect(committed).toBeCloseTo(estimateTutorSessionUsd(FLAG, 5), 4);
     db.close();
   });
 });
