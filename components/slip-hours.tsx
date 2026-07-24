@@ -1,10 +1,11 @@
 import type { SlipHourDistribution } from "@/lib/slip-hours";
 
 // "When you slip" (E-22 criterion 3): the hour-of-day distribution of findings, as
-// a quiet monochrome histogram — 24 ink bars, one per UTC hour, the busiest hour
-// the one that reads at full ink (DESIGN.md: the one number that matters; green is
-// never spent here, a slip is not a win). Hand-rolled like the sparkline and the
-// category bars: no charting library. Counts in tabular numerals.
+// a quiet monochrome histogram — 24 ink bars, one per hour of the LEARNER'S OWN
+// clock (E-38/RETRO-003 corrected this from UTC; D-24: the user's day is local),
+// the busiest hour the one that reads at full ink (DESIGN.md: the one number that
+// matters; green is never spent here, a slip is not a win). Hand-rolled like the
+// sparkline and the category bars: no charting library. Counts in tabular numerals.
 
 const HOUR_LABELS = [0, 6, 12, 18, 23];
 
@@ -18,7 +19,7 @@ export function SlipHours({ distribution }: { distribution: SlipHourDistribution
 
   return (
     <div className="flex flex-col gap-3" data-slip-hours data-slip-total={total}>
-      <div className="flex h-24 items-end gap-[3px]" role="img" aria-label="Findings by hour of day, UTC">
+      <div className="flex h-24 items-end gap-[3px]" role="img" aria-label="Findings by hour of day, your local time">
         {buckets.map((n, h) => {
           const isPeak = peakCount > 0 && h === peakHour;
           return (
@@ -26,7 +27,7 @@ export function SlipHours({ distribution }: { distribution: SlipHourDistribution
               key={h}
               data-slip-hour={h}
               data-count={n}
-              title={`${hh(h)}:00 UTC — ${n} ${n === 1 ? "slip" : "slips"}`}
+              title={`${hh(h)}:00 — ${n} ${n === 1 ? "slip" : "slips"}`}
               className="flex flex-1 items-end justify-center self-stretch"
             >
               <div

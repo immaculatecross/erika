@@ -216,7 +216,8 @@ export interface FocusPayload extends FocusModel {
 }
 
 /**
- * The findings, bucketed by the UTC hour they were spoken (E-22 criterion 3). The
+ * The findings, bucketed by the LOCAL hour they were spoken (E-22 criterion 3,
+ * corrected from UTC by E-38/RETRO-003 — D-24: the user's day is local). The
  * scope is the canonical INCLUDED_FINDING_SCOPE — the same set the rest of Focus
  * counts — read once through `listIncludedFindingsWithSession`, which already
  * carries each finding's session capture time. The bucketing itself is pure.

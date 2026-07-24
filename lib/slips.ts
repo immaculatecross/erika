@@ -342,28 +342,42 @@ export function buildSlipsIndex(db: Db): SlipsIndex {
 }
 
 /**
- * How many slips are currently resolved — the one number Focus attaches green to
- * (D-14). Read-only: it does NOT persist (Focus is a GET that should not write),
- * computing the same deterministic clustering in memory. The slips index owns
- * materialization; this and it always agree because the clustering is pure.
+ * Every slip's category and computed state, READ-ONLY: it does NOT persist (the
+ * surfaces that call it are GETs that should not write), computing the same
+ * deterministic clustering in memory. The slips index owns materialization; this
+ * and it always agree because the clustering is pure.
+ *
+ * This is the ONE definition of slip standing the read surfaces share — Focus's
+ * green count and E-38's knowledge map both reduce it, so there is exactly one
+ * notion of mastery in the product (D-24: cells tint toward green only through
+ * resolved-slip semantics; green is never mere activity).
  */
-export function resolvedSlipCount(db: Db): number {
+export function computeSlipStandings(db: Db): { category: Category; state: SlipState }[] {
   const clusters = clusterFindings(collectSlipFindings(db));
   const dates = analysedSessionDates(db);
   const eventTimeByFinding = positiveEventTimeByFinding(db);
   const findingSession = new Map<string, string>();
   for (const f of listIncludedFindingsWithSession(db)) findingSession.set(f.id, f.sessionCreatedAt);
-  let resolved = 0;
+  const standings: { category: Category; state: SlipState }[] = [];
   for (const c of clusters) {
     let lastAt = "";
     for (const fid of c.findingIds) {
       const at = findingSession.get(fid);
       if (at && at > lastAt) lastAt = at;
     }
+    if (!lastAt) continue;
     const hasPositive = hasPositiveEventAfter(eventTimeByFinding, c.findingIds, lastAt);
-    if (lastAt && computeSlipStanding(lastAt, dates, hasPositive).state === "resolved") resolved++;
+    standings.push({ category: c.category, state: computeSlipStanding(lastAt, dates, hasPositive).state });
   }
-  return resolved;
+  return standings;
+}
+
+/**
+ * How many slips are currently resolved — the one number Focus attaches green to
+ * (D-14). Read-only, over the shared standings above.
+ */
+export function resolvedSlipCount(db: Db): number {
+  return computeSlipStandings(db).filter((s) => s.state === "resolved").length;
 }
 
 interface OccurrenceRow {

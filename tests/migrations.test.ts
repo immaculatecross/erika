@@ -225,6 +225,26 @@ describe("migrations runner", () => {
     db.close();
   });
 
+  it("v25 adds the streak repair ledger keyed by local_day (E-38, D-24)", () => {
+    const db = openDatabase(tmpDbPath());
+    const cols = db.prepare("PRAGMA table_info(streak_repairs)").all() as { name: string; pk: number }[];
+    expect(cols.map((c) => c.name)).toEqual(
+      expect.arrayContaining(["local_day", "charged_month", "created_at"]),
+    );
+    expect(cols.find((c) => c.name === "local_day")?.pk).toBe(1);
+
+    // The PK is the no-double-spend guard: the streak recomputes on every read and
+    // re-offers the same repair, and INSERT OR IGNORE makes that a no-op — a credit
+    // is charged exactly once per missed day (WO criterion 1).
+    const ins = db.prepare(
+      "INSERT OR IGNORE INTO streak_repairs (local_day, charged_month) VALUES ('2026-07-18', '2026-07')",
+    );
+    expect(ins.run().changes).toBe(1);
+    expect(ins.run().changes).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM streak_repairs").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
+
   it("v8 collapses pre-existing duplicate findings so the unique index can build", () => {
     // A database written before the lease landed may already carry duplicates
     // from a double-run. Migrating must dedupe rather than fail to apply.
