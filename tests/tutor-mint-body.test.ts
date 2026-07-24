@@ -29,6 +29,21 @@ afterEach(() => {
 });
 
 describe("buildMintSessionWireBody — the allowlist (OBS-001)", () => {
+  it("pins the allowlist itself to a literal, so WIDENING it takes a deliberate test edit", () => {
+    // Without this, every other assertion here compares the wire keys against
+    // MINT_SESSION_WIRE_FIELDS — the constant under test — so adding a field to the
+    // allowlist would ship it to OpenAI with the whole file green. This is the one
+    // assertion that does not depend on the constant it is guarding.
+    expect([...MINT_SESSION_WIRE_FIELDS]).toEqual([
+      "type",
+      "model",
+      "instructions",
+      "audio",
+      "tools",
+      "tool_choice",
+    ]);
+  });
+
   it("emits ONLY the OpenAI-recognized session fields, dropping every internal-only field", () => {
     const db = freshConfigDb();
     const { config } = buildTutorSessionConfig(db);

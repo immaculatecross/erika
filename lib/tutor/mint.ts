@@ -40,9 +40,14 @@ const CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
  * schema also allows `output_modalities`/`max_output_tokens`, which this tutor config
  * does not set). The endpoint **400s on any unknown param**, so the mint body is built
  * from THIS allowlist — NOT by spreading the internal config — so no internal-only
- * field can ride along. In particular `maxSessionSeconds` (the server-side length
- * ceiling, enforced by the lease/heartbeat in lib/tutor/money.ts, not by OpenAI) must
- * NEVER reach the wire; sending it is exactly the 400 that broke the tutor (OBS-001).
+ * field can ride along. In particular `maxSessionSeconds` is deliberately NOT an OpenAI
+ * wire field: it is an INTERNAL, server-only value that OpenAI has no parameter for.
+ * It is enforced entirely by us — the heartbeat route
+ * (`app/api/tutor/session/[id]/heartbeat`) refuses with `covered: false` / 402 once the
+ * SERVER-tracked elapsed time passes `maxTutorSessionSeconds()` ([T2b]), which is a
+ * separate bound from the spend cap that `lib/tutor/money.ts` holds. Sending it to
+ * OpenAI enforced nothing and is exactly the 400 that broke the tutor (OBS-001), so it
+ * must NEVER reach the wire.
  */
 export const MINT_SESSION_WIRE_FIELDS = [
   "type",
