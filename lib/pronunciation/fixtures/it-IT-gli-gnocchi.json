@@ -1,0 +1,245 @@
+{
+  "_synthetic": "SYNTHETIC — hand-authored by the E-37 build to the response shape documented in OBS-002 (2026-07-24). NOT a captured Azure response: no live AZURE_SPEECH_KEY and no egress existed in the sandbox. The first time an operator runs the live path, replace these files with real captured it-IT responses (OBS-001 Part C). Phoneme symbols are written IPA-style; the studio renders whatever alphabet the service returns, verbatim.",
+  "_scenario": "The canonical Italian palatal-lateral failure: /ʎ/ in 'gli' produced as /l/, and the 'gn' in 'gnocchi' produced as /n/. Everything else is clean.",
+  "RecognitionStatus": "Success",
+  "Offset": 300000,
+  "Duration": 24500000,
+  "DisplayText": "Li gnocchi sono buonissimi.",
+  "SNR": 31.4,
+  "NBest": [
+    {
+      "Confidence": 0.91,
+      "Lexical": "li gnocchi sono buonissimi",
+      "ITN": "li gnocchi sono buonissimi",
+      "MaskedITN": "li gnocchi sono buonissimi",
+      "Display": "Li gnocchi sono buonissimi.",
+      "PronunciationAssessment": {
+        "AccuracyScore": 71,
+        "FluencyScore": 88,
+        "CompletenessScore": 100,
+        "PronScore": 77.2
+      },
+      "Words": [
+        {
+          "Word": "gli",
+          "Offset": 300000,
+          "Duration": 2600000,
+          "PronunciationAssessment": { "AccuracyScore": 38, "ErrorType": "Mispronunciation" },
+          "Phonemes": [
+            {
+              "Phoneme": "ʎ",
+              "Offset": 300000,
+              "Duration": 1700000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 24,
+                "NBestPhonemes": [
+                  { "Phoneme": "l", "Score": 81 },
+                  { "Phoneme": "ʎ", "Score": 24 },
+                  { "Phoneme": "j", "Score": 19 },
+                  { "Phoneme": "ʝ", "Score": 11 },
+                  { "Phoneme": "n", "Score": 4 }
+                ]
+              }
+            },
+            {
+              "Phoneme": "i",
+              "Offset": 2000000,
+              "Duration": 900000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 86,
+                "NBestPhonemes": [
+                  { "Phoneme": "i", "Score": 86 },
+                  { "Phoneme": "e", "Score": 21 }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "gnocchi",
+          "Offset": 2900000,
+          "Duration": 6900000,
+          "PronunciationAssessment": { "AccuracyScore": 63, "ErrorType": "Mispronunciation" },
+          "Phonemes": [
+            {
+              "Phoneme": "ɲ",
+              "Offset": 2900000,
+              "Duration": 1600000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 44,
+                "NBestPhonemes": [
+                  { "Phoneme": "n", "Score": 74 },
+                  { "Phoneme": "ɲ", "Score": 44 },
+                  { "Phoneme": "m", "Score": 8 }
+                ]
+              }
+            },
+            {
+              "Phoneme": "ɔ",
+              "Offset": 4500000,
+              "Duration": 1500000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 79,
+                "NBestPhonemes": [
+                  { "Phoneme": "ɔ", "Score": 79 },
+                  { "Phoneme": "o", "Score": 62 }
+                ]
+              }
+            },
+            {
+              "Phoneme": "k",
+              "Offset": 6000000,
+              "Duration": 1900000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 91,
+                "NBestPhonemes": [{ "Phoneme": "k", "Score": 91 }]
+              }
+            },
+            {
+              "Phoneme": "i",
+              "Offset": 7900000,
+              "Duration": 1900000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 88,
+                "NBestPhonemes": [{ "Phoneme": "i", "Score": 88 }]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "sono",
+          "Offset": 9800000,
+          "Duration": 5200000,
+          "PronunciationAssessment": { "AccuracyScore": 94, "ErrorType": "None" },
+          "Phonemes": [
+            {
+              "Phoneme": "s",
+              "Offset": 9800000,
+              "Duration": 1300000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 96,
+                "NBestPhonemes": [{ "Phoneme": "s", "Score": 96 }]
+              }
+            },
+            {
+              "Phoneme": "o",
+              "Offset": 11100000,
+              "Duration": 1300000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 93,
+                "NBestPhonemes": [{ "Phoneme": "o", "Score": 93 }]
+              }
+            },
+            {
+              "Phoneme": "n",
+              "Offset": 12400000,
+              "Duration": 1300000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 95,
+                "NBestPhonemes": [{ "Phoneme": "n", "Score": 95 }]
+              }
+            },
+            {
+              "Phoneme": "o",
+              "Offset": 13700000,
+              "Duration": 1300000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 92,
+                "NBestPhonemes": [{ "Phoneme": "o", "Score": 92 }]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "buonissimi",
+          "Offset": 15000000,
+          "Duration": 9800000,
+          "PronunciationAssessment": { "AccuracyScore": 89, "ErrorType": "None" },
+          "Phonemes": [
+            {
+              "Phoneme": "b",
+              "Offset": 15000000,
+              "Duration": 1200000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 90,
+                "NBestPhonemes": [{ "Phoneme": "b", "Score": 90 }]
+              }
+            },
+            {
+              "Phoneme": "w",
+              "Offset": 16200000,
+              "Duration": 1100000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 84,
+                "NBestPhonemes": [{ "Phoneme": "w", "Score": 84 }]
+              }
+            },
+            {
+              "Phoneme": "ɔ",
+              "Offset": 17300000,
+              "Duration": 1400000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 88,
+                "NBestPhonemes": [{ "Phoneme": "ɔ", "Score": 88 }]
+              }
+            },
+            {
+              "Phoneme": "n",
+              "Offset": 18700000,
+              "Duration": 1200000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 93,
+                "NBestPhonemes": [{ "Phoneme": "n", "Score": 93 }]
+              }
+            },
+            {
+              "Phoneme": "i",
+              "Offset": 19900000,
+              "Duration": 1100000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 87,
+                "NBestPhonemes": [{ "Phoneme": "i", "Score": 87 }]
+              }
+            },
+            {
+              "Phoneme": "s",
+              "Offset": 21000000,
+              "Duration": 1600000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 92,
+                "NBestPhonemes": [{ "Phoneme": "s", "Score": 92 }]
+              }
+            },
+            {
+              "Phoneme": "i",
+              "Offset": 22600000,
+              "Duration": 1000000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 86,
+                "NBestPhonemes": [{ "Phoneme": "i", "Score": 86 }]
+              }
+            },
+            {
+              "Phoneme": "m",
+              "Offset": 23600000,
+              "Duration": 700000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 91,
+                "NBestPhonemes": [{ "Phoneme": "m", "Score": 91 }]
+              }
+            },
+            {
+              "Phoneme": "i",
+              "Offset": 24300000,
+              "Duration": 500000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 85,
+                "NBestPhonemes": [{ "Phoneme": "i", "Score": 85 }]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
