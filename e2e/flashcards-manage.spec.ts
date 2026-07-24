@@ -101,8 +101,9 @@ test.describe("card browser", () => {
 
   test("export returns an Anki CSV with the right headers and RFC 4180 escaping (criterion 4)", async ({ page }) => {
     seedFindings(1);
-    // Rewrite the one card's front to carry a comma, a quote, and a newline.
-    db().prepare("UPDATE cards SET front = ?").run('he said, "hi"\nthere');
+    // The error carries a comma, a quote, and a newline — it rides the Back once
+    // ("You said: …"), correction-forward (E-29); the Front never shows it (D-18).
+    db().prepare("UPDATE findings SET quote = ?").run('he said, "hi"\nthere');
 
     await page.goto("/practice/cards");
     await expect(page.locator("[data-export]")).toBeVisible();
@@ -110,6 +111,8 @@ test.describe("card browser", () => {
     const res = await page.request.get("/api/cards/export");
     expect(res.headers()["content-type"]).toContain("text/csv");
     expect(res.headers()["content-disposition"]).toContain('filename="erika-cards.csv"');
-    expect(await res.text()).toContain('"he said, ""hi""\nthere"');
+    const text = await res.text();
+    expect(text).toContain('""hi""'); // RFC 4180 doubled quotes — escaping survives
+    expect(text).toContain('You said: he said, "hi"\nthere'); // the error, once, on the Back
   });
 });

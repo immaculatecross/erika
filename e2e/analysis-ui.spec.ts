@@ -175,11 +175,16 @@ test.describe("analysis UI", () => {
     const first = findings.first();
     await expect(first).toHaveAttribute("data-expanded", "false");
     await expect(first.locator("[data-finding-detail]")).toHaveCount(0); // collapsed
+    // Correction-forward (E-29): the collapsed row leads with the correction, and the
+    // error is not shown until the row is expanded.
+    await expect(first.locator("[data-finding-correction]")).toContainText("the recast");
+    await expect(first).not.toContainText("your phrase");
 
     await first.locator("button").first().click(); // expand in place
     await expect(first).toHaveAttribute("data-expanded", "true");
     await expect(first.locator("[data-finding-detail]")).toBeVisible();
-    await expect(first.locator("[data-finding-detail]")).toContainText("the recast");
+    // The error is shown once, marked, beneath the correction (the one confrontation).
+    await expect(first.locator("[data-finding-error]")).toContainText("your phrase");
 
     // Wait for the player to have metadata so a seek sticks, then jump.
     await expect

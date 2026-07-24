@@ -3,7 +3,8 @@ import type { Db } from "./db";
 import { INCLUDED_FINDING_SCOPE } from "./findings-model";
 import { schedule, FRESH_EASE, type Grade } from "./srs";
 import { recordEvidence } from "./knowledge";
-import { cardBack, type CardView, type CardBrowserView } from "./cards-view";
+import { cardBack, deriveFaces, type CardView, type CardBrowserView, type CardFaces } from "./cards-view";
+import type { CsvCard } from "./cards-csv";
 
 export { cardBack, splitBack } from "./cards-view";
 
@@ -72,21 +73,83 @@ function toCard(r: CardRow): Card {
   };
 }
 
-/** A card reduced to the client-safe view the drill renders. */
-export function toCardView(c: Card): CardView {
-  return { id: c.id, findingId: c.findingId, front: c.front, back: c.back, category: c.category };
+// The display views are correction-forward (E-29, D-18): the faces a user sees are
+// re-derived from the card's JOINED finding at read time — front = meaning-first
+// cue, correction = target, error shown once on the back — so no card is stored
+// with the error as its stimulus and existing cards flip automatically, with no
+// migration and no stored-front backfill (the `cards.front/back` columns still hold
+// the finding copy generation wrote; display no longer reads them). `deriveFaces`
+// is the one pure derivation, shared with the client.
+
+/** A card row joined to its finding — the canonical fields the display re-derives from. */
+interface CardFindingRow extends CardRow {
+  f_quote: string;
+  f_correction: string;
+  f_explanation: string;
 }
 
-/** A card reduced to the client-safe view the browser lists (adds due/suspended). */
-export function toCardBrowserView(c: Card): CardBrowserView {
-  return {
-    id: c.id,
-    front: c.front,
-    back: c.back,
-    category: c.category,
-    due: c.due,
-    suspended: c.suspended,
-  };
+const SELECT_CARD_VIEW = `
+  SELECT c.*, f.quote AS f_quote, f.correction AS f_correction, f.explanation AS f_explanation
+    FROM cards c
+    JOIN findings f ON f.id = c.finding_id`;
+
+/** The four display faces for a joined card row (E-29), derived from the finding. */
+function facesOf(r: CardFindingRow): CardFaces {
+  return deriveFaces(r.f_quote, r.f_correction, r.f_explanation, r.category);
+}
+
+function toCardViewJoined(r: CardFindingRow): CardView {
+  return { id: r.id, findingId: r.finding_id, category: r.category, ...facesOf(r) };
+}
+
+/** Due, non-suspended cards as correction-forward drill views (E-29), most-overdue first. */
+export function listDueCardViews(db: Db): CardView[] {
+  const rows = db
+    .prepare(
+      `${SELECT_CARD_VIEW}
+        WHERE c.suspended = 0 AND c.due <= datetime('now')
+        ORDER BY c.due ASC, c.created_at ASC, c.id ASC`,
+    )
+    .all() as CardFindingRow[];
+  return rows.map(toCardViewJoined);
+}
+
+/** Every card as a browser view (E-5b) with derived faces plus due/suspended (E-29). */
+export function listCardBrowserViews(db: Db): CardBrowserView[] {
+  const rows = db
+    .prepare(`${SELECT_CARD_VIEW} ORDER BY c.due ASC, c.created_at ASC, c.id ASC`)
+    .all() as CardFindingRow[];
+  return rows.map((r) => ({
+    id: r.id,
+    category: r.category,
+    ...facesOf(r),
+    due: r.due,
+    suspended: !!r.suspended,
+  }));
+}
+
+/** One card's correction-forward drill view by id, or null. */
+export function getCardView(db: Db, id: string): CardView | null {
+  const r = db.prepare(`${SELECT_CARD_VIEW} WHERE c.id = ?`).get(id) as CardFindingRow | undefined;
+  return r ? toCardViewJoined(r) : null;
+}
+
+/**
+ * The Anki CSV rows (E-5b), correction-forward (E-29): Front is the meaning-first
+ * cue, Back headlines the correction and reason, then shows the error once,
+ * labelled — the one confrontation, carried into the export too.
+ */
+export function listCardsCsv(db: Db): CsvCard[] {
+  const rows = db
+    .prepare(`${SELECT_CARD_VIEW} ORDER BY c.due ASC, c.created_at ASC, c.id ASC`)
+    .all() as CardFindingRow[];
+  return rows.map((r) => {
+    const faces = facesOf(r);
+    const back = [faces.correction, ...(faces.why ? [faces.why] : []), `You said: ${faces.error}`].join(
+      "\n\n",
+    );
+    return { front: faces.front, back };
+  });
 }
 
 interface GeneratableFinding {

@@ -8,6 +8,7 @@ import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
 import { CompareControl } from "@/components/compare-control";
 import { AskErika } from "@/components/ask-erika";
+import { RevealableError } from "@/components/revealable-error";
 import {
   filterEntries,
   CATEGORY_ORDER,
@@ -17,12 +18,13 @@ import {
 import { SEVERITY_STYLES } from "@/lib/analysis-view";
 
 // The Phrasebook (E-9, v0.2): a searchable library of every recast Erika built
-// from your findings — "you say X, natives say Y" — side by side, with the why,
-// category, and severity. Free-text search and a category segmented control
-// narrow it (pure filterEntries, client-side). Any entry pins into the flashcard
-// deck (clearing a prior deletion). DESIGN — calm two-column rows, ink accent,
-// red/orange only as meaning (severity); "in deck" is a quiet neutral fact, not
-// an achievement; a plain search input and quiet chips; one stagger on entry.
+// from your findings. Correction-forward (E-29, D-18): each row leads with the
+// native/correct form; your "you said X" is kept behind a tap-to-reveal, so the
+// mistake is seen once, on demand, never rehearsed as the lead. Free-text search
+// still spans both sides and the reason (pure filterEntries, client-side). Any
+// entry pins into the flashcard deck (clearing a prior deletion). DESIGN — calm
+// rows, ink accent, red only as meaning (severity, and the marked error); "in
+// deck" is a quiet neutral fact, not an achievement; one stagger on entry.
 
 // Severity styling comes whole from the shared SEVERITY_STYLES (D-14, E-18
 // criterion 6): red high, orange medium, low neutral — green is reserved for
@@ -173,10 +175,9 @@ function Row({
       data-in-deck={entry.inDeck}
       className="flex flex-col gap-4 rounded-card bg-card p-5 shadow-card"
     >
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Side label="You say" text={entry.quote} />
-        <Side label="Natives say" text={entry.correction} accent />
-      </div>
+      <Side label="Say" text={entry.correction} accent />
+
+      <RevealableError text={entry.quote} />
 
       {entry.explanation && (
         <p className="text-[15px] leading-[1.47] text-secondary">{entry.explanation}</p>
