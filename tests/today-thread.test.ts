@@ -157,8 +157,8 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
     const db = ws();
     ensureLemmaItem(db, "casa", "NOUN");
     // A correct exercise answer and a placement recognition seed, both today.
-    recordEvidence(db, { itemId: ITEM, source: "exercise", polarity: 1, mode: "cued" });
-    recordEvidence(db, { itemId: ITEM, source: "placement", polarity: 1, mode: "recognition" });
+    recordEvidence(db, { itemId: ITEM, source: "exercise", polarity: 1, mode: "cued", audioDerived: false });
+    recordEvidence(db, { itemId: ITEM, source: "placement", polarity: 1, mode: "recognition", audioDerived: false });
     expect(buildTodayThread(db, localDay(), [ITEM])).toBeNull();
     db.close();
   });
@@ -200,6 +200,7 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
       sourceRef: "sX:hX:casa#NOUN",
       polarity: 0,
       mode: "spontaneous",
+      audioDerived: true,
     });
     expect(buildTodayThread(db, localDay(), [ITEM])).toBeNull();
     db.close();
@@ -210,7 +211,7 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
     ensureLemmaItem(db, "casa", "NOUN");
     // A legacy pre-E-36 produced positive: no source_ref, so whose voice it was is
     // unknowable. Also a row whose segment/session is simply gone.
-    recordEvidence(db, { itemId: ITEM, source: "finding", polarity: 1, mode: "spontaneous" });
+    recordEvidence(db, { itemId: ITEM, source: "finding", polarity: 1, mode: "spontaneous", audioDerived: true });
     recordEvidence(db, {
       itemId: ITEM,
       source: "finding",
@@ -218,6 +219,7 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
       sessionId: "ghost",
       polarity: 1,
       mode: "spontaneous",
+      audioDerived: true,
     });
     expect(buildTodayThread(db, localDay(), [ITEM])).toBeNull();
     db.close();
