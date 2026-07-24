@@ -54,7 +54,8 @@ describe("knowledge items — the morph-it gate (criterion 2)", () => {
     const id = ensureLemmaItem(db, "casa", "NOUN");
     expect(id).toBe("lemma:casa#NOUN");
     expect(ensureLemmaItem(db, "casa", "NOUN")).toBe(id); // idempotent
-    expect((db.prepare("SELECT COUNT(*) AS n FROM knowledge_items").get() as { n: number }).n).toBe(1);
+    // Scoped to lemma rows: the DB is seeded with the E-26b grammar syllabus (rule: rows).
+    expect((db.prepare("SELECT COUNT(*) AS n FROM knowledge_items WHERE kind = 'lemma'").get() as { n: number }).n).toBe(1);
     const item = getItem(db, id)!;
     expect(item.kind).toBe("lemma");
     expect(item.lemma).toBe("casa");
@@ -66,7 +67,8 @@ describe("knowledge items — the morph-it gate (criterion 2)", () => {
     const db = freshDb();
     expect(() => ensureLemmaItem(db, "zzzfoo", "NOUN")).toThrow(UnvalidatedLemmaError);
     expect(() => ensureLemmaItem(db, "casa", "VERB")).toThrow(UnvalidatedLemmaError); // wrong POS
-    expect((db.prepare("SELECT COUNT(*) AS n FROM knowledge_items").get() as { n: number }).n).toBe(0);
+    // No lemma row minted (the DB is seeded with rule: syllabus rows, so scope by kind).
+    expect((db.prepare("SELECT COUNT(*) AS n FROM knowledge_items WHERE kind = 'lemma'").get() as { n: number }).n).toBe(0);
   });
 
   it("the evidence write path also refuses an unvalidated lemma id", () => {
@@ -236,9 +238,12 @@ describe("derived state rebuilds identically from evidence alone (criterion 6)",
     expect(wiped).not.toEqual(before); // the wipe really changed the cache
 
     const rebuilt = rebuildAllDerived(db);
-    expect(rebuilt).toBe(3);
+    // rebuildAllDerived rebuilds every item; the DB also carries the E-26b syllabus
+    // rule: rows (no evidence → they rebuild to 'unseen'), so the count is all items.
+    const total = (db.prepare("SELECT COUNT(*) AS n FROM knowledge_items").get() as { n: number }).n;
+    expect(rebuilt).toBe(total);
     const after = db.prepare(`SELECT ${columns} FROM knowledge_items ORDER BY id`).all();
-    expect(after).toEqual(before); // rebuilt from evidence alone, identical
+    expect(after).toEqual(before); // rebuilt from evidence alone, identical (lemmas and rules)
   });
 
   it("itemEvidence returns the log in the canonical fold order", () => {

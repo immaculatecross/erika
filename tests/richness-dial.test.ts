@@ -198,7 +198,8 @@ describe("production lemma evidence, validated (criterion 3)", () => {
     const deep: DeepResult = { findings: [], produced: [{ lemma: "zzzfoo", pos: "NOUN" }, { lemma: "casa", pos: "BOGUS" }] };
     await runAnalysisJob(db, enqueueAnalysis(db, "s").id, mockClient({ deep }).client, { tempo: TEMPO });
     expect((db.prepare("SELECT COUNT(*) AS n FROM evidence").get() as { n: number }).n).toBe(0);
-    expect((db.prepare("SELECT COUNT(*) AS n FROM knowledge_items").get() as { n: number }).n).toBe(0);
+    // No lemma item minted (the DB is seeded with the E-26b syllabus rule: rows, so scope by kind).
+    expect((db.prepare("SELECT COUNT(*) AS n FROM knowledge_items WHERE kind = 'lemma'").get() as { n: number }).n).toBe(0);
   });
 
   it("cache reuse into another session does NOT re-record produced evidence", async () => {

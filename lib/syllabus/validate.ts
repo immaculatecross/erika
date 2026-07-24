@@ -45,9 +45,9 @@ export function validateSyllabus(syllabus: Syllabus): ValidationResult {
   // Resolution errors make the topo sort meaningless — report them and stop.
   if (errors.length > 0) return { ok: false, errors, order: null };
 
-  const order = topoSort(rules, byKey);
+  const order = topoSort(rules);
   if (order === null) {
-    for (const key of findCycleMembers(rules, byKey))
+    for (const key of findCycleMembers(rules))
       errors.push({ key, problem: `is part of a prerequisite cycle` });
     return { ok: false, errors, order: null };
   }
@@ -56,7 +56,7 @@ export function validateSyllabus(syllabus: Syllabus): ValidationResult {
 
 /** Kahn's algorithm. Returns a topological order (prereqs first), or null if a cycle
  *  blocks completion. Ties are broken by key so the order is deterministic. */
-export function topoSort(rules: SyllabusRule[], byKey: Map<string, SyllabusRule>): string[] | null {
+export function topoSort(rules: SyllabusRule[]): string[] | null {
   const indegree = new Map<string, number>();
   const dependants = new Map<string, string[]>(); // prereq → rules that need it
   for (const r of rules) {
@@ -90,7 +90,7 @@ function insertSorted(arr: string[], value: string): void {
 
 /** The keys still carrying a non-zero indegree after Kahn's algorithm — i.e. the
  *  rules trapped in (or downstream of) a cycle. Diagnostic only. */
-function findCycleMembers(rules: SyllabusRule[], byKey: Map<string, SyllabusRule>): string[] {
+function findCycleMembers(rules: SyllabusRule[]): string[] {
   const indegree = new Map<string, number>();
   const dependants = new Map<string, string[]>();
   for (const r of rules) {

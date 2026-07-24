@@ -74,8 +74,7 @@ describe("the prerequisite DAG (criterion 2)", () => {
   it("topoSort returns null on an injected cycle", () => {
     const a: SyllabusRule = { key: "a", cefr: "A1", area: "x", title: "a", description: "d", prereqs: ["b"], examples: ["e"] };
     const b: SyllabusRule = { key: "b", cefr: "A1", area: "x", title: "b", description: "d", prereqs: ["a"], examples: ["e"] };
-    const m = new Map([["a", a], ["b", b]]);
-    expect(topoSort([a, b], m)).toBeNull();
+    expect(topoSort([a, b])).toBeNull();
     const bad = validateSyllabus({ ...syllabus, rules: [a, b] });
     expect(bad.ok).toBe(false);
   });
