@@ -39,3 +39,34 @@ On-device **speaker attribution**: using the enrolled user's voice (the E-35 enr
 
 ## Exit report
 Append here per `task.md`: RESULT / PR / Changed / Verified (exact commands + which calibration path you took (real-in-sandbox vs documented-synthetic) with the recall/false-include numbers + the naive-baseline falsification + the non-user-suppression test + the idempotency dedup test + the session-exclusion test + the no-enrollment degrade test + migration v23) / Tests (changed/removed — justify any) / Risks (esp. what awaits live sherpa τ re-calibration) / Blocker.
+
+---
+
+## Exit report (E-36, appended per task.md)
+
+**RESULT:** done
+
+**PR:** https://github.com/immaculatecross/erika/pull/57 (`feat/speaker-attribution` → `master`)
+
+**Changed:**
+- `lib/speaker/*` — the `SpeakerEmbedder` seam (`embedder.ts`: interface + `cosineSimilarity`/`centroid`); `spectral-embedder.ts` (in-sandbox deterministic ffmpeg + log-mel + dependency-free FFT, the calibratable default); `sherpa-embedder.ts` (operator-gated sherpa-onnx, dynamic import); `asset-path.ts` (#47-safe resolver); `pcm.ts` (bounded per-window PCM read); `attribution.ts` (windowing + recall-first max-over-windows verdict + τ); `reference.ts` (centroid compute/cache); `store.ts` (DB glue); `index.ts` (resolver + kill-switch).
+- `lib/migrations/v23-speaker-attribution.ts` — `segments.speaker_score`/`is_user`, `sessions.exclude_from_evidence`, `speaker_references`, partial UNIQUE `idx_evidence_produced_idem`.
+- `lib/ingest/pipeline.ts` — `attributing` stage (embedder injected as a param; degrades honestly). `scripts/worker.ts` — resolves + injects the embedder.
+- `lib/analysis/cascade.ts` — gate produced positives by verdict + session exclusion (via `RunContext`). `lib/analysis/produced-lemmas.ts` — idempotency key + suppress-with-honest-yield. `lib/knowledge/evidence.ts` — `recordProducedEvidence` (`INSERT OR IGNORE`).
+- `lib/segments.ts` / `lib/sessions.ts` / `lib/session-types.ts` — carry the new columns; `setSessionExcluded`.
+- `app/api/sessions/[id]/exclude/route.ts` + `app/sessions/[id]/page.tsx` toggle (D-24). `next.config.mjs` model trace. `docs/schema.md` v23. FEATURES.md E-36 → done; STATE.md regenerated.
+- Tests: `speaker-calibration`, `speaker-attribution`, `produced-lemma-gate`, `speaker-pipeline`, `session-exclude-route`, `migrations` v23; fixture `tests/fixtures/labelled-speaker.{flac,json}` + `make-labelled-speaker.sh`. Two existing ingest stage-order tests updated for the new `attributing` stage.
+
+**Verified (exact commands):**
+- `npm run lint` — clean. `npm run typecheck` — clean. `npm run build` — clean. `.mfactory/hooks/run-tripwires.sh --all` — exit 0. `npx vitest run` — **762 passed / 107 files**.
+- **Calibration path: REAL in-sandbox embedding** (`spectral-logmel-v1`), exercised end to end on the committed two-voice fixture. `npx vitest run tests/speaker-calibration.test.ts`: shipped τ = 0.70 → **user recall = 1.0** (≥ 0.99), **other-exclusion ≈ 0.571** (4/7; two bystander windows above the user floor admitted as recall-first false-includes). **Naive-baseline falsification**: accept-all excludes 0 (< calibrated); midpoint-of-means τ drops a user window (recall < 0.99). Fixture proven non-trivially separable (otherMax > userFloor).
+- **Non-user suppression** (`produced-lemma-gate`): user segment mints 1 positive, non-user segment mints 0, both still produce findings. **No-enrollment degrade**: null verdicts ⇒ both segments mint positives (identical to pre-E-36). **Session-exclusion**: excluded session mints 0. **Idempotency**: replayed deep-listen (witness dropped) appends no duplicate produced row.
+- **Pipeline** (`speaker-pipeline`): attributing stage persists verdicts + caches the reference; degrades with no enrollment / kill-switch / no embedder; resumable. **Privacy** (`speaker-attribution`): no `fetch`/http/net in any `lib/speaker` module.
+
+**Tests changed/removed:** `tests/knowledge-yield.test.ts` (recordProducedLemmas gained a `contentHash` arg), `tests/richness-dial.test.ts` + `tests/session-row-render.test.tsx` (Segment/Session type extension — added the new fields to literals), `tests/ingest-pipeline.test.ts` + `tests/ingest-resume-torn.test.ts` (stage after `segmenting` is now `attributing`). All justified by the additive schema/signature changes; none weakened.
+
+**Risks:** (1) **Live sherpa τ re-calibration is operator-gated** — the shipped τ is calibrated for the in-sandbox spectral embedder on a synthetic fixture; the sherpa model lives in a different embedding space and needs re-calibration against a real two-voice sample (the sandbox has no egress/model). (2) The **`sherpa-onnx-node` runtime is not committed to package.json** — CI's `npm ci` would break against the unchanged lockfile; it is loaded by dynamic import and is an operator `npm install` + model-drop step (documented in `sherpa-embedder.ts` + PR). (3) Recall-first admits false-includes by design. No money path touched; the never-`known` invariant and append-only evidence contract are intact.
+
+**Blocker:** none.
+
+**Note (raise, not lower):** review tier stays **Full** as declared.
