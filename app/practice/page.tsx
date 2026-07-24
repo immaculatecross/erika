@@ -64,6 +64,7 @@ export default function LearnTodayPage() {
           lesson: null,
           letterUnread: false,
           newItems: { vocab: 0, rules: 0, pronunciation: 0 },
+          placed: true,
         });
     });
     return () => {
@@ -81,7 +82,12 @@ export default function LearnTodayPage() {
 
   const newTotal = today.newItems.vocab + today.newItems.rules + today.newItems.pronunciation;
   const nothing =
-    today.goal.total === 0 && today.lesson === null && !today.letterUnread && !today.complete && newTotal === 0;
+    today.placed &&
+    today.goal.total === 0 &&
+    today.lesson === null &&
+    !today.letterUnread &&
+    !today.complete &&
+    newTotal === 0;
 
   if (nothing) {
     return (
@@ -115,6 +121,23 @@ export default function LearnTodayPage() {
           <h1 className="text-[34px] font-bold tracking-tight">Today</h1>
           <p className="mt-1 text-[17px] text-secondary">Your day, from your own speech.</p>
         </motion.header>
+
+        {/* First-run placement (E-35): until the learner is placed, the composer
+            guesses A1. A calm prompt to find their level — never a hard gate. */}
+        {!today.placed && (
+          <motion.section variants={staggerItem(reduced)} data-placement-prompt className="flex flex-col gap-3">
+            <span className={CAPTION}>Start here</span>
+            <Link href="/practice/placement" data-open-placement className={ROW}>
+              <span className="flex min-w-0 flex-col gap-1">
+                <span className="text-[17px] font-semibold text-ink">Find your level</span>
+                <span className="text-[15px] text-secondary">
+                  A few minutes of quick yes/no, so your lessons begin near your level — not at the alphabet.
+                </span>
+              </span>
+              <ArrowRight size={20} strokeWidth={1.5} className="shrink-0 text-secondary" aria-hidden />
+            </Link>
+          </motion.section>
+        )}
 
         {/* The ring + the one factual completion beat (D-24). */}
         <motion.section

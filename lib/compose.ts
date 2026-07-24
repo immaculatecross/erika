@@ -66,10 +66,26 @@ export function capsFromSettings(db: Db): ComposeCaps {
   };
 }
 
-/** A grammar-rule prereq counts as satisfied once the user has REAL (non-recognition)
- *  evidence on it — it is being learned, known, or was (lapsed). Recognition-only
- *  (`introduced`) is not production and does not unlock a dependent rule (D-19). */
-export const PREREQ_SATISFIED: ReadonlySet<KnowledgeStatus> = new Set<KnowledgeStatus>([
+/**
+ * When may the composer TEACH a rule whose prereq is this status? This answers the
+ * composer's *teaching-eligibility* question — "is the learner ready to be OFFERED
+ * the next rule?" — which is DISTINCT from the `known` corroboration gate in
+ * `derive.ts` (that one decides *mastery* and still excludes recognition, D-19 —
+ * untouched here). A prereq that has been produced (learning/known/lapsed) is
+ * eligible, and so is one merely SEEN via recognition (`introduced`): recognizing a
+ * rule's territory — e.g. from placement — is a fine basis to introduce what builds
+ * on it, without ever claiming the learner has mastered it. `unseen` is the only
+ * status that blocks a dependent rule.
+ *
+ * [E-35 review — Finding #1] Before this, `introduced` was excluded, so placement
+ * (which marks sub-level rules `introduced`) BLOCKED every higher rule and a placed
+ * learner was offered ZERO new grammar — defeating the milestone. This set is used
+ * ONLY by `ruleEligible` below (never by `deriveStatus`/the `known` path), so
+ * widening it changes teaching-eligibility alone; the D-19 recognition-never-`known`
+ * invariant in `derive.ts` is unaffected.
+ */
+export const TEACH_ELIGIBLE_PREREQ: ReadonlySet<KnowledgeStatus> = new Set<KnowledgeStatus>([
+  "introduced",
   "learning",
   "known",
   "lapsed",
@@ -305,7 +321,7 @@ function readFresh(db: Db, day: string, caps: ComposeCaps): { fresh: Record<NewK
     const r = ruleRows.find((x) => x.id === id);
     if (!r) return false;
     const prereqs = r.prereqs ? (JSON.parse(r.prereqs) as string[]) : [];
-    return prereqs.every((p) => PREREQ_SATISFIED.has(statusById.get(p) ?? "unseen"));
+    return prereqs.every((p) => TEACH_ELIGIBLE_PREREQ.has(statusById.get(p) ?? "unseen"));
   };
 
   // Exclude only PERSISTENT drained spill (planned_for ≤ day) from fresh selection:

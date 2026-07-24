@@ -3,6 +3,7 @@ import { buildPlan, type PlanLesson } from "./plan";
 import { compose, capsFromSettings } from "./compose";
 import { dayGoal, getDayCompletion } from "./day-ledger";
 import { localDay } from "./local-day";
+import { placementStatus } from "./placement/status";
 
 // The Learn TODAY read-model (E-31, D-24). Composes today's plan (draining the spill
 // queue, writing tomorrow's overflow — the composer's only, idempotent side effect,
@@ -33,6 +34,9 @@ export interface TodayView {
   letterUnread: boolean;
   /** New items the composer queued at the knowledge edge for today, per kind. */
   newItems: { vocab: number; rules: number; pronunciation: number };
+  /** Has the learner run placement yet? False → the Learn first-run entry shows a
+   *  calm prompt to find their level (E-35), so the composer isn't guessing A1. */
+  placed: boolean;
 }
 
 export function buildToday(db: Db, day: string = localDay()): TodayView {
@@ -54,5 +58,6 @@ export function buildToday(db: Db, day: string = localDay()): TodayView {
       rules: plan.counts.rule,
       pronunciation: plan.counts.pronunciation,
     },
+    placed: placementStatus(db).placed,
   };
 }

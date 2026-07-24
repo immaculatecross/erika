@@ -124,6 +124,33 @@ export async function removeSessionDir(id: string): Promise<void> {
   await rm(sessionDir(id), { recursive: true, force: true });
 }
 
+// Enrollment takes (E-35, D-22): the ~45 s voice sample E-36 matches against. It is
+// stored ON-DEVICE ONLY under a flat data/enrollment/ dir, named by its take id, and
+// is never uploaded, hosted, or analyzed — a voice sample, not a session. Re-recording
+// adds a new file; the DB's latest row names the active one.
+
+/** The enrollment dir: data/enrollment/. */
+export function enrollmentDir(): string {
+  return path.join(dataDir(), "enrollment");
+}
+
+/** On-disk path of an enrollment take (extension = its format). */
+export function enrollmentPath(id: string, format: string): string {
+  return path.join(enrollmentDir(), `${id}.${format}`);
+}
+
+/** Ensure data/enrollment/ exists; returns its path. */
+export async function ensureEnrollmentDir(): Promise<string> {
+  const dir = enrollmentDir();
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+/** Remove one enrollment file (idempotent — no error if absent). */
+export async function removeEnrollmentFile(filePath: string): Promise<void> {
+  await rm(filePath, { force: true });
+}
+
 /** Thrown by streamToFile when the byte cap is exceeded mid-stream. */
 export class UploadTooLargeError extends Error {}
 

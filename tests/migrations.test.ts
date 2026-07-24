@@ -165,6 +165,20 @@ describe("migrations runner", () => {
     db.close();
   });
 
+  it("v22 adds the enrollment_takes store keyed by id (E-35, D-22)", () => {
+    const db = openDatabase(tmpDbPath());
+    const cols = db.prepare("PRAGMA table_info(enrollment_takes)").all() as { name: string; pk: number }[];
+    expect(cols.map((c) => c.name)).toEqual(
+      expect.arrayContaining(["id", "path", "format", "duration_seconds", "size_bytes", "created_at"]),
+    );
+    expect(cols.find((c) => c.name === "id")?.pk).toBe(1);
+    // Re-recordable: a second take simply inserts another row; the latest wins.
+    db.prepare("INSERT INTO enrollment_takes (id, path, format, duration_seconds, size_bytes) VALUES ('e1','/d/e1.wav','wav',45,1000)").run();
+    db.prepare("INSERT INTO enrollment_takes (id, path, format, duration_seconds, size_bytes) VALUES ('e2','/d/e2.wav','wav',48,1100)").run();
+    expect((db.prepare("SELECT COUNT(*) AS n FROM enrollment_takes").get() as { n: number }).n).toBe(2);
+    db.close();
+  });
+
   it("v8 collapses pre-existing duplicate findings so the unique index can build", () => {
     // A database written before the lease landed may already carry duplicates
     // from a double-run. Migrating must dedupe rather than fail to apply.
