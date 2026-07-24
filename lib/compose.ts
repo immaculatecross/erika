@@ -240,7 +240,7 @@ interface ReviewRow { id: string; item_id: string | null; interval_days: number;
 /** Due, non-suspended cards the user has seen before (repetitions > 0) become
  *  reviews, sorted worst-retrievability first. A never-graded fresh card is NOT a
  *  review — its finding is surfaced as unspent material instead (no double-count). */
-function readReviews(db: Db, day: string): ReviewCandidate[] {
+function readReviews(db: Db): ReviewCandidate[] {
   const rows = db
     .prepare(
       `SELECT id, item_id, interval_days, due
@@ -381,7 +381,7 @@ export function compose(db: Db, day: string, caps: ComposeCaps = DEFAULT_CAPS): 
     day,
     nextDay,
     spill: eligibleSpill,
-    reviews: readReviews(db, day),
+    reviews: readReviews(db),
     slips: readActiveSlips(db),
     findings: readUnspentFindings(db),
     fresh,

@@ -7,40 +7,71 @@ import { ArrowRight } from "lucide-react";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
+import { GoalRing } from "@/components/goal-ring";
 import { formatUsd } from "@/lib/format";
-import type { Plan } from "@/lib/plan";
+import type { TodayView } from "@/lib/today";
 
-// The Practice screen as a daily plan (E-18 criterion 1): not an interstitial but
-// a prescription for today — the due-card queue, the one lesson Focus's
-// severity-weighted ranking says to work on next (the same ranking, reused), and
-// this week's letter while it is unread. On arrival it still generates cards from
-// any new findings (idempotently) before reading the plan. Quiet, no gamification:
-// each row is a fact and a way in. Content staggers; reduced motion fades.
+// The Learn TODAY home (E-31, D-24), over the E-30 Learn tab. Not an interstitial:
+// today's plan, composed from the user's own recorded material first. The ink goal
+// ring is the one habit ornament; a factual completion sentence appears once per day
+// when the goal is met (no confetti, no XP, no second beat). Below it, the day's
+// actionable rows — the review drill, the one lesson the ranking prescribes, the
+// letter while unread — plus a quiet count of the new items the composer queued at
+// the knowledge edge. The tutor row arrives with E-34; its slot waits.
 
 const CAPTION = "text-[13px] font-medium uppercase tracking-[0.06em] text-secondary";
 const ROW =
   "flex items-center justify-between gap-4 rounded-card bg-card p-5 shadow-card transition-transform active:scale-[0.99]";
 
-export default function PracticePage() {
+/** The one factual completion sentence (D-24) — numbers, never a cheer. */
+function completionSentence(c: { cardsDone: number; lessonsDone: number }): string {
+  const cards = `${c.cardsDone} ${c.cardsDone === 1 ? "card" : "cards"}`;
+  const lessons = c.lessonsDone > 0 ? `, ${c.lessonsDone === 1 ? "one lesson" : `${c.lessonsDone} lessons`}` : "";
+  return `Done for today. ${cards}${lessons}.`;
+}
+
+export default function LearnTodayPage() {
   const reduced = usePrefersReducedMotion();
-  const [plan, setPlan] = useState<Plan | null>(null);
+  const [today, setToday] = useState<TodayView | null>(null);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       await fetch("/api/cards/generate", { method: "POST" });
-      const res = await fetch("/api/plan");
-      const body = (await res.json()) as Plan;
-      if (alive) setPlan(body);
+      const res = await fetch("/api/learn/today");
+      let view = (await res.json()) as TodayView;
+      // Goal met but not yet recorded → record it (authoritative server check) and
+      // reflect the completion so the ring closes and the sentence appears, once.
+      if (!view.complete && view.goal.total > 0 && view.dueCount === 0) {
+        const done = await fetch("/api/day/complete", { method: "POST" });
+        const body = (await done.json()) as {
+          complete: boolean;
+          completion?: { cardsDone: number; lessonsDone: number };
+        };
+        if (body.complete && body.completion) {
+          view = { ...view, complete: true, completion: body.completion };
+        }
+      }
+      if (alive) setToday(view);
     })().catch(() => {
-      if (alive) setPlan({ dueCount: 0, lesson: null, letterWeek: null, letterUnread: false });
+      if (alive)
+        setToday({
+          day: "",
+          goal: { done: 0, total: 0 },
+          complete: false,
+          completion: null,
+          dueCount: 0,
+          lesson: null,
+          letterUnread: false,
+          newItems: { vocab: 0, rules: 0, pronunciation: 0 },
+        });
     });
     return () => {
       alive = false;
     };
   }, []);
 
-  if (plan === null) {
+  if (today === null) {
     return (
       <div className="flex min-h-screen items-center justify-center p-8">
         <p className="text-[15px] text-secondary">Composing today&rsquo;s plan…</p>
@@ -48,13 +79,15 @@ export default function PracticePage() {
     );
   }
 
-  // Nothing to prescribe at all: before any speech is analyzed the honest plan
-  // is to go make some — a real link, not a disabled button (RETRO-001).
-  if (plan.dueCount === 0 && plan.lesson === null && !plan.letterUnread) {
+  const newTotal = today.newItems.vocab + today.newItems.rules + today.newItems.pronunciation;
+  const nothing =
+    today.goal.total === 0 && today.lesson === null && !today.letterUnread && !today.complete && newTotal === 0;
+
+  if (nothing) {
     return (
       <EmptyState
-        title="Practice"
-        line="Nothing to practice right now. Your plan fills in once Erika has heard you speak — and cards return when their next review comes around."
+        title="Today"
+        line="Nothing to practice right now. Your day fills in once Erika has heard you speak — and cards return when their next review comes around."
         action="Go to sessions"
         href="/"
         secondary={
@@ -71,7 +104,7 @@ export default function PracticePage() {
   }
 
   return (
-    <div data-practice className="mx-auto max-w-2xl p-8">
+    <div data-learn-today className="mx-auto max-w-2xl p-8">
       <motion.div
         variants={staggerContainer(reduced)}
         initial="initial"
@@ -79,19 +112,40 @@ export default function PracticePage() {
         className="flex flex-col gap-6"
       >
         <motion.header variants={staggerItem(reduced)}>
-          <h1 className="text-[34px] font-bold tracking-tight">Practice</h1>
-          <p className="mt-1 text-[17px] text-secondary">Today&rsquo;s plan.</p>
+          <h1 className="text-[34px] font-bold tracking-tight">Today</h1>
+          <p className="mt-1 text-[17px] text-secondary">Your day, from your own speech.</p>
         </motion.header>
 
-        <motion.section variants={staggerItem(reduced)} data-plan-cards className="flex flex-col gap-3">
+        {/* The ring + the one factual completion beat (D-24). */}
+        <motion.section
+          variants={staggerItem(reduced)}
+          data-today-goal
+          className="flex flex-col items-center gap-4 rounded-card bg-card p-8 shadow-card"
+        >
+          <GoalRing done={today.goal.done} total={today.goal.total} />
+          {today.complete && today.completion ? (
+            <p data-completion className="text-[17px] text-ink">
+              {completionSentence(today.completion)}
+            </p>
+          ) : today.goal.total > 0 ? (
+            <p className="tabular text-[15px] text-secondary">
+              {today.goal.done} of {today.goal.total} done today
+            </p>
+          ) : (
+            <p className="text-[15px] text-secondary">Nothing due — your day is clear.</p>
+          )}
+        </motion.section>
+
+        {/* Review drill. */}
+        <motion.section variants={staggerItem(reduced)} data-today-cards className="flex flex-col gap-3">
           <span className={CAPTION}>Review</span>
-          {plan.dueCount > 0 ? (
+          {today.dueCount > 0 ? (
             <div className={ROW}>
               <p className="text-[17px] text-secondary">
                 <span data-due-count className="tabular font-semibold text-ink">
-                  {plan.dueCount}
+                  {today.dueCount}
                 </span>{" "}
-                {plan.dueCount === 1 ? "card" : "cards"} due for review.
+                {today.dueCount === 1 ? "card" : "cards"} due for review.
               </p>
               <Link
                 href="/practice/review"
@@ -110,28 +164,49 @@ export default function PracticePage() {
           )}
         </motion.section>
 
-        {plan.lesson && (
-          <motion.section variants={staggerItem(reduced)} data-plan-lesson className="flex flex-col gap-3">
+        {/* The one lesson the ranking prescribes (E-18, reused). */}
+        {today.lesson && (
+          <motion.section variants={staggerItem(reduced)} data-today-lesson className="flex flex-col gap-3">
             <span className={CAPTION}>Work on next</span>
-            <Link href={`/practice/lessons/${encodeURIComponent(plan.lesson.key)}`} className={ROW}>
+            <Link href={`/practice/lessons/${encodeURIComponent(today.lesson.key)}`} className={ROW}>
               <span className="flex min-w-0 flex-col gap-1">
-                <span className="text-[17px] font-semibold capitalize text-ink">
-                  {plan.lesson.category}
-                </span>
+                <span className="text-[17px] font-semibold capitalize text-ink">{today.lesson.category}</span>
                 <span className="tabular text-[15px] text-secondary">
-                  {plan.lesson.count} {plan.lesson.count === 1 ? "finding" : "findings"} — your
-                  costliest pattern right now.
+                  {today.lesson.count} {today.lesson.count === 1 ? "finding" : "findings"} — your costliest
+                  pattern right now.
                 </span>
               </span>
               <span data-lesson-price className="tabular shrink-0 text-[15px] font-medium text-secondary">
-                {plan.lesson.ready ? "Lesson ready" : `Generate — est. ${formatUsd(plan.lesson.estimateUsd ?? 0)}`}
+                {today.lesson.ready ? "Lesson ready" : `Generate — est. ${formatUsd(today.lesson.estimateUsd ?? 0)}`}
               </span>
             </Link>
           </motion.section>
         )}
 
-        {plan.letterUnread && plan.letterWeek && (
-          <motion.section variants={staggerItem(reduced)} data-plan-letter className="flex flex-col gap-3">
+        {/* New material the composer queued at the knowledge edge — informational
+            (the lesson formats that act on it arrive with E-32). */}
+        {newTotal > 0 && (
+          <motion.section variants={staggerItem(reduced)} data-today-new className="flex flex-col gap-2">
+            <span className={CAPTION}>New today</span>
+            <p className="tabular text-[15px] text-secondary">
+              {[
+                today.newItems.vocab > 0
+                  ? `${today.newItems.vocab} ${today.newItems.vocab === 1 ? "word" : "words"}`
+                  : null,
+                today.newItems.rules > 0
+                  ? `${today.newItems.rules} ${today.newItems.rules === 1 ? "rule" : "rules"}`
+                  : null,
+                today.newItems.pronunciation > 0 ? `${today.newItems.pronunciation} sounds` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}{" "}
+              at your edge.
+            </p>
+          </motion.section>
+        )}
+
+        {today.letterUnread && (
+          <motion.section variants={staggerItem(reduced)} data-today-letter className="flex flex-col gap-3">
             <span className={CAPTION}>This week</span>
             <Link href="/letter" className={ROW}>
               <span className="text-[17px] text-ink">Your letter for the week is waiting.</span>
