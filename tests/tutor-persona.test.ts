@@ -81,8 +81,14 @@ describe("buildTutorPersona — the error-flagging mandate", () => {
     // Says what was said and what it should be.
     expect(persona).toContain('you said la ragazzo — it\'s il ragazzo');
     expect(persona).toContain("le case sono belle");
+    // The address case turns on the addressee named IN the utterance ("signora"), so
+    // it needs no fact about the learner — see the no-gender-inference test below.
+    expect(persona).toContain('"signora, è stanco" — it\'s "è stanca"');
     // A swallowed/centralised ending counts too, not just an outright wrong letter.
     expect(persona.toLowerCase()).toMatch(/swallowed, cut short, or centralised/);
+    // Definitional, not an unqualified "flag every one" that would beat the per-turn cap.
+    expect(persona).toContain("All of these count as real errors, not slips to overlook");
+    expect(persona).not.toMatch(/Flag every one/);
   });
 
   it("names the other pronunciation errors and grammar/word choice, below final vowels", () => {
@@ -103,6 +109,30 @@ describe("buildTutorPersona — the error-flagging mandate", () => {
     expect(persona).toContain("A false correction is worse than a missed one");
   });
 
+  // The gender hole: TutorPersonaInput carries no gender field and renderProfileLines
+  // (E-19) never emits one, so a self-agreement judgment could only come from a
+  // voice-based inference — the model hears perfectly and "corrects" correct speech,
+  // which audibility ("did you hear it") cannot catch.
+  it("forbids inferring the learner's gender, and gates the self-agreement case on being told", () => {
+    const persona = minimal();
+    expect(persona).toContain("You are not told the learner's gender and must never infer it from their voice");
+    expect(persona).toContain("only treat an ending that disagrees with the speaker themselves as an error if they have told you which form applies to them");
+    // The mandate's own example must not require that inference either.
+    expect(persona).not.toMatch(/sono stanca/);
+    expect(persona).not.toMatch(/male speaker/);
+    expect(persona).toContain("but only when they have told you which form applies to them");
+  });
+
+  // D-21's evidence transfers: audio LLMs diagnose phones from L1 stereotypes rather
+  // than acoustics, which is why the Record deep pass only flags suspects.
+  it("yields on sub-phonemic judgments of degree and never infers an error from the learner's L1", () => {
+    const persona = minimal();
+    expect(persona).toContain("far less reliable than your judgment of words and grammar");
+    expect(persona.toLowerCase()).toContain("when it is only a matter of degree, let it go");
+    expect(persona).toContain("never infer an error from what speakers of the learner's native language are expected to get wrong");
+    expect(persona).toContain("Flag what you actually heard, never what their L1 predicts");
+  });
+
   it("keeps correction in the flow rather than a nag (D-24 calm, D-18 correction-forward)", () => {
     const persona = minimal();
     expect(persona).toContain("Stay a conversation, not a lecture");
@@ -112,7 +142,30 @@ describe("buildTutorPersona — the error-flagging mandate", () => {
     expect(persona.toLowerCase()).toContain("never make the learner repeat their own error");
   });
 
-  it("composes with the D-23 register dial instead of overriding it", () => {
+  // The nag hole: a cross-class ranking alone is silent on several final-vowel errors
+  // in ONE turn — the normal case for a learner with a habitual -o/-a slip — and a
+  // comparative preference loses to the mandate's superlatives. Hence a countable cap.
+  it("caps correction at one error per learner turn, within the top class as well as across classes", () => {
+    const persona = minimal();
+    expect(persona).toContain("Correct at most one error per learner turn");
+    expect(persona).toContain("even when several of them are final-vowel errors");
+    // Load-bearing: silence is success, not dereliction — this is what balances
+    // "do not politely let errors slide".
+    expect(persona).toContain(
+      "a stretch of fluent speech you pass over in silence is a good conversation, not a missed job",
+    );
+  });
+
+  // #5: a habitual slip must not earn a reminder on every recurrence; the recurrence
+  // signal belongs in log_evidence, and only ever on an id the persona actually named.
+  it("bounds repeat reminders and routes recurrence to log_evidence", () => {
+    const persona = minimal();
+    expect(persona).toContain("remind them of the correct form once more at most, then let it go for the rest of the call");
+    expect(persona).toContain("not a reason to keep correcting");
+    expect(persona).toContain("when it is one of the ids you were given");
+  });
+
+  it("keeps the register line verbatim and unconditional at every register", () => {
     for (const register of ["colloquiale", "standard", "colto", "letterario"] as const) {
       const persona = buildTutorPersona({ register, targetLanguage: "Italian", nativeLanguage: "English" });
       // The register line survives verbatim, and the mandate rides alongside it.
