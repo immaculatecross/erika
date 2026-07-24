@@ -78,7 +78,7 @@ describe("item-lesson generation bills once, then caches free (criterion 3)", ()
       const r1 = await generateItemLesson(db, first.client, itemId);
       expect(r1.cached).toBe(false);
       expect(first.calls).toHaveLength(1);
-      expect(r1.lesson.exercises.length).toBeGreaterThanOrEqual(3);
+      expect(r1.lesson!.exercises.length).toBeGreaterThanOrEqual(3);
 
       const spent = monthToDateSpend(db);
       expect(spent).toBeGreaterThan(0);
@@ -95,6 +95,50 @@ describe("item-lesson generation bills once, then caches free (criterion 3)", ()
       expect(second.calls).toHaveLength(0); // cache hit — no model call
       expect(monthToDateSpend(db)).toBe(spent); // ledger unchanged — cache re-open bills ZERO
       expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(1);
+      db.close();
+    });
+  }
+});
+
+describe("[T1] lease-before-call: a concurrent double-generate makes ONE call, bills ONCE", () => {
+  // The never-waivable money invariant (D-15): recorded spend == actual spend even
+  // under concurrent same-item opens. Pre-repair, both racers reserved+called+were
+  // charged, but the loser's PK conflict rolled back its finalize, so its real charge
+  // was swept to $0 (recorded < actual). This mirrors the ask_notes concurrent test.
+  for (const [name, itemId, reply] of [
+    ["grammar", RULE_ITEM, GOOD_GRAMMAR],
+    ["vocab", LEMMA_ITEM, GOOD_VOCAB],
+  ] as const) {
+    it(`${name}: two concurrent generates → exactly one model call and one committed ledger row`, async () => {
+      const db = freshDb();
+      // ONE shared mock client so the call count is the true number of provider calls
+      // across BOTH racers (the lease must let exactly one through).
+      const calls: string[] = [];
+      const client: TextModelClient = {
+        async complete({ prompt }) {
+          calls.push(prompt);
+          // Yield a microtask so the second racer runs its claim before we resolve —
+          // the loser must see the claim and bail without a call.
+          await Promise.resolve();
+          return { text: reply, promptTokens: 150, completionTokens: 320 };
+        },
+      };
+
+      const [a, b] = await Promise.all([
+        generateItemLesson(db, client, itemId),
+        generateItemLesson(db, client, itemId),
+      ]);
+
+      expect(calls).toHaveLength(1); // exactly one provider call won the lease
+      expect([a.cached, b.cached].filter((c) => c === false)).toHaveLength(1); // one winner
+      const rows = db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number };
+      expect(rows.n).toBe(1); // one committed ledger row (no swept-to-$0 phantom charge)
+      const row = db.prepare("SELECT state FROM spend_ledger").get() as { state: string };
+      expect(row.state).toBe("committed");
+      // Exactly one item_lessons row, and it is the completed (non-empty body) lesson.
+      const lessonRows = db.prepare("SELECT COUNT(*) AS n FROM item_lessons").get() as { n: number };
+      expect(lessonRows.n).toBe(1);
+      expect(getItemLesson(db, itemId)!.exercises.length).toBeGreaterThanOrEqual(3);
       db.close();
     });
   }
