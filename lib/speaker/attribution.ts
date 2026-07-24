@@ -19,18 +19,22 @@ export const WINDOW_HOP_MS = 2000;
 /**
  * Recall-first similarity threshold τ for the in-sandbox spectral embedder, above
  * which a window is judged the enrolled user. CALIBRATED on the committed two-voice
- * fixture (tests/fixtures/labelled-speaker) to reach user-recall ≥ 0.99 while still
- * excluding the other speaker's windows — see tests/speaker-calibration.test.ts,
- * which derives the recall-first floor from the fixture and asserts a naive baseline
- * fails. It is set conservatively (the recall-first floor, rounded DOWN) so the user
- * is never dropped; the cost is admitted false-includes.
+ * fixture (tests/fixtures/labelled-speaker): every true user window there scores
+ * ≥ 0.749, so τ is set BELOW that floor — the user is never dropped (user-recall
+ * ≥ 0.99, D-22) — while still excluding a real fraction of the other speaker's
+ * windows. This is the recall-first trade deliberately made: we accept the
+ * false-includes above τ (the other-speaker windows that happen to score high)
+ * rather than risk excluding the user. tests/speaker-calibration.test.ts asserts
+ * this τ reaches recall ≥ 0.99 while excluding the other speaker, and that a naive
+ * midpoint / accept-all baseline fails one of those.
  *
- * NOTE (D-19 honesty): this τ is calibrated for `spectral-logmel-v1`. The production
- * sherpa-onnx model lives in a different embedding space, so its τ must be
+ * NOTE (D-19 honesty): this τ is calibrated for `spectral-logmel-v1` on a SYNTHETIC
+ * fixture — it calibrates the METHOD, not the production operating point. The
+ * production sherpa-onnx model lives in a different embedding space, so its τ must be
  * re-calibrated against a real two-voice sample on the operator's machine — an
  * operator-gated follow-up, since the sandbox cannot run the model.
  */
-export const SPEAKER_USER_THRESHOLD = 0.2;
+export const SPEAKER_USER_THRESHOLD = 0.7;
 
 export interface WindowSpan {
   startMs: number;

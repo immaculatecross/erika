@@ -1,0 +1,7 @@
+{
+  "totalMs": 47200,
+  "sampleRateHz": 16000,
+  "windows": [
+    {"startMs": 0, "endMs": 2200, "speaker": "user", "enroll": true},    {"startMs": 3000, "endMs": 5200, "speaker": "user", "enroll": true},    {"startMs": 6000, "endMs": 8200, "speaker": "user", "enroll": true},    {"startMs": 9000, "endMs": 11200, "speaker": "user", "enroll": true},    {"startMs": 12000, "endMs": 14200, "speaker": "user", "enroll": false},    {"startMs": 15000, "endMs": 17200, "speaker": "other", "enroll": false},    {"startMs": 18000, "endMs": 20200, "speaker": "user", "enroll": false},    {"startMs": 21000, "endMs": 23200, "speaker": "other", "enroll": false},    {"startMs": 24000, "endMs": 26200, "speaker": "other", "enroll": false},    {"startMs": 27000, "endMs": 29200, "speaker": "user", "enroll": false},    {"startMs": 30000, "endMs": 32200, "speaker": "other", "enroll": false},    {"startMs": 33000, "endMs": 35200, "speaker": "user", "enroll": false},    {"startMs": 36000, "endMs": 38200, "speaker": "other", "enroll": false},    {"startMs": 39000, "endMs": 41200, "speaker": "other", "enroll": false},    {"startMs": 42000, "endMs": 44200, "speaker": "user", "enroll": false},    {"startMs": 45000, "endMs": 47200, "speaker": "other", "enroll": false}
+  ]
+}
