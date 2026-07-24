@@ -64,6 +64,10 @@ export interface ScoreAttemptInput {
   /** Measured duration of that file, in seconds. Both the reserved estimate and the
    *  finalized charge are computed from it. */
   audioSeconds: number;
+  /** The attempt id to use. The route mints it first so the take's FILENAME and the
+   *  attempt (and therefore its `pa:<id>` ledger lease) share one identifier; omitted,
+   *  one is minted here. */
+  attemptId?: string;
 }
 
 export interface ScoreAttemptOutcome {
@@ -97,7 +101,7 @@ export async function scoreAttempt(
   // (2) Refuse an over-long take before it can cost anything.
   if (input.audioSeconds > MAX_DRILL_SECONDS) throw new DrillTooLongError(input.audioSeconds);
 
-  const attemptId = randomUUID();
+  const attemptId = input.attemptId ?? randomUUID();
   const { monthlyBudgetUsd } = readSettings(db);
 
   // (3) RESERVE BEFORE CALL. A refusal here means no request is made at all.
