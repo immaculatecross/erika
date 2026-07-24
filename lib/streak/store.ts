@@ -57,8 +57,9 @@ export function completedDays(db: Db): string[] {
  * `repairsUsedThisMonth` is deliberately NOT here (review F5). It is a credit
  * BALANCE, and D-24 bans the countdown; shipping it in the `/api/learn/today` JSON
  * would leave it one `{streak.repairsUsedThisMonth}` away from being rendered. It
- * stays server-side on `computeStreak`'s result, where the auditability and the tests
- * need it, and `remainingRepairCredits` below is the server-only accessor.
+ * stays on `computeStreak`'s pure result, where the fairness rule needs it and the
+ * tests audit it — and no accessor re-exports it, because a convenience wrapper with
+ * no caller is just the countdown waiting for one.
  */
 export interface StreakView {
   /** The run's inclusive SPAN in local days — completed days plus the repaired days
@@ -69,16 +70,6 @@ export interface StreakView {
   repairedDays: StreakRepair[];
   /** The last day actually COMPLETED in the run — never a repaired one. */
   lastCompletedDay: string | null;
-}
-
-/** Repair credits already spent in `day`'s calendar month. SERVER-ONLY and
- *  deliberately unexported to any view: see StreakView's note (D-24, no countdown). */
-export function repairsUsedInMonth(db: Db, day: string = localDay()): number {
-  return computeStreak({
-    completedDays: completedDays(db),
-    repairs: listStreakRepairs(db),
-    today: day,
-  }).repairsUsedThisMonth;
 }
 
 /**

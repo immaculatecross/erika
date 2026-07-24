@@ -148,8 +148,19 @@ function producedOnLocalDay(db: Db, day: string): { itemId: string; spokenMs: nu
     const segs = segmentsFor.all(r.session_id, hash) as { start_ms: number; is_user: number | null }[];
     if (segs.length === 0) continue; // the segment is gone — we cannot say whose voice it was
     if (segs.some((s) => s.is_user === 0)) continue; // attributed to somebody else (E-36, D-22)
+
     // The moment they spoke: capture time + the segment's offset into the recording.
-    const spokenMs = captureMs + Math.max(0, segs[0].start_ms);
+    // A content hash can REPEAT within one session (the same audio twice), and the
+    // evidence row is keyed by the hash, not by one occurrence — so we do not know
+    // WHICH one it came from. Rather than silently claiming the earliest (review nit
+    // 4), we cite only when the occurrences AGREE on what we are about to say: same
+    // local day, same part of day. If they disagree, the sentence would have to pick,
+    // and picking is the one thing this module never does.
+    const instants = segs.map((s) => captureMs + Math.max(0, s.start_ms));
+    const claims = new Set(instants.map((ms) => `${localDay(new Date(ms))}|${partOfDay(localHour(new Date(ms)))}`));
+    if (claims.size > 1) continue; // ambiguous ⇒ not a claim we make
+
+    const spokenMs = instants[0];
     if (localDay(new Date(spokenMs)) !== day) continue; // exact local-day reduction
     out.push({ itemId: r.item_id, spokenMs });
   }

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { computeStreak, REPAIRS_PER_MONTH } from "@/lib/streak/compute";
-import { buildStreak, listStreakRepairs, recordStreakRepairs, repairsUsedInMonth } from "@/lib/streak/store";
+import { buildStreak, listStreakRepairs, recordStreakRepairs } from "@/lib/streak/store";
 import { streakCaption } from "@/lib/streak/caption";
 import { recordDayComplete } from "@/lib/day-ledger";
 
@@ -303,9 +303,14 @@ describe("the repair ledger (v25) — the store", () => {
     const view = buildStreak(db, "2026-07-24");
     expect(Object.keys(view).sort()).toEqual(["currentRun", "lastCompletedDay", "repairedDays"]);
     expect(JSON.stringify(view)).not.toContain("repairsUsed");
-    // …while the server can still audit it.
-    expect(repairsUsedInMonth(db, "2026-07-24")).toBe(1);
-    expect(repairsUsedInMonth(db, "2026-08-01")).toBe(0); // a new month, a clean balance
+    // …while the fairness rule still has the balance where it needs it: on the pure
+    // result. No product accessor re-exports it (review nit 2 — that was dead code).
+    const pure = computeStreak({
+      completedDays: days("2026-07-11", 14).filter((d) => d !== "2026-07-18"),
+      repairs: listStreakRepairs(db),
+      today: "2026-07-24",
+    });
+    expect(pure.repairsUsedThisMonth).toBe(1);
     db.close();
   });
 

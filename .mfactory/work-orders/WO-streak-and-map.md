@@ -185,7 +185,7 @@ Now both facts key on the **session's capture time plus the segment's offset int
 
 Tests added:
 - **12-repair case**: caption is exactly `"Day 162 · 12 repaired"`, contains the full count (`=== repairedDays.length`), stays ≤ 40 characters, and the rendered markup does **not** itemise the individual missed days.
-- **the reviewer's invariant**, swept rather than spot-checked: across every single-gap position in a 20-day window plus the no-gap and two-gap shapes, `currentRun > completedDaysInRun` ⟹ the caption contains `"repaired"`, and `currentRun === completedInRun + repairedDays.length` always.
+- **the reviewer's invariant**, swept across gap shapes. **CORRECTION (delta re-review):** as first written this case was **VACUOUS** and the claim above was FALSE. It derived `completedInRun = currentRun − repairedDays.length` and then asserted `currentRun === completedInRun + repairedDays.length` — the tautology `x === (x − n) + n`, true for every input including wrong ones, which left the guarded condition collapsed to `repairedDays.length > 0`. It has been rewritten to derive the completed count from **ground truth** (the input day set) via an independent oracle, and the correction is written up in the delta section at the end of this report.
 - **the reviewer's pre-registered edge**: 01–12 Jul completed, 13th missed and bridged, today (14th) unfinished ⇒ `currentRun === 13` (no off-by-one from the unfinished-today skip), `lastCompletedDay === "2026-07-12"`, and the render contains `"Day 13 · repaired Mon"` — the disclosure is present in precisely this case.
 
 **F3 (LOW)** — `app/api/learn/today/route.ts` now names **both** idempotent writes (the composer's spill reconciliation *and* the streak's repair ledger), with the reasoning and the no-double-spend guarantee.
@@ -208,6 +208,83 @@ Fresh `ERIKA_DB_PATH` under a scratch dir (`data/erika.db` never touched), 6 com
 ## 4. Docs
 
 FEATURES E-38 and STATE both updated for the span semantics (with the ruling's reasoning) and for the F1 capture-time fix, the bounded caption, sentence case, and the server-side credit balance.
+
+## Blocker
+
+None.
+
+---
+
+## Addendum 2 — delta re-review nits (commit on `feat/streak-and-map`)
+
+Gates re-run and **green**: `typecheck` clean · `lint` clean · **`test` 113 files / 840 passed** (was 838) · `build` succeeds · `run-tripwires.sh --all` OK.
+
+## 1. CORRECTION: the invariant sweep was vacuous, and my report claimed otherwise
+
+**The claim I made was false and is corrected in place above** (not deleted). I wrote that the span/disclosure invariant was "asserted as a swept invariant rather than spot-checked". It was swept, but what it asserted was a tautology:
+
+```ts
+const completedInRun = streak.currentRun - streak.repairedDays.length;   // derived FROM the output
+expect(streak.currentRun).toBe(completedInRun + streak.repairedDays.length);  // x === (x − n) + n
+```
+
+True for **every** input, including wrong ones. The guarded condition `currentRun > completedInRun` collapsed to `repairedDays.length > 0`, so the case could not detect the exact D-19 failure it existed to catch. The reviewer mutation-proved this; I reproduced both mutations before and after the fix.
+
+**The fix (`tests/streak-render.test.tsx`)** derives the completed count from **ground truth — the input day set** — via an oracle that re-walks the run's window over `completedDays ∪ repairedDays`, independently of anything `computeStreak` returned. Four properties are now asserted separately:
+
+1. `span === |run days|` (the window length, from the input)
+2. `span === completedFromInput + repairedDays.length`
+3. `span > completedFromInput` ⟹ caption contains `"repaired"`
+4. `lastCompletedDay ∈ completedDays`
+
+Shapes swept: a clean run (catches a silent `+1`), every single-gap position in a 20-day window, two bridged gaps, three gaps (run ends at the third), and two **consecutive** misses (never bridged).
+
+### Proof that it bites
+
+**Mutation A** — keep the span, empty `repairedDays` (the "inflated number without disclosure" failure). Previously **PASSED**; now:
+
+```
+FAIL  tests/streak-render.test.tsx > INVARIANT: a span wider than the days completed always discloses 'repaired'
+AssertionError: expected 20 to be 18 // Object.is equality
+- Expected   18
++ Received   20
+ ❯ tests/streak-render.test.tsx:166:33
+    165|       // 1. The span is exactly the run's length in calendar days.
+    166|       expect(streak.currentRun).toBe(runDays.length);
+```
+
+**Mutation B** — a clean run silently `+1`, no repair, no disclosure. Previously **all 838 tests passed**; now:
+
+```
+FAIL  tests/streak-render.test.tsx > INVARIANT: a span wider than the days completed always discloses 'repaired'
+AssertionError: expected 21 to be 20 // Object.is equality
+- Expected   20
++ Received   21
+ ❯ tests/streak-render.test.tsx:166:33
+    165|       // 1. The span is exactly the run's length in calendar days.
+    166|       expect(streak.currentRun).toBe(runDays.length);
+```
+
+`lib/streak/compute.ts` was restored from a pre-mutation copy and `git diff` on it is empty; the suite is green at 840. The tautology and why it is rejected are documented in the test itself so the form cannot come back.
+
+## 2. Nit 2 — dead code removed
+
+`repairsUsedInMonth` (`lib/streak/store.ts`) had no caller. Removed rather than wired: the balance belongs on `computeStreak`'s pure result, and a convenience accessor with no caller is the banned countdown waiting for one — now said in `StreakView`'s comment. The F5 test asserts the same property directly against the pure result.
+
+## 3. Nit 3 — the test now exercises the guard it names
+
+The old "unreadable capture time" case passed via the **SQL text-range prefilter** (`'not-a-date'` sorts above the upper bound), not the `isNaN` guard. Split into two honestly-named cases:
+
+- *"…sorts outside the day (SQL prefilter)"* — renamed to what it actually proves.
+- *"…PASSES the prefilter but will not parse"* — `"<today> 25:99:99"` sorts **inside** the day's text range yet `Date.parse` returns `NaN`, so only the per-row guard can reject it. The test asserts the premise first (a direct SQL count shows the row survives the range, and `Number.isNaN(...)` is true), then that the beat is `null`.
+
+## 4. Nit 4 — an ambiguous repeated hash is no longer resolved by luck
+
+A content hash can repeat within one session and the evidence row names the hash, not the occurrence — so *which* occurrence was spoken is unknown. Taking `segs[0]` silently claimed the earliest. Now the occurrences' claims are compared: if they agree on `(local day, part of day)` the beat is made; if they disagree we **cite nothing**, consistent with the module's "unverifiable ⇒ not a claim we make" stance. Test covers both branches (a duplicate 1 h later ⇒ still `"this morning"`; the same duplicate moved to the evening ⇒ `null`).
+
+## 5. Nit 6 — DESIGN.md amended (it is binding, and it no longer described what we ship)
+
+`DESIGN.md:45` named only the `"repaired Tue"` form. Amended to sanction the summarised form and record why it exists: the number is the run's **span** so the disclosure is what keeps it honest and is never dropped; repairs are **named while there are one or two** and **counted once there are more** (`"Day 162 · 12 repaired"`), because repairs accrue at two a month with no cap on run length and enumerating them would render an itemised list of every missed day — neither "a number and a word" nor caption length on a phone, and the closest this surface could come to a guilt ledger. It states **summarise, never truncate**, since a count that omitted repairs would let the number absorb unpractised days. Also records sentence case (not the uppercase section-label token) and that a zero run renders nothing.
 
 ## Blocker
 

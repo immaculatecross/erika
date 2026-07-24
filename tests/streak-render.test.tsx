@@ -4,6 +4,7 @@ import { StreakLine } from "@/components/streak-line";
 import { KnowledgeMap } from "@/components/knowledge-map";
 import { streakCaption, repairLabel } from "@/lib/streak/caption";
 import { computeStreak } from "@/lib/streak/compute";
+import { previousLocalDay } from "@/lib/local-day";
 import { buildMapCells } from "@/lib/knowledge-map";
 
 // E-38 criterion 2 (DESIGN.md:42-49, D-24). The streak's rendered surface is one
@@ -121,26 +122,59 @@ describe("the streak caption — 'Day 14', and nothing more", () => {
   });
 
   it("INVARIANT: a span wider than the days completed always discloses 'repaired'", () => {
-    // The property the span reading depends on (reviewer's pre-registered invariant):
-    // `currentRun > completedDaysInRun` ⟹ the caption says "repaired". Swept across
-    // every gap position in a 20-day window, plus the no-gap and two-gap shapes.
+    // The property the span reading depends on: `currentRun > completedDaysInRun` ⟹
+    // the caption says "repaired". Under the span ruling the number INCLUDES days the
+    // learner did not practise, so that disclosure is the only thing carrying D-19.
+    //
+    // GROUND TRUTH, NEVER THE OUTPUT. The completed count is derived from the INPUT
+    // day set, never as `currentRun − repairedDays.length` — that form is the
+    // tautology `x === (x − n) + n`, true for every input including wrong ones, and it
+    // passed under a mutation that kept the span while emptying `repairedDays` (i.e.
+    // the exact "inflated number with no disclosure" failure this case exists to
+    // catch). The oracle below re-derives the run's window from `completedDays ∪
+    // repairedDays` independently of anything `computeStreak` returned.
     const window = Array.from(
       { length: 20 },
       (_, i) => `2026-07-${String(5 + i).padStart(2, "0")}`,
     );
-    const shapes: string[][] = [[], ...window.map((d) => [d]), [window[4], window[12]]];
+    const shapes: string[][] = [
+      [], // a clean run — the shape that catches a silent +1
+      ...window.map((d) => [d]), // every single-gap position
+      [window[4], window[12]], // two gaps, both bridged
+      [window[4], window[10], window[16]], // three gaps — the run ends at the third
+      [window[8], window[9]], // two CONSECUTIVE misses — never bridged
+    ];
 
     for (const missing of shapes) {
       const completedDays = window.filter((d) => !missing.includes(d));
       const streak = computeStreak({ completedDays, today: "2026-07-24" });
-      const completedInRun = streak.currentRun - streak.repairedDays.length;
       const caption = streakCaption(streak, "2026-07-24");
+
+      // Oracle: walk the run's window over the UNION of completed and repaired days,
+      // from the input. An unfinished today is stepped over, not treated as a break.
+      const inRun = new Set([...completedDays, ...streak.repairedDays.map((r) => r.localDay)]);
+      const runDays: string[] = [];
+      let cursor = "2026-07-24";
+      if (!inRun.has(cursor)) cursor = previousLocalDay(cursor);
+      while (inRun.has(cursor)) {
+        runDays.push(cursor);
+        cursor = previousLocalDay(cursor);
+      }
+      const completedInRun = runDays.filter((d) => completedDays.includes(d)).length;
+
+      // 1. The span is exactly the run's length in calendar days.
+      expect(streak.currentRun).toBe(runDays.length);
+      // 2. …and is exactly the days done plus the days bridged.
+      expect(streak.currentRun).toBe(completedInRun + streak.repairedDays.length);
+      // 3. A number wider than the practice behind it MUST disclose the difference.
       if (streak.currentRun > completedInRun) {
         expect(caption).not.toBeNull();
         expect(caption!).toContain("repaired");
       }
-      // And the span is always exactly completed + disclosed repairs.
-      expect(streak.currentRun).toBe(completedInRun + streak.repairedDays.length);
+      // 4. The run's last completed day is a day the learner really completed.
+      if (streak.lastCompletedDay !== null) {
+        expect(completedDays).toContain(streak.lastCompletedDay);
+      }
     }
   });
 

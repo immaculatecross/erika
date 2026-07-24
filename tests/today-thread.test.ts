@@ -263,7 +263,10 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
     }
   });
 
-  it("does not cite a row whose session capture time is unreadable", async () => {
+  it("does not cite a session whose capture time sorts outside the day (SQL prefilter)", async () => {
+    // [review nit 3] Named for what it actually proves: 'not-a-date' sorts ABOVE the
+    // upper bound as text, so the row never leaves SQL. That is a real path, but it is
+    // the prefilter — the isNaN guard is exercised by the next case.
     const db = ws();
     seed(db, "s", ["userhash"]);
     setSegmentAttribution(db, listSegments(db, "s")[0].id, 0.95, 1);
@@ -271,7 +274,31 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
     const day = localDay();
     expect(buildTodayThread(db, day, [ITEM])).not.toBeNull();
     db.prepare("UPDATE sessions SET created_at = 'not-a-date' WHERE id = 's'").run();
-    expect(buildTodayThread(db, day, [ITEM])).toBeNull(); // unverifiable ⇒ not a claim
+    expect(buildTodayThread(db, day, [ITEM])).toBeNull();
+    db.close();
+  });
+
+  it("does not cite a capture time that PASSES the prefilter but will not parse", async () => {
+    // [review nit 3] The isNaN guard, exercised for real: this timestamp sorts inside
+    // the day's text range (it starts with the right date) yet Date.parse gives NaN,
+    // so only the per-row guard can reject it. Unverifiable ⇒ not a claim we make.
+    const db = ws();
+    seed(db, "s", ["userhash"]);
+    setSegmentAttribution(db, listSegments(db, "s")[0].id, 0.95, 1);
+    await analyse(db, "s");
+    const day = localDay();
+    expect(buildTodayThread(db, day, [ITEM])).not.toBeNull();
+
+    const bogus = `${day} 25:99:99`; // in text range, impossible clock time
+    db.prepare("UPDATE sessions SET created_at = ? WHERE id = 's'").run(bogus);
+    // Prove the premise: SQL really does hand this row through.
+    const survived = db
+      .prepare("SELECT COUNT(*) AS n FROM sessions WHERE created_at >= ? AND created_at < ?")
+      .get(`${day} 00:00:00`, `${day} 99:99:99`) as { n: number };
+    expect(survived.n).toBe(1);
+    expect(Number.isNaN(Date.parse(bogus.replace(" ", "T") + "Z"))).toBe(true);
+
+    expect(buildTodayThread(db, day, [ITEM])).toBeNull();
     db.close();
   });
 
@@ -307,6 +334,38 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
     });
     expect(buildTodayThread(db, localDay(), [ITEM])).toBeNull();
     db.close();
+  });
+
+  it("cites a repeated hash when its occurrences AGREE, and not when they disagree", async () => {
+    // [review nit 4] One content hash can appear twice in a session, and the evidence
+    // row names the hash, not the occurrence — so which one they said it in is unknown.
+    const tzBefore = process.env.TZ;
+    process.env.TZ = "Europe/Rome";
+    try {
+      const db = ws();
+      seed(db, "s", ["userhash"]);
+      const seg = listSegments(db, "s")[0];
+      setSegmentAttribution(db, seg.id, 0.95, 1);
+      db.prepare("UPDATE sessions SET created_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
+      await analyse(db, "s");
+
+      // A second occurrence of the SAME audio, 1 h later — still the morning. Agreeing
+      // occurrences say the same thing, so the beat is safe to make.
+      db.prepare(
+        `INSERT INTO segments (id, session_id, idx, start_ms, end_ms, duration_ms, content_hash, is_user)
+         VALUES ('dup', 's', 9, ?, ?, 60000, 'userhash', 1)`,
+      ).run(3_600_000, 3_660_000);
+      expect(buildTodayThread(db, "2026-07-21", [ITEM])!.partOfDay).toBe("this morning");
+
+      // Move the duplicate to the evening: the two occurrences now disagree about what
+      // the sentence would claim, so we say nothing rather than pick one.
+      db.prepare("UPDATE segments SET start_ms = ? WHERE id = 'dup'").run(14 * 3_600_000);
+      expect(buildTodayThread(db, "2026-07-21", [ITEM])).toBeNull();
+      db.close();
+    } finally {
+      if (tzBefore === undefined) delete process.env.TZ;
+      else process.env.TZ = tzBefore;
+    }
   });
 
   it("parses the segment content hash out of a produced source_ref", () => {
