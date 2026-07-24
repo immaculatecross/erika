@@ -32,15 +32,22 @@ function utcMs(sqliteTs: string): number {
  * How many distinct cards had their most recent review on local day `day`. A
  * card's last review = `due − interval_days`; reduced to a local day and matched.
  * A card reviewed twice in one day counts once (it is one card done).
+ *
+ * `advancedOnly` (the ring's "done") excludes cards that are still due right now —
+ * a card re-graded `again` was reviewed today but has NOT been cleared, so counting
+ * it as both done AND due would double it in the ring total. At completion (queue
+ * cleared) every reviewed-today card is advanced, so the two counts agree.
  */
-export function cardsReviewedToday(db: Db, day: string): number {
+export function cardsReviewedToday(db: Db, day: string, advancedOnly = false): number {
   const rows = db
     .prepare("SELECT due, interval_days FROM cards WHERE last_grade IS NOT NULL")
     .all() as { due: string; interval_days: number }[];
+  const nowMs = Date.now();
   let n = 0;
   for (const r of rows) {
     const dueMs = utcMs(r.due);
     if (Number.isNaN(dueMs)) continue;
+    if (advancedOnly && dueMs <= nowMs) continue; // reviewed but not cleared
     const reviewMs = dueMs - r.interval_days * DAY_MS;
     if (localDay(new Date(reviewMs)) === day) n += 1;
   }
@@ -58,7 +65,7 @@ export interface DayGoal {
 }
 
 export function dayGoal(db: Db, day: string): DayGoal {
-  const done = cardsReviewedToday(db, day);
+  const done = cardsReviewedToday(db, day, true); // advanced (cleared) today only
   const dueRemaining = countDueCards(db);
   const total = done + dueRemaining;
   return { done, dueRemaining, total, met: total > 0 && dueRemaining === 0 };
