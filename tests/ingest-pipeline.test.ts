@@ -128,9 +128,10 @@ describe("ingest pipeline", () => {
     expect(job.stage).toBe("detecting");
     const normMtime = mtime(normalizedPath(sessionId));
 
-    // Stop after segmenting; two segments are on disk, none rendered yet.
+    // Stop after segmenting; two segments are on disk, none rendered yet. The next
+    // stage is `attributing` (E-36), a no-op here — no embedder is injected.
     job = await processJob(ws.db, jobId, { stopAfter: "segmenting" });
-    expect(job.stage).toBe("rendering");
+    expect(job.stage).toBe("attributing");
     expect(listSegments(ws.db, sessionId)).toHaveLength(2);
     const segMtime = mtime(segmentPath(sessionId, 0));
 
