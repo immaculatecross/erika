@@ -37,3 +37,26 @@ D-18 lands across the three surfaces that show the user their own errors, so a m
 <!-- Append per playbooks/task.md: RESULT / PR / Changed / Verified (exact commands, incl. the
      front-omits-error and report-correction-first assertions) / Tests changed-removed (read as
      specs, D-14) / Risks / Blocker. Verify against DISPOSABLE state. -->
+
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/new/feat/correction-forward (branch feat/correction-forward)
+Changed:
+  - lib/cards-view.ts: added the pure correction-forward derivation — `deriveFront` (a context gap: blank the changed span of the correction, keeping correct context; degrade to a `____ · category` cue when no localized change) and `deriveFaces`; new `CardView`/`CardBrowserView`/`CardFaces` shapes ({front, correction, why, error}); kept `cardBack`/`splitBack` for the stored column.
+  - lib/cards.ts: display views now re-derive faces from each card's JOINED finding at read time — `listDueCardViews`/`listCardBrowserViews`/`getCardView`/`listCardsCsv`; replaced the old Card→view mappers. Storage (front=quote, back=cardBack) and all writes (generateCards, createCardForFinding pin) are byte-unchanged — no migration, no backfill, existing cards flip automatically.
+  - app/api/cards/route.ts, .../[id]/grade/route.ts, .../export/route.ts: use the new correction-forward readers.
+  - components/flashcard.tsx: front shows the meaning-first cue; back headlines the correction + why, shows the error once (data-card-error, red + strikethrough = meaning, D-14), Compare (E-21) unchanged.
+  - app/practice/cards/page.tsx: browser rows lead with cue + correction, error shown once and marked.
+  - components/revealable-error.tsx (new): tap-to-reveal; the error is absent from the DOM until revealed.
+  - app/phrasebook/page.tsx: rows lead with the correct form; the error sits behind RevealableError; search + pin (createCardForFinding) unchanged.
+  - components/analysis-report.tsx: rows lead with the correction (data-finding-correction); expanded detail shows why then the quote once, marked (data-finding-error); counts/expand/jump-to-audio unchanged. Exported FindingRow + defaultOpen for render tests.
+Verified (against a throwaway ERIKA_DATA_DIR/ERIKA_DB_PATH, never data/erika.db):
+  - `npm run typecheck` → clean. `npm run lint` → no warnings/errors. `npm run build` → succeeds.
+  - `npm run test` (vitest, disposable DB) → 523 passed with `--no-file-parallelism`; a plain run shows the same except tests/analysis-concurrency.test.ts intermittently times out under parallel load — pre-existing, untouched by this milestone, passes in isolation (2.6s).
+  - Criterion assertions proven: tests/cards-view.test.ts — `deriveFront` never contains the raw quote nor the wrong token; tests/correction-forward-render.test.tsx — front omits the error while the back marks it (line-through+severe) with Compare intact, the report leads with correction and shows the quote once beneath (marked, correction index < quote index), the reveal hides the error by default and shows it once on reveal; tests/cards-route.test.ts — the due view's front never contains its `error`, and the CSV export carries the error only on the Back ("You said: …") escaped, never the Front.
+Tests changed/removed:
+  - tests/cards-route.test.ts: updated the two view-key-shape assertions to the correction-forward shape and added front-omits-error checks; rewrote the export test to assert the error rides the escaped Back and is absent from the Front (its original RFC-4180 escaping intent preserved). No tests removed.
+  - tests/cards.test.ts, tests/cards-csv.test.ts, tests/phrasebook.test.ts: unchanged — the data layer and the pure CSV serializer are untouched.
+  - e2e (not in the gate; updated for coherence): flashcards.spec (seed shares context so cloze fronts differ), phrasebook.spec (assert correct-form-leads + tap-to-reveal), analysis-ui.spec (correction leads, error on expand), flashcards-manage.spec (escaping now exercised via the error on the Back).
+Front-derivation approach: re-derived at display time from the card's JOINED finding (cards carry findingId) — no migration, no stored-front backfill; the `cards.front/back` columns still hold the finding copy generation wrote but display no longer reads them, so existing cards flip too.
+Risks: the degrade path (`____ · category`) yields a low-context card for whole-sentence rewrites / deletions / identical (pronunciation) recasts — acceptable and noted per the WO's "degrade gracefully, no model call"; a future lexicon/gloss pass (E-26+) could enrich these. No schema change; Compare (E-21), the slips dossier (E-20), FSRS scheduling + evidence (E-25), and the createCardForFinding pin (E-9) are behaviorally unchanged.
+Blocker: none.
