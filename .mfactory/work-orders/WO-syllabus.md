@@ -40,3 +40,41 @@ Erika gets Italian's grammar as a **prerequisite-ordered curriculum**, so the fu
      achieved rule count and CEFR spread) / Tests changed-removed / Risks / Blocker.
      Include a short SUMMARY OF THE RULE SET (counts per CEFR level + the colto-tail rules)
      so the dispatcher can relay it to the operator. Verify against DISPOSABLE state. -->
+
+---
+
+## Exit report (E-26b)
+
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/44 (branch feat/syllabus)
+Changed:
+  - lib/syllabus/grammar-it.json — versioned (1.0.0) authored 266-rule A1→C2 syllabus + colto tail
+  - lib/syllabus/{types,load,validate,index}.ts — loader + DAG validator (acyclic / resolvable / topo-sortable)
+  - lib/knowledge/seed-syllabus.ts — idempotent, non-clobbering rule: upsert (prereqs+cefr only)
+  - lib/migrations/v18-syllabus.ts (+ wired into index.ts) — migration v18
+  - docs/schema.md — v18 migration-history row + latest-version bump
+  - tests/syllabus.test.ts, tests/syllabus-seed.test.ts, +v18 case in tests/migrations.test.ts
+  - tests/knowledge.test.ts, tests/richness-dial.test.ts — scoped 4 knowledge_items counts to kind after the seed
+Verified (throwaway ERIKA_DATA_DIR/ERIKA_DB_PATH, never data/erika.db):
+  - npm run lint → No ESLint warnings or errors (self-contained config; nested-worktree parent-config conflict is an env artifact, absent in CI)
+  - npm run typecheck → clean (exit 0)
+  - npm run test → 547 passed / 75 files
+  - npm run build → success
+  - rule count 266; CEFR spread A1 65 / A2 60 / B1 48 / B2 36 / C1 29 / C2 28
+Rule-set summary:
+  Total 266 rules. Per level: A1 65, A2 60, B1 48, B2 36, C1 29, C2 28 (C1+C2 colto tail = 57).
+  Colto-tail rules include: passato-remoto-regolare/irregolare/narrativo/stilistica, trapassato-remoto,
+  concordanza-tempi-indicativo, concordanza-tempi-congiuntivo, periodo-ipotetico-irreale/misto/letterario,
+  come-se, congiuntivo-trapassato-sfumature, connettivi-colti, connettivi-letterari-arcaici,
+  forma-passiva-impersonale-colta, dislocazione-tema-rema-colto, inversione-letteraria,
+  nominalizzazione-formale, verbi-supporto-nominalizzazione, discorso-indiretto-libero,
+  futuro-condizionale-attenuativi, costruzioni-latineggianti, registri-diafasici.
+Tests changed/removed:
+  Adjusted (not removed) 4 lemma-focused assertions in tests/knowledge.test.ts (3) and
+  tests/richness-dial.test.ts (1) to scope knowledge_items counts to kind='lemma' / true total,
+  because migration v18 now seeds 266 rule: rows into knowledge_items (same adaptation E-26a's
+  lexicon seed forces). Intent preserved. Added 3 new test files/cases.
+Risks:
+  Parallel batch with E-26a (v17): index.ts/schema.md append-conflict at rebase is the dispatcher's
+  to reconcile; temporary v16→v18 gap on this branch is harmless (ascending-version runner).
+Blocker:  none
