@@ -32,3 +32,35 @@ Erika gains a **register dial** the learner controls and **two new practice form
 
 ## Exit report
 Append to the WO per `task.md`: RESULT / PR / Changed / Verified (commands + the dial-injection fixtures per surface + the render-cache/cap money tests + the edge-selection test + the canon license note) / Tests / Risks / Blocker.
+
+---
+
+## Exit report
+
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/52 (branch `feat/voice-canon` → `master`)
+Changed:
+- `lib/register.ts` (new): the shared D-23 register dial — REGISTERS/DEFAULT_REGISTER/isRegister/coerceRegister + `registerInstruction` (text prompts) and `registerTtsInstruction` (TTS voice style).
+- `lib/settings.ts`: `register` field (default colto), read + validate + persist; Settings UI segmented control (`app/settings/page.tsx`).
+- Analysis recasts: `deepPrompt(target, profile, register)` + `recastRegisterInstruction`; `DeepInput.register` threaded from `cascade.ts` (reads settings).
+- Lesson generation: `registerLine` now the shared instruction; `generateItemLesson`/`itemLessonEstimateUsd` read `lessonRegister(db)` from Settings (E-32's hardcoded colto removed).
+- TTS: `TtsModelClient.synthesize` gains `instructions`; real client passes it.
+- `lib/tutor/persona.ts` (new): documented E-34 tutor-persona hook injecting the dial.
+- Render money path: `billedSynthesize` shared biller in `lib/render/engine.ts`; `renderCorrection` register-aware; `lib/render/phrase.ts` + `lib/render/phrase-renders.ts` (per-phrase cache/lease); migration **v21** `phrase_renders`; `docs/schema.md` updated.
+- Shadow format: `lib/shadow.ts` (target = correction, D-18), `app/api/shadow/*`, `app/practice/learn/shadow/*`, `components/listen-button.tsx` (reuses `<Recorder>` for the take).
+- Reading format: `lib/canon/*` (passages.json + NOTICE.md + loader), `lib/reading.ts` (pure `selectPassage` + `learnerReadingEdge`), `app/api/reading/*`, `app/practice/reading/page.tsx`, `lib/audio-response.ts` (shared Range streamer).
+- Discoverability links on `/practice`; FEATURES.md E-33 → done; STATE.md regenerated.
+Verified (throwaway `ERIKA_DATA_DIR`/`ERIKA_DB_PATH`, never `data/erika.db`):
+- `npm run typecheck` clean · `npm run lint` clean · `npm run build` clean (all new routes present) · `npm run test` = **672 passed** (was 636).
+- Dial-injection fixtures per surface: `tests/register.test.ts` (lesson grammar+vocab prompts, deep recast, TTS, tutor hook, Settings read).
+- Render cache/cap money tests: `tests/phrase-render.test.ts` (render once → 1 call/1 ledger/1 row/file; replay bills 0; concurrent double = 1 call, lease-before-spend; cap refuses truthfully with no call/row; register in the cache key; v21 shape) + `tests/shadow.test.ts` + `tests/reading-route.test.ts` route-level 201/200/402/audio.
+- D-18 target test: shadow target is the correction, never the quote (lib + route).
+- Edge-selection test: `tests/reading.test.ts` (beginner strictly easier than advanced; highest band ≤ edge; A1 default; `learnerReadingEdge` rises with engaged items).
+- Canon license: asset is `license: public-domain`, every passage attributed, NOTICE names every author (test-asserted).
+Tests changed/removed: `tests/settings.test.ts` — the reload assertion gains `register: "colto"` (the new default field) and one new case for the dial's persistence + rejection of an unknown register. No test weakened or deleted.
+Risks:
+- Model-Tier P5 (RETRO-002) was tagged for E-33 in STATE but is NOT in this WO's acceptance criteria → left unbuilt and flagged owed/re-dispatch (the E-32 richness-notes precedent), not silently absorbed.
+- No `OPENAI_API_KEY` in the sandbox: the one real-API TTS smoke is an operator-key-gated follow-up (documented, not faked) — confirms the register-aware `instructions` field and real synthesis against actual `usage`.
+- Passage unknown-lemma → new-item surfacing is optional in the WO and deferred (needs morph-it over free text; composer is the sanctioned new-item path).
+- `phrase_renders` files are hash-named/cross-format-shared → FK-free, not removed on session delete; orphan/cache eviction is an E-39 concern (segment-cache precedent).
+Blocker: none.
