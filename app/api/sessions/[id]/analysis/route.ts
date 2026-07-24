@@ -42,6 +42,7 @@ export async function GET(_request: Request, { params }: Ctx) {
       severity: f.severity,
       startMs: f.startMs,
       endMs: f.endMs,
+      notes: f.notes ?? null,
     })),
     counts: categoryCounts(findings),
     total: findings.length,

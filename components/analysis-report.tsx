@@ -6,7 +6,7 @@ import { ChevronDown, Play } from "lucide-react";
 import { SPRING } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { formatDuration } from "@/lib/format";
-import { SEVERITY_STYLES, type AnalysisView, type FindingView } from "@/lib/analysis-view";
+import { SEVERITY_STYLES, type AnalysisView, type FindingNotes, type FindingView } from "@/lib/analysis-view";
 
 // The findings report (E-4 part 2 criterion 3): a row of per-category counts
 // across the five categories, then the findings themselves. Correction-forward
@@ -179,6 +179,7 @@ export function FindingRow({
                   “{finding.quote}”
                 </p>
               </div>
+              <FindingNotesLine notes={finding.notes} />
               <div className="flex items-center gap-3 pt-1">
                 <button
                   type="button"
@@ -200,5 +201,39 @@ export function FindingRow({
         )}
       </AnimatePresence>
     </motion.li>
+  );
+}
+
+// The richness dial's enriched observations (E-28, v16), surfaced at last (E-30 P2):
+// paid-for signal that had zero readers. A calm "Erika also noticed" block inside
+// the expanded finding, subordinate to the correction — a hairline-indented aside,
+// never a headline. Renders nothing when the finding carried no enrichment (most do).
+// The three channels: a pronunciation suspect (a flag only — Azure scores drills,
+// D-21), an italiano-colto register upgrade (D-23), and a delivery/disfluency note.
+const NOTE_LABELS: { key: keyof FindingNotes; label: string }[] = [
+  { key: "pronunciation", label: "Pronunciation" },
+  { key: "register", label: "Register" },
+  { key: "disfluency", label: "Delivery" },
+];
+
+export function FindingNotesLine({ notes }: { notes?: FindingNotes | null }) {
+  if (!notes) return null;
+  const items = NOTE_LABELS.map((n) => ({ ...n, text: notes[n.key] })).filter(
+    (n): n is { key: keyof FindingNotes; label: string; text: string } => !!n.text,
+  );
+  if (items.length === 0) return null;
+  return (
+    <div data-finding-notes className="flex flex-col gap-1.5 border-l-2 border-hairline pl-3">
+      <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-secondary">
+        Erika also noticed
+      </span>
+      <ul className="flex flex-col gap-1">
+        {items.map((it) => (
+          <li key={it.key} data-note={it.key} className="text-[15px] leading-[1.47] text-secondary">
+            <span className="text-ink">{it.label}.</span> {it.text}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
