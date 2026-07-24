@@ -7,7 +7,7 @@ import { createSession } from "@/lib/sessions";
 import { upsertSegment } from "@/lib/segments";
 import { persistSegmentFindings, type Category } from "@/lib/analysis/findings";
 import { enqueueAnalysis, type AnalysisState } from "@/lib/analysis/cascade";
-import { generateCards } from "@/lib/cards";
+import { generateCards, gradeCard, listDueCards } from "@/lib/cards";
 import { recordCompletion } from "@/lib/lessons/mastery";
 import { buildFocusPayload } from "@/lib/focus";
 import {
@@ -104,6 +104,18 @@ describe("computeSlipStanding + statusLine (criterion 2)", () => {
     expect(statusLine(computeSlipStanding(last, later(1)))).toBe("Not heard since 13 Jul · 1 session clean");
     expect(statusLine(computeSlipStanding(last, []))).toBe("Still active — last heard 13 Jul");
   });
+
+  // [RETRO-002 P3] Green (remission/resolved) is mastery, not mere silence: a clean
+  // streak with NO positive production/drill event never turns green (D-14/D-24).
+  it("stays active when clean but with no positive event, however long the streak", () => {
+    expect(computeSlipStanding(last, later(RESOLVED_CLEAN_SESSIONS), false).state).toBe("active");
+    expect(computeSlipStanding(last, later(RESOLVED_CLEAN_SESSIONS - 1), false).state).toBe("active");
+    // A positive event unlocks green for the same clean streak.
+    expect(computeSlipStanding(last, later(RESOLVED_CLEAN_SESSIONS), true).state).toBe("resolved");
+    expect(computeSlipStanding(last, later(1), true).state).toBe("remission");
+    // The clean count is still reported truthfully in either case.
+    expect(computeSlipStanding(last, later(3), false).cleanSessionsSince).toBe(3);
+  });
 });
 
 describe("buildTimeline (criterion 3)", () => {
@@ -151,6 +163,14 @@ function seed(
   db.prepare("UPDATE analysis_jobs SET state = ?, progress = 1 WHERE id = ?").run(state, job.id);
 }
 
+/** [RETRO-002 P3] Earn a positive drill event for a slip: card every finding and
+ *  grade it `good`, so green (remission/resolved) can be reached — green is now
+ *  gated on a positive production/drill event, not mere absence of recurrence. */
+function drillClean(db: Db): void {
+  generateCards(db);
+  for (const c of listDueCards(db)) gradeCard(db, c.id, "good");
+}
+
 describe("materializeSlips (criterion 1 persistence)", () => {
   it("persists one slip per cluster, the association, and is id-stable across re-analysis", () => {
     const db = freshDb();
@@ -184,6 +204,7 @@ describe("listSlips + state from later analysed sessions (criterion 2 data path)
     seed(db, "clean3", "2026-07-07", [], "failed");
 
     materializeSlips(db);
+    drillClean(db); // [RETRO-002 P3] a positive drill event is now required for green
     const slips = listSlips(db);
     expect(slips).toHaveLength(1);
     expect(slips[0].occurrences).toBe(1);
@@ -203,6 +224,34 @@ describe("listSlips + state from later analysed sessions (criterion 2 data path)
     materializeSlips(db);
     expect(listSlips(db)[0].standing.state).toBe("active");
     expect(resolvedSlipCount(db)).toBe(0);
+    db.close();
+  });
+
+  // [RETRO-002 P3] A slip that simply went quiet — clean sessions but never drilled
+  // correctly — is NOT green. Green is mastery, not silence (D-14/D-24).
+  it("stays active on a clean streak with no positive drill event, then resolves once drilled", () => {
+    const db = freshDb();
+    seed(db, "occ", "2026-07-01", [["andare a scuola", "grammar"]]);
+    seed(db, "clean1", "2026-07-05", [], "done");
+    seed(db, "clean2", "2026-07-06", [], "done");
+    seed(db, "clean3", "2026-07-07", [], "done");
+    materializeSlips(db);
+
+    // Three clean sessions, but no positive production/drill event yet → not green.
+    expect(listSlips(db)[0].standing.cleanSessionsSince).toBe(3);
+    expect(listSlips(db)[0].standing.state).toBe("active");
+    expect(resolvedSlipCount(db)).toBe(0);
+
+    // A failed drill (all `again`) is a lapse, not a positive event — still not green.
+    generateCards(db);
+    for (const c of listDueCards(db)) gradeCard(db, c.id, "again");
+    expect(listSlips(db)[0].standing.state).toBe("active");
+    expect(resolvedSlipCount(db)).toBe(0);
+
+    // A passing drill is the positive event that unlocks green.
+    for (const c of listDueCards(db)) gradeCard(db, c.id, "good");
+    expect(listSlips(db)[0].standing.state).toBe("resolved");
+    expect(resolvedSlipCount(db)).toBe(1);
     db.close();
   });
 });
@@ -241,6 +290,8 @@ describe("Focus integration (criterion 4)", () => {
     seed(db, "c1", "2026-07-05", [], "done");
     seed(db, "c2", "2026-07-06", [], "done");
     seed(db, "c3", "2026-07-07", [], "done");
+    materializeSlips(db);
+    drillClean(db); // [RETRO-002 P3] green requires a positive drill event
     const payload = buildFocusPayload(db);
     expect(payload.resolvedSlips).toBe(1);
     // The metric model is unchanged — ranking is still all five categories.

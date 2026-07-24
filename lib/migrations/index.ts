@@ -4,6 +4,7 @@ import { spendReservationsMigration } from "./v15-spend-reservations";
 import { richnessDialMigration } from "./v16-richness-dial";
 import { lexiconMigration } from "./v17-lexicon";
 import { syllabusMigration } from "./v18-syllabus";
+import { dayLedgerMigration } from "./v19-day-ledger";
 
 // Ordered, append-only migrations. Each `up` is a pure DDL step; the runner in
 // lib/db.ts applies pending versions in order and records them in _migrations.
@@ -452,4 +453,5 @@ export const migrations: Migration[] = [
   richnessDialMigration,
   lexiconMigration,
   syllabusMigration,
+  dayLedgerMigration,
 ];

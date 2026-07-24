@@ -148,20 +148,33 @@ export function deriveItemState(evidence: Evidence[]): DerivedState {
  *   audio-derived, and no incorrect event since the last correct one.
  * Below that: `lapsed` if a review failed after a correct one, else `learning`
  * once any real review exists, else `introduced` (seen, only recognition so far).
+ *
+ * [RETRO-002 P3/T3] Recognition-mode positives NEVER count toward the `known`
+ * gate. Recognition is the weakest signal (D-19: mode weight 0.3) — merely
+ * recognising a form is not producing it — and D-19 is explicit that "known"
+ * requires production corroboration ("recognition-only is never known"). So the
+ * corroboration counts below run over CORROBORATING positives only (polarity 1,
+ * mode ≠ recognition); a recognition positive can move an item to `introduced`
+ * but can never supply the count, the distinct day, or the not-audio-derived
+ * witness `known` demands. (Before this fix a single spontaneous positive plus
+ * one recognition non-audio positive on another day satisfied the gate — a
+ * recognition event standing in for production corroboration, which D-19 forbids.)
  */
 export function deriveStatus(evidence: Evidence[]): KnowledgeStatus {
   if (evidence.length === 0) return "unseen";
 
-  const correct = evidence.filter((e) => e.polarity === 1);
-  const distinctCorrectDays = new Set(correct.map((e) => dayOf(e.createdAt))).size;
-  const hasSpontaneousCorrect = correct.some((e) => e.mode === "spontaneous");
-  const hasNonAudioCorrect = correct.some((e) => !isAudioDerived(e.mode, e.weight));
-  const lastCorrectAt = correct.length ? correct[correct.length - 1].createdAt : null;
+  // Corroborating = production/drill positives (spontaneous or cued). Recognition
+  // positives are excluded from EVERY clause of the `known` gate (D-19).
+  const corroborating = evidence.filter((e) => e.polarity === 1 && e.mode !== "recognition");
+  const distinctCorrectDays = new Set(corroborating.map((e) => dayOf(e.createdAt))).size;
+  const hasSpontaneousCorrect = corroborating.some((e) => e.mode === "spontaneous");
+  const hasNonAudioCorrect = corroborating.some((e) => !isAudioDerived(e.mode, e.weight));
+  const lastCorrectAt = corroborating.length ? corroborating[corroborating.length - 1].createdAt : null;
   const incorrectSinceLastCorrect =
     lastCorrectAt !== null && evidence.some((e) => e.polarity === 0 && e.createdAt > lastCorrectAt);
 
   const known =
-    correct.length >= 2 &&
+    corroborating.length >= 2 &&
     distinctCorrectDays >= 2 &&
     hasSpontaneousCorrect &&
     hasNonAudioCorrect &&
