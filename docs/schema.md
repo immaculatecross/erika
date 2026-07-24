@@ -2,7 +2,7 @@
 
 SQLite (better-sqlite3) at `data/erika.db` (`ERIKA_DB_PATH` overrides). Applied by
 the runner in `lib/db.ts` from the append-only list in `lib/migrations/index.ts`;
-`_migrations` records the versions already applied. **Latest version: v19.**
+`_migrations` records the versions already applied. **Latest version: v20.**
 
 > **Ritual.** Adding a migration updates this file in the same PR. A schema doc
 > that lags the schema is worse than none — it is believed and it is wrong.
@@ -30,6 +30,7 @@ spend_ledger                                (no FK at all — money outlives ses
 
 knowledge_items ──< evidence                (append-only log; derived state is a cache)
                 ──< spill_queue             (composer overflow; wired in v0.5)
+                ──1:1── item_lessons        (generate-once micro-lesson cache, E-32)
 cards ──> knowledge_items                   (nullable item_id: a review = evidence, E-25)
 ```
 
@@ -54,6 +55,7 @@ survive the deletion of any one session that happened to contain that audio.
 | `deleted_findings` | 6 | `finding_id` | Tombstone so a deliberately deleted card is not regenerated. Pinning from the Phrasebook clears it. |
 | `lessons` | 7 | `id`, unique `pattern_key` | One generated lesson per recurring pattern (`category:<category>`, `lib/lessons/patterns.ts`); `exercises` is JSON. Unique = generated once, re-opened free. |
 | `lesson_mastery` | 7 | `pattern_key` | Per-pattern mastery 0..1, updated by the EMA rule in `lib/lessons/mastery.ts`. |
+| `item_lessons` | 20 | `item_id` (→ `knowledge_items`, cascade) | One generated micro-lesson per composer-chosen knowledge item (E-32, D-18/D-23): a grammar `rule:<key>` or a lemma `lemma:<lemma>#<POS>`. `kind` ∈ {grammar,vocab}; `register` is the D-23 register it was written in (colto by default); `body` is the validated lesson (intro + typed meaning-first exercises, each with its correct answer + rationale, `glossEn` for vocab) as JSON. The `item_id` PK is the cache key AND the one-generation-one-charge guard — re-opening a lesson is a pure cache hit (no model call, no ledger row), the `lessons.pattern_key` precedent. Stores GENERATED content only; a completed exercise writes cued `evidence` through the E-25 door, never here. |
 | `slips` | 11 | `id`, unique `slip_key` | One recurring mistake (E-20): `category`, the representative `correction`, and the deterministic `slip_key` (`category:<normalized correction>`). A materialization of the pure clustering in `lib/slips.ts`, upserted by key so re-analysis of the same findings keeps the same id. State (active/remission/resolved) is computed, never stored. |
 | `finding_slips` | 11 | `finding_id` | The finding→slip association: one slip per finding, cascade-deleted with its finding. Rewritten idempotently by `materializeSlips`. |
 | `renditions` | 12 | `finding_id` | One contrastive-playback rendition per finding (E-21): `path` (mp3 under `data/renditions/`), `cost_usd` (the actual TTS charge, also ledgered once). The `finding_id` PK is both the render-once cache key and the render lease: the engine claims the row BEFORE the budget check and the provider call (lease-before-spend), so exactly one racing Generate calls the model and bills — the loser makes no call and no ledger row (D-15). An uncommitted claim (budget refusal / failed synthesize) is released so a retry can re-lease. FK cascade on delete; the file is cleaned by the delete route and playback is orphan-safe without it. |
@@ -100,6 +102,7 @@ re-upload contributes nothing anywhere until its own Analyze runs.
 | 17 | `lexicon_frequency_seed` | Seeds `knowledge_items` lemma rows from the committed, reduced, attributed asset `lib/lexicon/frequency-lexicon.tsv.gz` (FrequencyWords OpenSubtitles-2018 CC BY-SA, lemmatized through Morph-it! CC BY-SA and morph-it-validated) — sets ONLY `freq_rank` + `cefr` (coarse frequency band), idempotent, never clobbering derived/evidence-driven state (E-26a, D-19). No new table. |
 | 18 | `syllabus_grammar_seed` | seeds `knowledge_items` with the E-26b grammar syllabus — one `rule:<key>` row per rule of the DAG-validated, authored A1→C2 curriculum in `lib/syllabus/grammar-it.json`, setting only the reference columns `prereqs` (DAG edges as item ids) and `cefr`, idempotently and without clobbering derived/evidence state (D-19, D-23). No new table. |
 | 19 | `day_completion_ledger` | `day_ledger` — the local-day goal-completion ledger (E-31, D-24): one idempotent row per completed local day, written from day one so E-38's streak is retroactively true. Authoritative (not a rebuildable cache). Timezone stance is explicit in `lib/local-day.ts`. |
+| 20 | `item_lessons_cache` | `item_lessons` — the generate-once micro-lesson cache, one row per composer-chosen knowledge item (grammar rule or lemma), keyed by `item_id` so re-opening a lesson never re-generates or re-bills (E-32, D-18/D-23). Stores generated content only; the knowledge core is untouched. |
 
 Never edit a shipped migration — add the next one. `tests/migrations.test.ts`
 asserts a fresh database reaches the latest version and that re-running is a no-op.

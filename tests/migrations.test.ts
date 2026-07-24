@@ -155,6 +155,16 @@ describe("migrations runner", () => {
     db.close();
   });
 
+  it("v20 adds the item_lessons cache keyed by item_id (E-32)", () => {
+    const db = openDatabase(tmpDbPath());
+    const cols = db.prepare("PRAGMA table_info(item_lessons)").all() as { name: string; pk: number }[];
+    expect(cols.map((c) => c.name)).toEqual(
+      expect.arrayContaining(["item_id", "kind", "register", "body", "created_at"]),
+    );
+    expect(cols.find((c) => c.name === "item_id")?.pk).toBe(1);
+    db.close();
+  });
+
   it("v8 collapses pre-existing duplicate findings so the unique index can build", () => {
     // A database written before the lease landed may already carry duplicates
     // from a double-run. Migrating must dedupe rather than fail to apply.
