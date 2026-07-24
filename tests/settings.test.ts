@@ -120,15 +120,16 @@ describe("settings persistence", () => {
     expect(() => validateSettings({ newPronPerDay: "abc" })).toThrow(SettingsValidationError);
   });
 
-  it("[P3a] the pronunciation knob is not an active control; vocab/grammar persist", () => {
+  it("[E-37] every new-item cap is a live control — the Sounds knob is no longer inert", () => {
     const activeKeys = ACTIVE_NEW_ITEM_KNOBS.map((k) => k.key);
-    // Vocab + grammar remain live, editable controls.
     expect(activeKeys).toContain("newVocabPerDay");
     expect(activeKeys).toContain("newRulesPerDay");
-    // The "Sounds" (pronunciation) knob is NOT an active control — it is inert until E-37.
-    expect(activeKeys).not.toContain("newPronPerDay");
-    const pending = PENDING_NEW_ITEM_KNOBS.map((k) => k.key);
-    expect(pending).toEqual(["newPronPerDay"]);
-    expect(PENDING_NEW_ITEM_KNOBS[0].note).toMatch(/pronunciation studio/i);
+    // [P3a → E-37] "Sounds" was withheld only because nothing ever created a `phone:`
+    // item, so the cap could never yield one. The pronunciation studio seeds phones
+    // from real drill results and surfaces the composer's selection of them, so the
+    // knob now governs something that exists — and is presented as the live control
+    // it became, with nothing left pending.
+    expect(activeKeys).toContain("newPronPerDay");
+    expect(PENDING_NEW_ITEM_KNOBS).toEqual([]);
   });
 });

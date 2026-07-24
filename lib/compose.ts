@@ -280,8 +280,17 @@ function readReviews(db: Db): ReviewCandidate[] {
   return withR;
 }
 
-/** Included, non-tombstoned findings the user has never drilled (no graded or
- *  suspended card) — fresh corrections from their own speech, newest first. */
+/**
+ * Included, non-tombstoned findings the user has never drilled — fresh corrections
+ * from their own speech, newest first.
+ *
+ * "Drilled" depends on where the finding's practice actually lives. A grammar or
+ * vocabulary finding is spent by a graded or suspended CARD. A PRONUNCIATION finding
+ * has no card at all since E-37 (a typed cloze cannot test a mispronunciation), so it
+ * is spent by a scored studio ATTEMPT instead — without this it would sit in every
+ * day's plan forever, unspendable. The attempt clause is a no-op for every other
+ * category, since nothing else produces attempts.
+ */
 function readUnspentFindings(db: Db): FindingCandidate[] {
   const rows = db
     .prepare(
@@ -290,6 +299,7 @@ function readUnspentFindings(db: Db): FindingCandidate[] {
         WHERE ${INCLUDED_FINDING_SCOPE}
           AND NOT EXISTS (SELECT 1 FROM deleted_findings d WHERE d.finding_id = f.id)
           AND NOT EXISTS (SELECT 1 FROM cards c WHERE c.finding_id = f.id AND (c.repetitions > 0 OR c.suspended = 1))
+          AND NOT EXISTS (SELECT 1 FROM pronunciation_attempts pa WHERE pa.finding_id = f.id)
         ORDER BY f.created_at DESC, f.id`,
     )
     .all() as { id: string }[];

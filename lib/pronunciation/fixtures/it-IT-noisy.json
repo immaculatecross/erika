@@ -1,0 +1,225 @@
+{
+  "_synthetic": "SYNTHETIC — hand-authored by the E-37 build to the response shape documented in OBS-002 (2026-07-24). NOT a captured Azure response. Replace with a real captured it-IT response the first time an operator runs the live path (OBS-001 Part C).",
+  "_scenario": "A take recorded in a noisy room / far from the microphone: SNR 4.2 dB. Azure's own Responsible AI doc says PA quality is bounded by transcription quality, so these low scores describe the room, not the learner — the studio must show the re-record prompt and NO scores.",
+  "RecognitionStatus": "Success",
+  "Offset": 400000,
+  "Duration": 13100000,
+  "DisplayText": "Ho preso un caffè al bar.",
+  "SNR": 4.2,
+  "NBest": [
+    {
+      "Confidence": 0.42,
+      "Lexical": "ho preso un caffè al bar",
+      "Display": "Ho preso un caffè al bar.",
+      "PronunciationAssessment": {
+        "AccuracyScore": 41,
+        "FluencyScore": 58,
+        "CompletenessScore": 100,
+        "PronScore": 47.2
+      },
+      "Words": [
+        {
+          "Word": "ho",
+          "Offset": 400000,
+          "Duration": 1500000,
+          "PronunciationAssessment": { "AccuracyScore": 44, "ErrorType": "Mispronunciation" },
+          "Phonemes": [
+            {
+              "Phoneme": "ɔ",
+              "Offset": 400000,
+              "Duration": 1500000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 44,
+                "NBestPhonemes": [{ "Phoneme": "ɔ", "Score": 44 }, { "Phoneme": "a", "Score": 38 }]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "preso",
+          "Offset": 1900000,
+          "Duration": 4200000,
+          "PronunciationAssessment": { "AccuracyScore": 39, "ErrorType": "Mispronunciation" },
+          "Phonemes": [
+            {
+              "Phoneme": "p",
+              "Offset": 1900000,
+              "Duration": 1000000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 41,
+                "NBestPhonemes": [{ "Phoneme": "p", "Score": 41 }, { "Phoneme": "b", "Score": 33 }]
+              }
+            },
+            {
+              "Phoneme": "r",
+              "Offset": 2900000,
+              "Duration": 1000000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 30,
+                "NBestPhonemes": [{ "Phoneme": "r", "Score": 30 }, { "Phoneme": "l", "Score": 27 }]
+              }
+            },
+            {
+              "Phoneme": "e",
+              "Offset": 3900000,
+              "Duration": 1100000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 46,
+                "NBestPhonemes": [{ "Phoneme": "e", "Score": 46 }]
+              }
+            },
+            {
+              "Phoneme": "z",
+              "Offset": 5000000,
+              "Duration": 600000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 35,
+                "NBestPhonemes": [{ "Phoneme": "z", "Score": 35 }, { "Phoneme": "s", "Score": 34 }]
+              }
+            },
+            {
+              "Phoneme": "o",
+              "Offset": 5600000,
+              "Duration": 500000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 43,
+                "NBestPhonemes": [{ "Phoneme": "o", "Score": 43 }]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "un",
+          "Offset": 6100000,
+          "Duration": 1300000,
+          "PronunciationAssessment": { "AccuracyScore": 48, "ErrorType": "Mispronunciation" },
+          "Phonemes": [
+            {
+              "Phoneme": "u",
+              "Offset": 6100000,
+              "Duration": 700000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 50,
+                "NBestPhonemes": [{ "Phoneme": "u", "Score": 50 }]
+              }
+            },
+            {
+              "Phoneme": "n",
+              "Offset": 6800000,
+              "Duration": 600000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 46,
+                "NBestPhonemes": [{ "Phoneme": "n", "Score": 46 }]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "caffè",
+          "Offset": 7400000,
+          "Duration": 3900000,
+          "PronunciationAssessment": { "AccuracyScore": 37, "ErrorType": "Mispronunciation" },
+          "Phonemes": [
+            {
+              "Phoneme": "k",
+              "Offset": 7400000,
+              "Duration": 900000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 39,
+                "NBestPhonemes": [{ "Phoneme": "k", "Score": 39 }, { "Phoneme": "t", "Score": 31 }]
+              }
+            },
+            {
+              "Phoneme": "a",
+              "Offset": 8300000,
+              "Duration": 900000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 42,
+                "NBestPhonemes": [{ "Phoneme": "a", "Score": 42 }]
+              }
+            },
+            {
+              "Phoneme": "f",
+              "Offset": 9200000,
+              "Duration": 1200000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 28,
+                "NBestPhonemes": [{ "Phoneme": "f", "Score": 28 }, { "Phoneme": "s", "Score": 26 }]
+              }
+            },
+            {
+              "Phoneme": "ɛ",
+              "Offset": 10400000,
+              "Duration": 900000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 40,
+                "NBestPhonemes": [{ "Phoneme": "ɛ", "Score": 40 }]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "al",
+          "Offset": 11300000,
+          "Duration": 1100000,
+          "PronunciationAssessment": { "AccuracyScore": 45, "ErrorType": "Mispronunciation" },
+          "Phonemes": [
+            {
+              "Phoneme": "a",
+              "Offset": 11300000,
+              "Duration": 600000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 47,
+                "NBestPhonemes": [{ "Phoneme": "a", "Score": 47 }]
+              }
+            },
+            {
+              "Phoneme": "l",
+              "Offset": 11900000,
+              "Duration": 500000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 43,
+                "NBestPhonemes": [{ "Phoneme": "l", "Score": 43 }]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "bar",
+          "Offset": 12400000,
+          "Duration": 1100000,
+          "PronunciationAssessment": { "AccuracyScore": 36, "ErrorType": "Mispronunciation" },
+          "Phonemes": [
+            {
+              "Phoneme": "b",
+              "Offset": 12400000,
+              "Duration": 400000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 38,
+                "NBestPhonemes": [{ "Phoneme": "b", "Score": 38 }]
+              }
+            },
+            {
+              "Phoneme": "a",
+              "Offset": 12800000,
+              "Duration": 400000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 39,
+                "NBestPhonemes": [{ "Phoneme": "a", "Score": 39 }]
+              }
+            },
+            {
+              "Phoneme": "r",
+              "Offset": 13200000,
+              "Duration": 300000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 31,
+                "NBestPhonemes": [{ "Phoneme": "r", "Score": 31 }]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

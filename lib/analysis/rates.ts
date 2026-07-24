@@ -83,8 +83,8 @@ export const TEXT_MODEL = "gpt-4.1-mini" as const;
 export type TextModelId = typeof TEXT_MODEL;
 
 /** Every model that can bill into the shared ledger — audio (E-4), text (E-6),
- *  TTS (E-21), or the realtime tutor (E-34). */
-export type BillableModelId = ModelId | TextModelId | TtsModelId | RealtimeModelId;
+ *  TTS (E-21), the realtime tutor (E-34), or Azure pronunciation assessment (E-37). */
+export type BillableModelId = ModelId | TextModelId | TtsModelId | RealtimeModelId | PronunciationModelId;
 
 export interface TextModelRate {
   usdPerPromptToken: number;
@@ -243,4 +243,42 @@ export function realtimePerMinuteUsd(model: RealtimeModelId): number {
  *  the reserved lease amount (WO criterion 5). Never negative. */
 export function realtimeSessionCost(model: RealtimeModelId, minutes: number): number {
   return Math.max(0, minutes) * realtimePerMinuteUsd(model);
+}
+
+// ---- pronunciation assessment (E-37) --------------------------------------
+//
+// The pronunciation studio scores a scripted drill through **Azure AI Speech
+// Pronunciation Assessment** (it-IT) — the FIRST non-OpenAI provider to bill into this
+// ledger. It is a different vendor, not a different money path: its spend records into
+// the SAME `spend_ledger` under the SAME monthly cap through the SAME reserve-before-
+// call discipline (D-10, D-21).
+//
+// BILLING UNIT: **audio seconds**. PA costs the same as plain speech-to-text for the
+// scores it-IT can return; the only add-on-billed score is PROSODY, which is en-US
+// only — so an Italian assessment can never incur the add-on, and this one flat rate
+// is the whole model (OBS-002 §1.5, live-verified 2026-07-24).
+//
+// VALIDATED 2026-07-24 (OBS-002): real-time standard STT ≈ $1.00 per AUDIO HOUR,
+// billed per second ⇒ a 6-second drill ≈ $0.0017. Azure's own pricing page returns 403
+// to automated fetch from this sandbox, so an operator should eyeball the live number
+// before it is quoted anywhere; like every other number in this file it is the single
+// price knob, an explicit approximation, and owed a reconciliation against a real
+// invoice ([RETRO-002 T1] — the cap guards the MODELED budget, and modeled ≠ invoiced).
+
+export const PA_MODEL = "azure-pronunciation-it-IT" as const;
+export type PronunciationModelId = typeof PA_MODEL;
+
+export interface PronunciationModelRate {
+  /** USD charged per HOUR of audio assessed (billed per second). */
+  usdPerAudioHour: number;
+}
+
+export const PA_RATES: Record<PronunciationModelId, PronunciationModelRate> = {
+  "azure-pronunciation-it-IT": { usdPerAudioHour: 1.0 },
+};
+
+/** USD to assess `seconds` of audio, per the rates table — the reserved estimate and,
+ *  recomputed from the real duration, the finalized charge. Never negative. */
+export function pronunciationCallCost(model: PronunciationModelId, seconds: number): number {
+  return (Math.max(0, seconds) / 3600) * PA_RATES[model].usdPerAudioHour;
 }

@@ -168,6 +168,29 @@ export function isTutorLeaseHash(contentHash: string): boolean {
 }
 
 /**
+ * The content-hash prefixes whose abandoned leases COMMIT on sweep instead of
+ * releasing — "the provider almost certainly ran, so the money must not vanish".
+ *
+ *   * `tutor:` — a live spoken session ([T2a], E-34): releasing an abandoned lease to
+ *     $0 understated real spend.
+ *   * `pa:`    — one Azure pronunciation assessment (E-37). The reservation is taken
+ *     IMMEDIATELY before the HTTP request, so a pending row that outlives its TTL
+ *     means the process died with the learner's audio already on the wire. Azure
+ *     charged for it. Recording spend even on a crash is the never-waivable half of
+ *     the money contract, and over-recording a reserved amount is the only error
+ *     direction the cap tolerates (it can refuse a later call; it can never unspend).
+ *
+ * Every OTHER stale reservation still releases: a crashed bounded model call in the
+ * cascade was never charged.
+ */
+export function isAssumedRunLeaseHash(contentHash: string): boolean {
+  return isTutorLeaseHash(contentHash) || contentHash.startsWith("pa:");
+}
+
+/** The SQL predicate form of `isAssumedRunLeaseHash`, for the sweep's grouping. */
+const ASSUMED_RUN_SQL = "(content_hash LIKE 'tutor:%' OR content_hash LIKE 'pa:%')";
+
+/**
  * Sweep every pending reservation older than `ttlMs` — the startup sweep, mirroring
  * the job-lease reclaim (E-16) and the render/ask lease sweeps (E-21/E-23). A
  * reservation only outlives its call if the worker crashed between reserve and
@@ -175,14 +198,15 @@ export function isTutorLeaseHash(contentHash: string): boolean {
  * the cap. Committed rows are never touched (spend history is permanent). Returns the
  * number of pending rows swept.
  *
- * [T2 — money, never-waivable] A stale TUTOR lease (`content_hash` `tutor:<id>`)
- * COMMITS instead of releasing: a live spoken session assumed to have run must not
- * vanish from the ledger just because its client stopped heart-beating (releasing to
- * $0 understated real spend). Each stale tutor lease's pending rows collapse into ONE
- * committed row at the reserved sum (the amount the cap already admitted). All OTHER
- * stale reservations release (delete) as before — a crashed bounded call was never
- * charged. The whole sweep runs in one transaction; the cutoff instant is snapshotted
- * once so every statement compares against the same boundary.
+ * [T2 — money, never-waivable] A stale ASSUMED-RUN lease — a tutor session
+ * (`tutor:<id>`, E-34) or an Azure pronunciation assessment (`pa:<attemptId>`, E-37) —
+ * COMMITS instead of releasing: work assumed to have reached the provider must not
+ * vanish from the ledger just because the process died before it could finalize
+ * (releasing to $0 understated real spend). Each stale lease's pending rows collapse
+ * into ONE committed row at the reserved sum (the amount the cap already admitted).
+ * All OTHER stale reservations release (delete) as before — a crashed bounded cascade
+ * call was never charged. The whole sweep runs in one transaction; the cutoff instant
+ * is snapshotted once so every statement compares against the same boundary.
  */
 export function sweepStaleReservations(db: Db, ttlMs: number = RESERVATION_STALE_MS): number {
   return db.transaction((): number => {
@@ -190,16 +214,16 @@ export function sweepStaleReservations(db: Db, ttlMs: number = RESERVATION_STALE
       db.prepare("SELECT datetime('now', ?) AS c").get(`-${Math.round(ttlMs / 1000)} seconds`) as { c: string }
     ).c;
 
-    // Abandoned tutor leases COMMIT (assume the session ran). Group each lease's
-    // stale pending rows and write one committed row at their reserved sum.
-    const tutorGroups = db
+    // Abandoned assumed-run leases COMMIT (assume the provider ran). Group each
+    // lease's stale pending rows and write one committed row at their reserved sum.
+    const assumedRunGroups = db
       .prepare(
         "SELECT content_hash, model, COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS total FROM spend_ledger " +
-          "WHERE state = 'pending' AND reserved_at <= ? AND content_hash LIKE 'tutor:%' GROUP BY content_hash, model",
+          `WHERE state = 'pending' AND reserved_at <= ? AND ${ASSUMED_RUN_SQL} GROUP BY content_hash, model`,
       )
       .all(cutoff) as { content_hash: string; model: BillableModelId; n: number; total: number }[];
     let committed = 0;
-    for (const g of tutorGroups) {
+    for (const g of assumedRunGroups) {
       db.prepare(
         "DELETE FROM spend_ledger WHERE state = 'pending' AND reserved_at <= ? AND content_hash = ?",
       ).run(cutoff, g.content_hash);
@@ -214,7 +238,7 @@ export function sweepStaleReservations(db: Db, ttlMs: number = RESERVATION_STALE
     // Every OTHER stale reservation RELEASES (no charge) — the original behavior.
     const released = db
       .prepare(
-        "DELETE FROM spend_ledger WHERE state = 'pending' AND reserved_at <= ? AND content_hash NOT LIKE 'tutor:%'",
+        `DELETE FROM spend_ledger WHERE state = 'pending' AND reserved_at <= ? AND NOT ${ASSUMED_RUN_SQL}`,
       )
       .run(cutoff);
     return committed + released.changes;
