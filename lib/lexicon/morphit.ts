@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
+import { lexiconAssetPath } from "./asset-path";
 import { isPos, type Pos } from "./pos";
 
 // The morph-it canonical-lemma validator (E-25). morph-it (Baroni & Zanchetta,
@@ -18,8 +18,7 @@ import { isPos, type Pos } from "./pos";
 // citation forms; a caller lower-cases if it must) and exact on the POS.
 
 /** Repo-relative path to the committed gzipped asset (one `lemma\tPOS` per line).
- *  Kept for documentation/diagnostics; the load resolves the file relative to
- *  THIS module, not the process cwd (see `assetFile`). */
+ *  The load resolves this against the project root (see `assetFile`). */
 export const ASSET_PATH = "lib/lexicon/morphit-lemmas.tsv.gz";
 
 let cache: Set<string> | null = null;
@@ -29,17 +28,16 @@ function key(lemma: string, pos: string): string {
 }
 
 /**
- * Absolute path to the committed asset, resolved RELATIVE TO THIS MODULE FILE
- * (`import.meta.url`), never `process.cwd()` (E-28 criterion 5a). E-28 is the
- * first milestone to run the validator on a real analysis path, and a Next.js
- * standalone/production build runs from a server root where `process.cwd()` is not
- * the repo — a cwd-relative read would `ENOENT` in production. A module-relative
- * `new URL(..., import.meta.url)` also lets Next's file tracer (nft) follow the
- * reference and bundle the asset into the standalone output. The asset sits beside
- * this file, so the relative name is just its basename.
+ * Absolute path to the committed asset, resolved via `lexiconAssetPath` — beside
+ * this module when possible (cwd-independent, the E-28 intent), else against the
+ * project root. It does NOT use `new URL(..., import.meta.url)`: under Next's
+ * webpack server bundle that pattern is rewritten to a browser asset URL, not a
+ * filesystem path (see `asset-path.ts`) — the same defect that 500'd the v17 seed.
+ * `attestsLemma` runs on the deep-analysis/evidence path, so it would have 500'd
+ * there under the bundle too.
  */
 function assetFile(): string {
-  return fileURLToPath(new URL("./morphit-lemmas.tsv.gz", import.meta.url));
+  return lexiconAssetPath(ASSET_PATH);
 }
 
 /** Load and memoise the attested (lemma, POS) set from the committed asset. Built
