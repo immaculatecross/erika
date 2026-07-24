@@ -31,3 +31,33 @@ A first-run (and re-runnable) **placement** that, in 3–4 minutes and **with ze
 
 ## Exit report
 Append here per `task.md`: RESULT / PR / Changed / Verified (commands + the scoring unit tests incl. the pure-guesser + false-alarm-correction cases + the post-placement compose-not-A1 test + the never-`known` test + migration v22) / Tests / Risks / Blocker.
+
+---
+
+## Exit report
+
+RESULT: done
+PR:       https://github.com/immaculatecross/erika/pull/56 (`feat/placement` → `master`)
+Changed:
+- `lib/placement/scoring.ts` — pure, model-free yes/no scoring; pseudoword false-alarm correction `(hit−fa)/(1−fa)` clamped; level = highest reliably-recognized band; `calibrated` degrades truthfully.
+- `lib/placement/pseudowords.ts` — 50 original, license-clean Italian non-words (none attested by morph-it, test-guarded).
+- `lib/placement/check.ts` — deterministic per-band real-word sampling + pseudoword interleave.
+- `lib/knowledge/seed-placement.ts` — recognition-only seeding (recognized words + sub-level grammar) → `introduced`, never `known`; idempotent re-run.
+- `lib/placement/enrollment.ts` + `lib/audio-storage.ts` + migration `lib/migrations/v22-enrollment.ts` — `enrollment_takes` store (on-device only, D-22); `docs/schema.md` updated (latest v22).
+- `lib/placement/status.ts` + `lib/today.ts` — placement/enrollment status; Learn first-run flag.
+- `app/api/placement/route.ts`, `app/api/placement/enrollment/route.ts` — check/score/seed + on-device enrollment upload (no key touched).
+- `app/practice/placement/page.tsx`, `components/placement/{vocab-check,enrollment-recorder}.tsx` — calm flow (D-24); Learn first-run entry (`app/practice/page.tsx`) + Settings re-run (`app/settings/page.tsx`).
+- FEATURES.md E-35 → done; STATE.md regenerated (solo-milestone ritual).
+Verified:
+- `npm run typecheck` / `npm run lint` clean; `npx vitest run` → 736 passed (17 new).
+- Scoring unit tests: pure-guesser scores ~0 (level null, not advanced); realistic responder recovers B1; false-alarm correction moves the estimate (fa 0.5 → B1 falls to A2); pseudowords non-attested in every POS (D-13).
+- Never-`known` test: recognition-only reaches `introduced`, never `known` for both a lemma and a rule, incl. a 5-distinct-day recognition fold; `derive.ts` gate re-asserted.
+- RETRO-003 compose test end-to-end: baseline `compose` offers `rule:alfabeto-suoni` (A1); after a B1 placement no A1 rule is offered; recognized words excluded from new-vocab.
+- Migration v22 test; docs/schema tracks it.
+- `npm run build` succeeds. Live disposable-server run (`ERIKA_DB_PATH`/`ERIKA_DATA_DIR` throwaway, `next start`): fresh-DB GET → 64-item check across all 6 bands (real webpack-bundle asset path); POST B1 answers → `level:B1`, 24 words + 173 rules seeded; DB = 197 `introduced`, 0 `known`; enrollment upload stored on-device with 0 sessions/ingest/analysis jobs; status → `placed:true, enrolled:true`.
+Tests changed/removed: none removed. `tests/migrations.test.ts` gained a v22 case (additive).
+Risks:
+- Band→CEFR labels are a frequency proxy (not measured CEFR), surfaced honestly via `calibrated` + "rough placement" copy; uncalibrated until real placements accrue.
+- Grammar seeding is blanket-by-level (no per-rule recognition signal) — deliberate; only marks sub-level rules `introduced` (never `known`, never prereq-satisfying, D-19).
+- Optional speaking-sample analysis stops at the honest missing-key wall in the sandbox (no `OPENAI_API_KEY`), by design.
+Blocker: none.
