@@ -128,3 +128,87 @@ Nothing removed or weakened.
 ## Blocker
 
 None.
+
+
+---
+
+## Addendum — operator span ruling + Full-review fixes (commit `ab8a05a`)
+
+`RESULT: done` · PR https://github.com/immaculatecross/erika/pull/62 · branch head **`ab8a05a`**
+Gates re-run and **green**: `typecheck` clean · `lint` clean · **`test` 113 files / 838 tests passed** (was 827) · `build` succeeds · `run-tripwires.sh --all` OK.
+
+## 1. The span change (operator ruling)
+
+`currentRun` is now the run's **inclusive span**: days completed **plus** the repaired days bridging them. A 14-day run containing one repaired day reads **"Day 14 · repaired Tue"**.
+
+The reasoning is recorded in `lib/streak/compute.ts`'s header verbatim so the next reader does not revert it: the repair exists precisely to keep the run intact, so a repair that still costs the learner a number is a weaker promise than D-24 makes; the under-count also creates an off-by-one they cannot explain; and **the disclosure is what makes the span honest** — D-19 is satisfied by transparency rather than by under-counting.
+
+**The honesty invariant that did not move.** A repaired day is never *recorded* as completed:
+- `buildStreak` writes only to `streak_repairs`; `day_ledger` is untouched (asserted).
+- `repairedDays` remains a populated, disclosed list — it is not folded into the number and dropped.
+- `lastCompletedDay` is still a day the learner actually completed.
+- Implementation keeps `completed` as its own counter, so the span is literally `completed + repairedDays.length` (asserted as an invariant, not just spot-checked).
+
+**Re-derived expectations** (every one adjusted in place; no `it` deleted; count rose 20 → 23):
+
+| Case | was | now | why |
+|---|---|---|---|
+| one gap repaired (11–24 Jul, 18th missed) | 13 | **14** | 13 completed + 1 bridged |
+| second gap same month (5–24 Jul, 10th + 18th) | 18 | **20** | 18 + 2 |
+| third gap ends the run (2–24 Jul, 6/12/18) | 16 | **18** | 16 + 2; walk still stops dead at the 6th |
+| month rollover (20 Jun–24 Jul, 4 gaps) | 31 | **35** | 31 + 4 |
+| gap on a month's last day (30 Jun) | 29 | **30** | 29 + 1 |
+| DST-day gap (2026-03-29) | 7 | **8** | 7 + 1 |
+| spent credit outside the run, fresh gap | 2 | **3** | 2 + 1 |
+| store: `buildStreak` across repeated reads | 13 → 14 | **14 → 15** | same, span |
+| clean run / two-consecutive-misses / zero run / credits-exhausted | 14 / 6 / 0 / 3 | unchanged | no repairs involved |
+
+New cases: the operator's example pinned end to end (`currentRun === 14` **and** `streakCaption` → `"Day 14 · repaired Tue"`); and a store case asserting the two ledgers disagree honestly — span 14, `day_ledger` 13 rows, `streak_repairs` naming the bridged day, and no `day_ledger` row for it.
+
+## 2. Review fixes (independent Full review, `REVIEW-62-e38.md`)
+
+**F1 (HIGH) — the thread reported the mint time. Fixed.** `lib/today-thread.ts` filtered on, reduced the local day from, and derived `partOfDay` from `evidence.created_at` — `datetime('now')` when the deep pass ran. Under Erika's day-scale async capture that is wrong *routinely*: a dump analysed after dinner rendered "this evening's recording" whenever the learner actually spoke, and returned **null on the day they spoke**.
+
+Now both facts key on the **session's capture time plus the segment's offset into the recording** — the same instant `lib/slip-hours.ts` bins on in this same PR, summed in epoch ms and only then reduced, so a 24-hour dump bins correctly *within itself*. Additional hardening the fix carried:
+- a session with a missing/unreadable `created_at` is **skipped, not cited** (the module's own "unverifiable ⇒ not a claim" stance);
+- the SQL prefilter moved to capture time (`< dayEnd` is exact — a spoken instant is never earlier than its capture; the lower side uses a documented `CAPTURE_PREFILTER_DAYS = 31` performance bound, with the exact answer in the per-row reduction);
+- the segment lookup no longer relies on `LIMIT 1` luck: the verdict is taken over **every** segment sharing the hash and fails safe if any copy was attributed to somebody else;
+- results are ordered by the **spoken** instant, deterministic on ties.
+
+**Four new tests, and they fail against the old code** (the reviewer's diagnosis of why this slipped through — every prior case analysed immediately after seeding — is addressed directly):
+1. *backdated session*: capture `2026-07-21 05:00:00Z`, analysed now. Asserts the mint day ≠ the capture day (so the test can fail), the beat exists on **2026-07-21**, and is **null** on the mint day.
+2. *part of day*: same backdated capture under a pinned `Europe/Rome` ⇒ `"this morning"`, not the evening it was analysed.
+3. *segment offset*: a 13 h offset moves the same capture to `"this evening"`; a 20 h offset pushes it past local midnight, so the beat leaves 21 Jul and correctly appears on 22 Jul.
+4. *unreadable capture time* ⇒ null.
+
+**F2 (MEDIUM) — caption bounded by summarising, never truncating.** `streakCaption` now names repairs while the list is short (≤ 2, per DESIGN:45) and **summarises beyond that**: `Day 162 · 12 repaired`. Truncation was explicitly rejected in code comments for the reviewer's reason — under the span reading the number includes days the learner did not practise, so the "· repaired …" clause is the only thing carrying D-19; naming two and silently dropping ten would let "Day 162" absorb ten undisclosed non-practised days.
+
+Tests added:
+- **12-repair case**: caption is exactly `"Day 162 · 12 repaired"`, contains the full count (`=== repairedDays.length`), stays ≤ 40 characters, and the rendered markup does **not** itemise the individual missed days.
+- **the reviewer's invariant**, swept rather than spot-checked: across every single-gap position in a 20-day window plus the no-gap and two-gap shapes, `currentRun > completedDaysInRun` ⟹ the caption contains `"repaired"`, and `currentRun === completedInRun + repairedDays.length` always.
+- **the reviewer's pre-registered edge**: 01–12 Jul completed, 13th missed and bridged, today (14th) unfinished ⇒ `currentRun === 13` (no off-by-one from the unfinished-today skip), `lastCompletedDay === "2026-07-12"`, and the render contains `"Day 13 · repaired Mon"` — the disclosure is present in precisely this case.
+
+**F3 (LOW)** — `app/api/learn/today/route.ts` now names **both** idempotent writes (the composer's spill reconciliation *and* the streak's repair ledger), with the reasoning and the no-double-spend guarantee.
+
+**F4 (operator call)** — the streak line drops the uppercase section-label token for **sentence case** ("Day 14 · repaired Tue"), keeping caption weight/size. A regression assertion pins `uppercase` out of the markup. The `CAPTION` token stays reserved for section labels, per DESIGN:53.
+
+**F5 (NIT)** — `repairsUsedThisMonth` no longer crosses the wire. It remains on `computeStreak`'s pure result (where the WO requires it and the tests audit it) plus a new server-only `repairsUsedInMonth(db, day)` accessor. A test asserts `buildStreak`'s view has exactly `{currentRun, repairedDays, lastCompletedDay}` and that its JSON contains no `repairsUsed`.
+
+**F6 (INFO)** — no action: the E-37/v24 STATE/FEATURES overlap is unchanged and still applies to whichever of #61/#62 lands second (regenerate STATE, don't just resolve).
+
+## 3. Re-verified end to end (built server, throwaway DB)
+
+Fresh `ERIKA_DB_PATH` under a scratch dir (`data/erika.db` never touched), 6 completed days with one gap, `npx next start`:
+
+- `GET /api/learn/today` → `{"currentRun": 7, "repairedDays": [{"localDay":"2026-07-21","chargedMonth":"2026-07"}], "lastCompletedDay":"2026-07-24"}` — **7 = the span** (6 completed + 1 bridged; it read 6 before the ruling).
+- **`repairsUsedThisMonth` is absent from the payload** (F5 confirmed on the wire).
+- Map unchanged: `grammar {slips:1, resolved:0, band:0}` beside `vocabulary {slips:1, resolved:1, band:4}`.
+- **Seven** requests left **exactly one** `streak_repairs` row; `day_ledger` 6 rows; `evidence` **0** rows.
+
+## 4. Docs
+
+FEATURES E-38 and STATE both updated for the span semantics (with the ruling's reasoning) and for the F1 capture-time fix, the bounded caption, sentence case, and the server-side credit balance.
+
+## Blocker
+
+None.
