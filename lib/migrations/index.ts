@@ -2,6 +2,7 @@ import type { Database } from "better-sqlite3";
 import { knowledgeMigration } from "./v14-knowledge";
 import { spendReservationsMigration } from "./v15-spend-reservations";
 import { richnessDialMigration } from "./v16-richness-dial";
+import { lexiconMigration } from "./v17-lexicon";
 
 // Ordered, append-only migrations. Each `up` is a pure DDL step; the runner in
 // lib/db.ts applies pending versions in order and records them in _migrations.
@@ -448,4 +449,5 @@ export const migrations: Migration[] = [
   knowledgeMigration,
   spendReservationsMigration,
   richnessDialMigration,
+  lexiconMigration,
 ];
