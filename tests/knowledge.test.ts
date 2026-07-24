@@ -265,7 +265,8 @@ describe("derived state rebuilds identically from evidence alone (criterion 6)",
     expect(rebuilt).toBe(before.length);
     const after = db.prepare(`SELECT ${columns} FROM knowledge_items ORDER BY id`).all();
     expect(after).toEqual(before); // rebuilt from evidence alone, identical
-  });
+    db.close();
+  }, 30_000); // [T6] rebuilds the full ~31k-row lexicon — explicit headroom over the flaky 5 s default
 
   it("itemEvidence returns the log in the canonical fold order", () => {
     const db = freshDb();

@@ -161,18 +161,62 @@ export function releaseReservation(db: Db, r: SpendReservation | string): void {
   db.prepare("DELETE FROM spend_ledger WHERE id = ? AND state = 'pending'").run(id);
 }
 
+/** A pending reservation whose `content_hash` groups a tutor session's lease
+ *  (`tutor:<id>`) commits rather than releases on sweep — see below. */
+export function isTutorLeaseHash(contentHash: string): boolean {
+  return contentHash.startsWith("tutor:");
+}
+
 /**
- * Release every pending reservation older than `ttlMs` — the startup sweep,
- * mirroring the job-lease reclaim (E-16) and the render/ask lease sweeps
- * (E-21/E-23). A reservation only outlives its call if the worker crashed between
- * reserve and finalize, so a stale pending row is abandoned money that must stop
- * counting against the cap. Committed rows are never touched (spend history is
- * permanent). Returns the number swept.
+ * Sweep every pending reservation older than `ttlMs` — the startup sweep, mirroring
+ * the job-lease reclaim (E-16) and the render/ask lease sweeps (E-21/E-23). A
+ * reservation only outlives its call if the worker crashed between reserve and
+ * finalize, so a stale pending row is abandoned money that must stop counting against
+ * the cap. Committed rows are never touched (spend history is permanent). Returns the
+ * number of pending rows swept.
+ *
+ * [T2 — money, never-waivable] A stale TUTOR lease (`content_hash` `tutor:<id>`)
+ * COMMITS instead of releasing: a live spoken session assumed to have run must not
+ * vanish from the ledger just because its client stopped heart-beating (releasing to
+ * $0 understated real spend). Each stale tutor lease's pending rows collapse into ONE
+ * committed row at the reserved sum (the amount the cap already admitted). All OTHER
+ * stale reservations release (delete) as before — a crashed bounded call was never
+ * charged. The whole sweep runs in one transaction; the cutoff instant is snapshotted
+ * once so every statement compares against the same boundary.
  */
 export function sweepStaleReservations(db: Db, ttlMs: number = RESERVATION_STALE_MS): number {
-  const cutoff = `-${Math.round(ttlMs / 1000)} seconds`;
-  const res = db
-    .prepare("DELETE FROM spend_ledger WHERE state = 'pending' AND reserved_at <= datetime('now', ?)")
-    .run(cutoff);
-  return res.changes;
+  return db.transaction((): number => {
+    const cutoff = (
+      db.prepare("SELECT datetime('now', ?) AS c").get(`-${Math.round(ttlMs / 1000)} seconds`) as { c: string }
+    ).c;
+
+    // Abandoned tutor leases COMMIT (assume the session ran). Group each lease's
+    // stale pending rows and write one committed row at their reserved sum.
+    const tutorGroups = db
+      .prepare(
+        "SELECT content_hash, model, COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS total FROM spend_ledger " +
+          "WHERE state = 'pending' AND reserved_at <= ? AND content_hash LIKE 'tutor:%' GROUP BY content_hash, model",
+      )
+      .all(cutoff) as { content_hash: string; model: BillableModelId; n: number; total: number }[];
+    let committed = 0;
+    for (const g of tutorGroups) {
+      db.prepare(
+        "DELETE FROM spend_ledger WHERE state = 'pending' AND reserved_at <= ? AND content_hash = ?",
+      ).run(cutoff, g.content_hash);
+      if (g.total > 0) {
+        db.prepare(
+          "INSERT INTO spend_ledger (id, month, model, content_hash, cost_usd, state) VALUES (?, ?, ?, ?, ?, 'committed')",
+        ).run(randomUUID(), monthKey(), g.model, g.content_hash, g.total);
+      }
+      committed += g.n;
+    }
+
+    // Every OTHER stale reservation RELEASES (no charge) — the original behavior.
+    const released = db
+      .prepare(
+        "DELETE FROM spend_ledger WHERE state = 'pending' AND reserved_at <= ? AND content_hash NOT LIKE 'tutor:%'",
+      )
+      .run(cutoff);
+    return committed + released.changes;
+  })();
 }

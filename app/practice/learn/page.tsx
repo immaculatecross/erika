@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft, BookOpen, Sparkles } from "lucide-react";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
-import { formatUsd } from "@/lib/format";
+import { formatEstimate } from "@/lib/format";
 import type { LearnItemSummary } from "@/lib/lessons/item-lessons-view";
 
 // Today's composer-chosen grammar and vocabulary items to practise (E-32), over the
@@ -106,7 +106,7 @@ export default function LearnItemsPage() {
                 </span>
               </span>
               <span className="text-[15px] text-secondary">
-                {it.hasLesson ? "Ready" : `Start — est. ${formatUsd(it.estimateUsd ?? 0)}`}
+                {it.hasLesson ? "Ready" : `Start — est. ${formatEstimate(it.estimateUsd ?? 0)}`}
               </span>
             </Link>
           </motion.li>

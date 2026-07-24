@@ -3,6 +3,7 @@ import type { Db } from "./db";
 import type { Category } from "./analysis/findings";
 import type { Grade } from "./srs";
 import { INCLUDED_FINDING_SCOPE, listAnalysedSessions, listIncludedFindingsWithSession } from "./findings-model";
+import { findingIdsBySlip, hasPositiveEventAfter, positiveEventTimeByFinding } from "./slip-events";
 
 // E-20 Slips, the fossil dossier. The founding sentence's fourth clause — "stop
 // making them" — becomes real: findings cluster into persistent *slips* (one
@@ -238,34 +239,9 @@ function analysedSessionDates(db: Db): string[] {
   return listAnalysedSessions(db).map((s) => s.createdAt);
 }
 
-// [RETRO-002 P3] A slip's green (remission/resolved) requires a positive
-// production/drill event, not mere absence of recurrence. The event today is a
-// PASSING card grade (`good`/`easy`) on one of the slip's findings — the user
-// confronted the correction and reproduced it correctly. (`again` is a lapse and
-// never counts.) Spontaneous re-use in a later recording will also count once the
-// knowledge core links slips to items; until then the drill is the signal.
-
-/** Slip ids that carry ≥1 passing drill grade on one of their findings. */
-function positiveEventSlipIds(db: Db): Set<string> {
-  const rows = db
-    .prepare(
-      `SELECT DISTINCT fs.slip_id AS slip_id
-         FROM finding_slips fs
-         JOIN cards c ON c.finding_id = fs.finding_id
-        WHERE c.last_grade IN ('good','easy')`,
-    )
-    .all() as { slip_id: string }[];
-  return new Set(rows.map((r) => r.slip_id));
-}
-
-/** Finding ids that carry a passing drill grade — the cluster-keyed form of the
- *  positive-event signal, for the pure-clustering `resolvedSlipCount`. */
-function positiveDrillFindingIds(db: Db): Set<string> {
-  const rows = db
-    .prepare("SELECT DISTINCT finding_id FROM cards WHERE last_grade IN ('good','easy')")
-    .all() as { finding_id: string }[];
-  return new Set(rows.map((r) => r.finding_id));
-}
+// [RETRO-003 T3] The time-aware "positive event" green signal — reading the passing
+// drill grade's timestamp (`due - interval_days`) so a drill-then-recur fossil stays
+// active — lives in lib/slip-events.ts (keeps this file under the 500-line hook).
 
 /**
  * Materialize the clustering: upsert one `slips` row per cluster (keyed by the
@@ -312,7 +288,8 @@ interface SlipAggRow {
  */
 export function listSlips(db: Db): SlipSummary[] {
   const dates = analysedSessionDates(db);
-  const positive = positiveEventSlipIds(db);
+  const eventTimeByFinding = positiveEventTimeByFinding(db);
+  const findingsBySlip = findingIdsBySlip(db);
   const rows = db
     .prepare(
       `SELECT sl.id AS id, sl.category AS category, sl.correction AS correction,
@@ -327,7 +304,8 @@ export function listSlips(db: Db): SlipSummary[] {
     .all() as SlipAggRow[];
 
   const summaries = rows.map((r): SlipSummary => {
-    const standing = computeSlipStanding(r.last_at, dates, positive.has(r.id));
+    const hasPositive = hasPositiveEventAfter(eventTimeByFinding, findingsBySlip.get(r.id) ?? [], r.last_at);
+    const standing = computeSlipStanding(r.last_at, dates, hasPositive);
     return {
       id: r.id,
       category: r.category,
@@ -372,7 +350,7 @@ export function buildSlipsIndex(db: Db): SlipsIndex {
 export function resolvedSlipCount(db: Db): number {
   const clusters = clusterFindings(collectSlipFindings(db));
   const dates = analysedSessionDates(db);
-  const drilled = positiveDrillFindingIds(db);
+  const eventTimeByFinding = positiveEventTimeByFinding(db);
   const findingSession = new Map<string, string>();
   for (const f of listIncludedFindingsWithSession(db)) findingSession.set(f.id, f.sessionCreatedAt);
   let resolved = 0;
@@ -382,7 +360,7 @@ export function resolvedSlipCount(db: Db): number {
       const at = findingSession.get(fid);
       if (at && at > lastAt) lastAt = at;
     }
-    const hasPositive = c.findingIds.some((fid) => drilled.has(fid));
+    const hasPositive = hasPositiveEventAfter(eventTimeByFinding, c.findingIds, lastAt);
     if (lastAt && computeSlipStanding(lastAt, dates, hasPositive).state === "resolved") resolved++;
   }
   return resolved;
@@ -459,7 +437,11 @@ export function getSlipDossier(db: Db, id: string): SlipDossier | null {
 
   const dates = analysedSessionDates(db);
   const lastAt = occRows[occRows.length - 1].at;
-  const hasPositive = positiveEventSlipIds(db).has(id);
+  const hasPositive = hasPositiveEventAfter(
+    positiveEventTimeByFinding(db),
+    occRows.map((r) => r.finding_id),
+    lastAt,
+  );
   const standing = computeSlipStanding(lastAt, dates, hasPositive);
   return {
     id: slip.id,

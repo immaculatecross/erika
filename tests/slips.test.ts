@@ -163,12 +163,25 @@ function seed(
   db.prepare("UPDATE analysis_jobs SET state = ?, progress = 1 WHERE id = ?").run(state, job.id);
 }
 
-/** [RETRO-002 P3] Earn a positive drill event for a slip: card every finding and
- *  grade it `good`, so green (remission/resolved) can be reached — green is now
- *  gated on a positive production/drill event, not mere absence of recurrence. */
+/** [T3] A REAL passing drill: card every finding and grade each `good` through the
+ *  actual `gradeCard` path — the only way production writes the green signal, which
+ *  lib/slip-events.ts reads as the card's `due - interval_days` grade instant. The
+ *  grade lands at wall-clock now, so it postdates the past-dated seeded occurrences. */
 function drillClean(db: Db): void {
   generateCards(db);
   for (const c of listDueCards(db)) gradeCard(db, c.id, "good");
+}
+
+/** [T3] Drive a REAL passing grade for every due card, then DATE that grade instant at
+ *  `at` — exactly as `seed()` dates a session's `created_at`. The grade itself goes
+ *  through `gradeCard` (no hand-inserted evidence, no fake item link); only its clock
+ *  is set, by writing `due = at + interval_days` so slip-events reads `at` back. */
+function drillGoodAt(db: Db, at: string): void {
+  generateCards(db);
+  for (const c of listDueCards(db)) {
+    gradeCard(db, c.id, "good");
+    db.prepare("UPDATE cards SET due = datetime(?, '+' || interval_days || ' days') WHERE id = ?").run(at, c.id);
+  }
 }
 
 describe("materializeSlips (criterion 1 persistence)", () => {
@@ -242,16 +255,51 @@ describe("listSlips + state from later analysed sessions (criterion 2 data path)
     expect(listSlips(db)[0].standing.state).toBe("active");
     expect(resolvedSlipCount(db)).toBe(0);
 
-    // A failed drill (all `again`) is a lapse, not a positive event — still not green.
+    // A failed drill (all `again`) is a lapse — `last_grade` leaves good/easy, so the
+    // card carries no passing grade — still not green.
     generateCards(db);
     for (const c of listDueCards(db)) gradeCard(db, c.id, "again");
     expect(listSlips(db)[0].standing.state).toBe("active");
     expect(resolvedSlipCount(db)).toBe(0);
 
-    // A passing drill is the positive event that unlocks green.
+    // A passing drill (grade instant now, postdating every occurrence) is the event
+    // that unlocks green.
     for (const c of listDueCards(db)) gradeCard(db, c.id, "good");
     expect(listSlips(db)[0].standing.state).toBe("resolved");
     expect(resolvedSlipCount(db)).toBe(1);
+    db.close();
+  });
+
+  // [T3] The drill-then-recur FOSSIL: a slip drilled correctly and THEN heard again is
+  // NOT mastered — the positive event predates the recurrence. Green must require a
+  // positive event whose timestamp POSTDATES the last occurrence.
+  it("a slip drilled BEFORE it recurred stays active through clean sessions (fossil)", () => {
+    const db = freshDb();
+    seed(db, "occ1", "2026-07-01", [["il congiuntivo", "grammar"]]);
+    // A REAL passing drill through `gradeCard`, dated 2 Jul — BEFORE the recurrence.
+    drillGoodAt(db, "2026-07-02 09:00:00");
+
+    // The SAME slip recurs on 5 Jul (a new occurrence), then three clean sessions.
+    seed(db, "occ2", "2026-07-05", [["il congiuntivo", "grammar"]]);
+    seed(db, "clean1", "2026-07-06", [], "done");
+    seed(db, "clean2", "2026-07-07", [], "done");
+    seed(db, "clean3", "2026-07-08", [], "done");
+    materializeSlips(db);
+
+    // Last occurrence is 5 Jul; the only passing grade is 2 Jul, BEFORE it. Three
+    // clean sessions since, but the fossil has NOT been re-produced correctly → active.
+    const slip = listSlips(db)[0];
+    expect(slip.occurrences).toBe(2);
+    expect(slip.standing.cleanSessionsSince).toBe(3);
+    expect(slip.standing.state).toBe("active");
+    expect(resolvedSlipCount(db)).toBe(0);
+    expect(getSlipDossier(db, slip.id)!.standing.state).toBe("active");
+
+    // A REAL passing drill AFTER the recurrence finally resolves it.
+    drillGoodAt(db, "2026-07-09 09:00:00");
+    expect(listSlips(db)[0].standing.state).toBe("resolved");
+    expect(resolvedSlipCount(db)).toBe(1);
+    expect(getSlipDossier(db, listSlips(db)[0].id)!.standing.state).toBe("resolved");
     db.close();
   });
 });

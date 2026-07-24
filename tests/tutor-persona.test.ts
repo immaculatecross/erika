@@ -79,6 +79,8 @@ describe("buildTutorSessionConfig — the wired config", () => {
     expect(config.tools.some((t) => t.name === "log_evidence")).toBe(true);
     expect(config.instructions).toContain(registerInstruction("colto"));
     expect(config.instructions).toContain(l1Line("English"));
+    // [T2b] the config carries a server-chosen HARD max-duration ceiling (seconds).
+    expect(config.maxSessionSeconds).toBeGreaterThan(0);
     db.close();
   });
 

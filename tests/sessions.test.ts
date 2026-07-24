@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase } from "@/lib/db";
 import { createSession, deleteSession, getSession, listSessions } from "@/lib/sessions";
 import { probeDurationSeconds, FfprobeError } from "@/lib/ffprobe";
-import { formatBytes, formatDuration } from "@/lib/format";
+import { formatBytes, formatDuration, formatEstimate } from "@/lib/format";
 import { makeWav, tmpDir } from "./helpers";
 
 const dirs: string[] = [];
@@ -94,5 +94,13 @@ describe("format helpers", () => {
   it("formats bytes compactly", () => {
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(1536)).toBe("1.5 KB");
+  });
+  it("[P4] renders a sub-cent estimate as <1¢, a cent-or-more as $X.XX", () => {
+    expect(formatEstimate(0.002)).toBe("<1¢");
+    expect(formatEstimate(0)).toBe("<1¢");
+    expect(formatEstimate(0.009)).toBe("<1¢");
+    expect(formatEstimate(0.01)).toBe("$0.01");
+    expect(formatEstimate(0.02)).toBe("$0.02");
+    expect(formatEstimate(1.2)).toBe("$1.20");
   });
 });

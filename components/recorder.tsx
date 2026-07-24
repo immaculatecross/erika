@@ -34,9 +34,13 @@ function RecordingDot({ reduced }: { reduced: boolean }) {
 export function Recorder({
   onRecorded,
   disabled,
+  variant = "secondary",
 }: {
   onRecorded: () => void | Promise<void>;
   disabled?: boolean;
+  // [polish] "primary" gives the idle Record button the accent fill — used on the
+  // record-first home so Record leads and Upload is the secondary action.
+  variant?: "primary" | "secondary";
 }) {
   const reduced = usePrefersReducedMotion();
   const { status, level, elapsedMs, error, start, stop } = useRecorder();
@@ -88,14 +92,14 @@ export function Recorder({
   const message = saveError ?? error?.message ?? null;
   const isLoss = saveError !== null || error?.kind === "lost";
 
+  const idleClass =
+    variant === "primary"
+      ? "inline-flex items-center gap-1.5 rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98] disabled:opacity-50"
+      : "inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] px-5 py-2.5 text-[15px] font-medium text-ink transition-transform hover:bg-black/[0.09] active:scale-[0.98] disabled:opacity-50 dark:bg-white/[0.08] dark:hover:bg-white/[0.12]";
+
   return (
     <div className="flex flex-col items-start gap-1">
-      <button
-        type="button"
-        onClick={() => void start()}
-        disabled={disabled || saving}
-        className="inline-flex items-center gap-1.5 rounded-full bg-black/[0.06] px-5 py-2.5 text-[15px] font-medium text-ink transition-transform hover:bg-black/[0.09] active:scale-[0.98] disabled:opacity-50 dark:bg-white/[0.08] dark:hover:bg-white/[0.12]"
-      >
+      <button type="button" onClick={() => void start()} disabled={disabled || saving} className={idleClass}>
         <Mic size={20} strokeWidth={1.5} aria-hidden />
         {saving ? "Saving…" : "Record"}
       </button>

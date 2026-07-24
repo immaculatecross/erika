@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Play, Volume2, Loader2 } from "lucide-react";
-import { formatUsd } from "@/lib/format";
+import { formatEstimate } from "@/lib/format";
 
 // A listen control for a rendered phrase (E-33), shared by the shadow drill and the
 // reading surface. It plays a cached TTS render of a CORRECT phrase; before the
@@ -132,7 +132,7 @@ export function ListenButton({
       ) : (
         <Play size={18} strokeWidth={1.5} aria-hidden />
       )}
-      {phase === "playing" ? "Playing…" : ready ? label : `${label} — est. ${formatUsd(estimateUsd)}`}
+      {phase === "playing" ? "Playing…" : ready ? label : `${label} — est. ${formatEstimate(estimateUsd)}`}
     </button>
   );
 }

@@ -8,7 +8,7 @@ import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { EmptyState } from "@/components/empty-state";
 import { GoalRing } from "@/components/goal-ring";
-import { formatUsd } from "@/lib/format";
+import { formatEstimate } from "@/lib/format";
 import type { TodayView } from "@/lib/today";
 
 // The Learn TODAY home (E-31, D-24), over the E-30 Learn tab. Not an interstitial:
@@ -193,7 +193,7 @@ export default function LearnTodayPage() {
                 </span>
               </span>
               <span data-lesson-price className="tabular shrink-0 text-[15px] font-medium text-secondary">
-                {today.lesson.ready ? "Lesson ready" : `Generate — est. ${formatUsd(today.lesson.estimateUsd ?? 0)}`}
+                {today.lesson.ready ? "Lesson ready" : `Generate — est. ${formatEstimate(today.lesson.estimateUsd ?? 0)}`}
               </span>
             </Link>
           </motion.section>

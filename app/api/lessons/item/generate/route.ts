@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { itemExists } from "@/lib/knowledge/items";
-import { generateItemLesson, itemLessonKind } from "@/lib/lessons/item-lessons";
+import { generateItemLesson, getItemLesson, itemLessonKind } from "@/lib/lessons/item-lessons";
 import { openAiTextModel } from "@/lib/lessons/text-model";
 import { BudgetExceededError } from "@/lib/lessons/billing";
 import { lessonModelErrorResponse } from "../../errors";
@@ -27,7 +27,13 @@ export async function POST(request: Request) {
 
   try {
     const { lesson, cached } = await generateItemLesson(db, openAiTextModel, itemId);
-    return NextResponse.json({ lesson, cached });
+    // [T1] A racing loser wins nothing but may return before the winner completes;
+    // re-read so the response always carries the finished lesson when one exists.
+    const finished = lesson ?? getItemLesson(db, itemId);
+    if (!finished) {
+      return NextResponse.json({ error: "The lesson is still being generated." }, { status: 202 });
+    }
+    return NextResponse.json({ lesson: finished, cached });
   } catch (err) {
     if (err instanceof BudgetExceededError) {
       return NextResponse.json({ error: err.message }, { status: 402 });

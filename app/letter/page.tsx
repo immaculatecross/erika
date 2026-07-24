@@ -108,13 +108,27 @@ export default function LetterPage() {
         </motion.header>
 
         <motion.section variants={staggerItem(reduced)} className="flex flex-col gap-3">
-          <div className="flex items-end gap-4">
-            <p className="tabular text-[34px] font-bold leading-none tracking-tight text-ink" data-letter-rate>
-              {n1(letter.ratePerHour)}
-            </p>
-            {letter.trend.hasPrior && <TrendBadge trend={letter.trend.direction} />}
-          </div>
-          <p className="text-[17px] leading-[1.47] text-ink">{trendLine(letter)}</p>
+          {letter.rateReliable ? (
+            <>
+              <div className="flex items-end gap-4">
+                <p className="tabular text-[34px] font-bold leading-none tracking-tight text-ink" data-letter-rate>
+                  {Math.round(letter.ratePerHour)}
+                </p>
+                {letter.trend.hasPrior && <TrendBadge trend={letter.trend.direction} />}
+              </div>
+              <p className="text-[17px] leading-[1.47] text-ink">{trendLine(letter)}</p>
+            </>
+          ) : (
+            <>
+              <p className="tabular text-[34px] font-bold leading-none tracking-tight text-ink" data-letter-count>
+                {letter.totalFindings}
+              </p>
+              <p className="text-[17px] leading-[1.47] text-ink" data-letter-floor>
+                {letter.totalFindings} {letter.totalFindings === 1 ? "finding" : "findings"} this week — not
+                enough analyzed speech yet for a reliable per-hour rate.
+              </p>
+            </>
+          )}
           <p className="tabular text-[13px] text-secondary">
             {letter.totalFindings} {letter.totalFindings === 1 ? "finding" : "findings"} across{" "}
             {n1(letter.speechHours)} h of analyzed speech · {letter.analyzedSessions}{" "}
@@ -144,7 +158,8 @@ export default function LetterPage() {
             <p className="text-[17px] leading-[1.47] text-ink">
               Work on your <span className="font-semibold capitalize">{letter.focusNext.category}</span> —{" "}
               <span className="tabular">
-                {letter.focusNext.count} {letter.focusNext.count === 1 ? "slip" : "slips"}, {n1(letter.focusNext.ratePerHour)} per hour
+                {letter.focusNext.count} {letter.focusNext.count === 1 ? "slip" : "slips"}
+                {letter.rateReliable ? `, ${Math.round(letter.focusNext.ratePerHour)} per hour` : ""}
               </span>
               , the pattern costing you the most this week.
             </p>

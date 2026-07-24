@@ -10,6 +10,7 @@ import {
   validateSettings,
   SettingsValidationError,
 } from "@/lib/settings";
+import { ACTIVE_NEW_ITEM_KNOBS, PENDING_NEW_ITEM_KNOBS } from "@/lib/settings-knobs";
 
 const dirs: string[] = [];
 
@@ -117,5 +118,17 @@ describe("settings persistence", () => {
     expect(() => validateSettings({ newVocabPerDay: -1 })).toThrow(SettingsValidationError);
     expect(() => validateSettings({ newRulesPerDay: 2.5 })).toThrow(SettingsValidationError);
     expect(() => validateSettings({ newPronPerDay: "abc" })).toThrow(SettingsValidationError);
+  });
+
+  it("[P3a] the pronunciation knob is not an active control; vocab/grammar persist", () => {
+    const activeKeys = ACTIVE_NEW_ITEM_KNOBS.map((k) => k.key);
+    // Vocab + grammar remain live, editable controls.
+    expect(activeKeys).toContain("newVocabPerDay");
+    expect(activeKeys).toContain("newRulesPerDay");
+    // The "Sounds" (pronunciation) knob is NOT an active control — it is inert until E-37.
+    expect(activeKeys).not.toContain("newPronPerDay");
+    const pending = PENDING_NEW_ITEM_KNOBS.map((k) => k.key);
+    expect(pending).toEqual(["newPronPerDay"]);
+    expect(PENDING_NEW_ITEM_KNOBS[0].note).toMatch(/pronunciation studio/i);
   });
 });

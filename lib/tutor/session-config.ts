@@ -7,6 +7,7 @@ import { compose } from "../compose";
 import { parseItemId } from "../knowledge/items";
 import { localDay } from "../local-day";
 import { realtimeModelForTier, type RealtimeModelId } from "../analysis/rates";
+import { maxTutorSessionSeconds } from "./money";
 import { buildTutorPersona } from "./persona";
 import { TUTOR_EVIDENCE_MODES } from "./log-evidence";
 
@@ -40,6 +41,11 @@ export interface RealtimeSessionConfig {
   audio: { output: { voice: string } };
   tools: RealtimeTool[];
   tool_choice: "auto";
+  /** [T2b — money] The server-chosen HARD ceiling on this session's length, in
+   *  seconds. A bound the client cannot lengthen, so a long call cannot run unbounded
+   *  (an independent second guard alongside the per-heartbeat cap). Mapped to the
+   *  Realtime session-limit field at the operator-gated real-run (like `TUTOR_VOICE`). */
+  maxSessionSeconds: number;
 }
 
 /** A Realtime function-tool declaration (the `log_evidence` tool). */
@@ -162,6 +168,7 @@ export function buildTutorSessionConfig(db: Db, day: string = localDay()): {
       audio: { output: { voice: TUTOR_VOICE } },
       tools: [logEvidenceTool()],
       tool_choice: "auto",
+      maxSessionSeconds: maxTutorSessionSeconds(),
     },
     targets,
   };

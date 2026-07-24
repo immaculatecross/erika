@@ -29,16 +29,19 @@ export interface SlipStanding {
  * canonical read-model's definition, so a FAILED run's completed segments count
  * exactly like a done run's — nothing about stopping early un-says the evidence.
  *
- * [RETRO-002 P3] Green (remission OR resolved) is now GATED on a positive
+ * [RETRO-002 P3 / RETRO-003 T3] Green (remission OR resolved) is GATED on a positive
  * production/drill event, not on mere absence of recurrence. Green is mastery
  * (D-14/D-24), and a slip that simply stopped appearing has not been shown to be
  * fixed — the speaker may just have stopped using the construction. So a clean
  * streak with `hasPositiveEvent === false` stays `active` however long it runs;
- * green only attaches once the correct form has actually been produced or drilled
- * correctly at least once (the DB glue supplies the flag — a passing card grade on
- * one of the slip's findings today, extended to spontaneous re-use as the
- * knowledge core links slips to items). Default `true` keeps the pure-clustering
- * call sites and their tests unchanged; production always passes the real value.
+ * green only attaches once the correct form has been produced or drilled correctly.
+ * [T3] the DB glue supplies this flag from the TIMESTAMPED passing drill grade — the
+ * instant `gradeCard` records as `due - interval_days` (lib/slip-events.ts) — and only
+ * for a grade whose timestamp POSTDATES this slip's last occurrence, so a slip drilled
+ * correctly and THEN heard again (a fossil) stays active until it is re-produced
+ * correctly after the recurrence, which a bare `cards.last_grade` snapshot could not
+ * distinguish. Default `true` keeps the pure-clustering call sites and their tests
+ * unchanged; production always passes the real, time-aware value.
  */
 export function computeSlipStanding(
   lastOccurrenceAt: string,

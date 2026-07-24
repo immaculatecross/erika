@@ -36,6 +36,19 @@ export function formatUsd(usd: number): string {
   return `$${v.toFixed(2)}`;
 }
 
+/**
+ * [P4 — DESIGN restraint] A billable ESTIMATE label. A pre-call estimate is shown
+ * only when it rounds to at least a cent ("$0.02"); anything smaller shows "<1¢"
+ * rather than a spuriously precise "$0.002" or a rounded-to-nothing "$0.00" — a
+ * fraction of a cent reads as "effectively free" without a misleading figure. Callers
+ * prefix "est. " themselves ("est. <1¢", "est. $0.02"). For tabular-numeral display.
+ */
+export function formatEstimate(usd: number): string {
+  const v = Math.max(0, usd);
+  if (v < 0.01 - 1e-9) return "<1¢";
+  return `$${v.toFixed(2)}`;
+}
+
 /** SQLite UTC timestamp ("YYYY-MM-DD HH:MM:SS") → a locale date-time string. */
 export function formatCreatedAt(iso: string): string {
   const d = new Date(`${iso.replace(" ", "T")}Z`);

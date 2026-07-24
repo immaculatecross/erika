@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { type Settings } from "@/lib/settings";
+import { ACTIVE_NEW_ITEM_KNOBS, PENDING_NEW_ITEM_KNOBS } from "@/lib/settings-knobs";
 import { REGISTERS, type Register } from "@/lib/register";
 import { REALTIME_TIERS, type RealtimeTier } from "@/lib/analysis/rates";
 import { formatUsd } from "@/lib/format";
@@ -106,7 +107,9 @@ export default function SettingsPage() {
             correctness. Default colto. */}
         <div className="flex flex-col gap-1.5" data-register-dial>
           <span className={LABEL}>Register</span>
-          <div className="inline-flex flex-wrap gap-1 rounded-control border border-hairline p-1">
+          {/* [polish] Four long register names must stay on ONE row at 402px — no wrap;
+              the row scrolls horizontally if it can't fit, buttons never break line. */}
+          <div className="flex gap-1 overflow-x-auto rounded-control border border-hairline p-1">
             {REGISTERS.map((r) => (
               <button
                 key={r}
@@ -114,7 +117,7 @@ export default function SettingsPage() {
                 data-register={r}
                 data-selected={form.register === r ? "true" : "false"}
                 onClick={() => set("register", r as Register)}
-                className={`flex-1 rounded-[9px] px-3 py-1.5 text-[15px] capitalize transition-colors ${
+                className={`flex-1 shrink-0 whitespace-nowrap rounded-[9px] px-3 py-1.5 text-[15px] capitalize transition-colors ${
                   form.register === r ? "bg-accent text-accent-ink" : "text-secondary"
                 }`}
               >
@@ -144,14 +147,8 @@ export default function SettingsPage() {
             knowledge edge enter today's plan, per kind. Whole numbers ≥ 0. */}
         <div className="flex flex-col gap-3 border-t border-hairline pt-4" data-new-item-caps>
           <span className={LABEL}>New items per day</span>
-          <div className="grid grid-cols-3 gap-3">
-            {(
-              [
-                ["newVocabPerDay", "Words"],
-                ["newRulesPerDay", "Rules"],
-                ["newPronPerDay", "Sounds"],
-              ] as const
-            ).map(([key, label]) => (
+          <div className="grid grid-cols-2 gap-3">
+            {ACTIVE_NEW_ITEM_KNOBS.map(({ key, label }) => (
               <label key={key} className="flex flex-col gap-1.5">
                 <span className="text-[13px] text-secondary">{label}</span>
                 <input
@@ -164,6 +161,14 @@ export default function SettingsPage() {
               </label>
             ))}
           </div>
+          {/* [P3a] The pronunciation ("Sounds") cap is inert until E-37 seeds phones —
+              shown as a quiet note, never an editable control, so it can't promise an
+              item it will never yield. */}
+          {PENDING_NEW_ITEM_KNOBS.map(({ key, label, note }) => (
+            <p key={key} data-cap-pending={key} className="text-[13px] text-secondary">
+              {label} — {note}.
+            </p>
+          ))}
         </div>
 
         {/* Month-to-date spend from spend_ledger (E-18 criterion 4) — display

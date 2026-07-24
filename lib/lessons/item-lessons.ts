@@ -7,7 +7,7 @@ import { parseItemId } from "../knowledge/items";
 import { loadSyllabus, type SyllabusRule } from "../syllabus";
 import type { Pos } from "../lexicon/pos";
 import { extractJsonObject, TextModelParseError, type TextModelClient } from "./text-model";
-import { parseBilledResponse, runBilledTextCall } from "./billing";
+import { runBilledTextCall } from "./billing";
 import {
   applyGlossFallback,
   ITEM_EXERCISE_TYPES,
@@ -164,25 +164,72 @@ interface ItemLessonRow {
   created_at: string;
 }
 
-/** The cached lesson for a knowledge item, or null if none has been generated. */
+/**
+ * The COMPLETED cached lesson for a knowledge item, or null. A lesson is complete
+ * once its winning call has written the `body` (`body <> ''`); a bare CLAIM row —
+ * inserted before the call and still empty ([T1] lease-before-call, the ask_notes
+ * pattern) — is deliberately NOT returned, so an in-flight claim never reads as a
+ * cache hit and never blocks the re-open path from re-leasing after a released
+ * failure.
+ */
 export function getItemLesson(db: Db, itemId: string): ItemLesson | null {
-  const r = db.prepare("SELECT * FROM item_lessons WHERE item_id = ?").get(itemId) as ItemLessonRow | undefined;
+  const r = db
+    .prepare("SELECT * FROM item_lessons WHERE item_id = ? AND body <> ''")
+    .get(itemId) as ItemLessonRow | undefined;
   if (!r) return null;
   const body = JSON.parse(r.body) as { intro: string; glossEn: string | null; exercises: ItemExercise[] };
   return { itemId: r.item_id, kind: r.kind, register: r.register, intro: body.intro, glossEn: body.glossEn, exercises: body.exercises };
 }
 
-/** Insert a generated lesson and return it. `run` may pass a transaction so the
- *  insert commits atomically with its spend-ledger row. The `item_id` PK makes a
- *  concurrent double-generate a truthful failure, never a silent duplicate. */
-export function insertItemLesson(db: Db, lesson: NewItemLesson): ItemLesson {
-  db.prepare("INSERT INTO item_lessons (item_id, kind, register, body) VALUES (?, ?, ?, ?)").run(
-    lesson.itemId,
+/**
+ * Claim the `item_id` row idempotently — this is the item-lesson lease ([T1],
+ * mirroring `claimNote`). Inserts a BARE claim (empty `body`, the kind + register
+ * known before the call) and returns whether THIS call inserted it: `true` = we won
+ * the claim (proceed to the one budgeted model call, then `completeItemLesson`),
+ * `false` = a row already existed (a concurrent generate claimed it first — make NO
+ * model call and bill nothing). `ON CONFLICT(item_id) DO NOTHING` on the PK makes
+ * the claim exclusive; because better-sqlite3 runs statements serially on the
+ * connection, two racing generates can never both win the row, so at most one model
+ * call and one ledger row ever result. The engine claims BEFORE it spends.
+ */
+export function claimItemLesson(
+  db: Db,
+  entry: { itemId: string; kind: ItemLessonKind; register: string },
+): boolean {
+  const info = db
+    .prepare(
+      "INSERT INTO item_lessons (item_id, kind, register, body) VALUES (?, ?, ?, '') ON CONFLICT(item_id) DO NOTHING",
+    )
+    .run(entry.itemId, entry.kind, entry.register);
+  return info.changes > 0;
+}
+
+/**
+ * Complete a won claim: write the generated lesson body (and confirm its kind /
+ * register). Called only by the request that won the claim, only after a successful
+ * model call, inside the same transaction that finalizes the spend — so a lesson is
+ * never stored without its charge nor charged without being stored. Returns the
+ * completed lesson.
+ */
+export function completeItemLesson(db: Db, lesson: NewItemLesson): ItemLesson {
+  db.prepare("UPDATE item_lessons SET kind = ?, register = ?, body = ? WHERE item_id = ?").run(
     lesson.kind,
     lesson.register,
     JSON.stringify({ intro: lesson.intro, glossEn: lesson.glossEn, exercises: lesson.exercises }),
+    lesson.itemId,
   );
   return getItemLesson(db, lesson.itemId)!;
+}
+
+/**
+ * Release a claim: delete the bare `item_id` row. The engine calls this only on its
+ * OWN uncommitted claim when generation does not complete (budget refusal or a
+ * failed/unreadable call), so a legitimate retry can re-claim and generate — a
+ * claimed row is never a permanent tombstone. Only ever deletes an EMPTY claim, so a
+ * completed lesson can never be dropped by this path.
+ */
+export function releaseItemLesson(db: Db, itemId: string): void {
+  db.prepare("DELETE FROM item_lessons WHERE item_id = ? AND body = ''").run(itemId);
 }
 
 // ── generation (money-capped, cached) ─────────────────────────────────────────
@@ -231,35 +278,75 @@ export function itemLessonEstimateUsd(db: Db, itemId: string): number {
 
 /**
  * Generate (or return the cached) lesson for a composer-chosen item. A cache hit
- * makes ZERO model calls and records nothing (WO criterion 3). Otherwise: reserve
- * before the call → one model call → parse (a malformed reply STILL ledgers the
- * resolved call, E-16 defect 4) → persist the lesson and finalize its spend in ONE
- * transaction. Throws `BudgetExceededError` before any call if the cap would be
- * breached, or `TextModelParseError` on a malformed reply (no persist).
+ * makes ZERO model calls and records nothing (WO criterion 3).
+ *
+ * [T1 — money, never-waivable] Ordering is LEASE-BEFORE-CALL, adopting the sibling
+ * ask_notes pattern: `claimItemLesson` inserts the `item_id` PK row FIRST — before
+ * the budget check and before `client.complete()`. The claim is exclusive (PK +
+ * serialized statements), so exactly one racing request reaches the provider and
+ * bills; every racing LOSER detects the claim and returns WITHOUT a model call and
+ * WITHOUT a ledger row (`lesson: <completed or null>, cached: true`). Previously the
+ * call fired before the insert, so two concurrent same-item opens BOTH called and
+ * were BOTH charged — but the loser's PK conflict rolled back its `finalizeReservation`,
+ * leaving its real charge as a pending row the sweep swept to $0 (recorded spend ≠
+ * actual spend, D-15).
+ *
+ * The winner: reserve before the call → one model call → parse (a malformed reply
+ * STILL ledgers the resolved call, E-16 defect 4) → complete the lesson and finalize
+ * its spend in ONE transaction. Any handled failure before completion RELEASES the
+ * claim so a legitimate retry can re-lease. Throws `BudgetExceededError` before any
+ * call if the cap would be breached, or `TextModelParseError` on a malformed reply
+ * (no lesson persisted).
  */
 export async function generateItemLesson(
   db: Db,
   client: TextModelClient,
   itemId: string,
-): Promise<{ lesson: ItemLesson; cached: boolean }> {
+): Promise<{ lesson: ItemLesson | null; cached: boolean }> {
   const existing = getItemLesson(db, itemId);
   if (existing) return { lesson: existing, cached: true };
 
   const kind = itemLessonKind(itemId);
   if (!kind) throw new Error(`E-32 does not generate a lesson for ${itemId}.`);
   const register = lessonRegister(db);
+
+  // LEASE FIRST: claim the item_lessons row before reserving and before the model
+  // call. If we lose the claim, a concurrent generate already holds it — make NO
+  // call and bill nothing; hand back the completed lesson if it is ready yet.
+  const won = claimItemLesson(db, { itemId, kind, register });
+  if (!won) return { lesson: getItemLesson(db, itemId), cached: true };
+
   const prompt = itemLessonPrompt(db, itemId, register);
-  const { completion, costUsd, reservation } = await runBilledTextCall(db, client, {
-    prompt,
-    maxOutputTokens: ITEM_LESSON_MAX_OUTPUT_TOKENS,
-    contentHash: `item-lesson:${itemId}`,
-  });
-  const parsed = parseBilledResponse(db, { reservation, costUsd }, () =>
-    parseItemLessonResponse({ id: itemId, kind }, register, completion.text),
-  );
+  let billed;
+  try {
+    billed = await runBilledTextCall(db, client, {
+      prompt,
+      maxOutputTokens: ITEM_LESSON_MAX_OUTPUT_TOKENS,
+      contentHash: `item-lesson:${itemId}`,
+    });
+  } catch (err) {
+    // Budget refusal (before any call) or a failed call (nothing billed): release the
+    // claim so a retry can re-lease. `runBilledTextCall` already released any reservation.
+    releaseItemLesson(db, itemId);
+    throw err;
+  }
+
+  const { completion, costUsd, reservation } = billed;
+  let parsed;
+  try {
+    parsed = parseItemLessonResponse({ id: itemId, kind }, register, completion.text);
+  } catch (err) {
+    // Billed but unreadable: finalize the reservation to the ACTUAL charge (never
+    // understate spend, E-16 defect 4) THEN release the empty claim so no half-lesson
+    // persists. A retry is a new, separately-billed call.
+    finalizeReservation(db, reservation, costUsd);
+    releaseItemLesson(db, itemId);
+    throw err;
+  }
+
   const lesson = db.transaction(() => {
     finalizeReservation(db, reservation, costUsd);
-    return insertItemLesson(db, parsed);
+    return completeItemLesson(db, parsed);
   })();
   return { lesson, cached: false };
 }

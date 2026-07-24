@@ -68,6 +68,30 @@ describe("computeFocus — per-category rate (criterion 1)", () => {
   });
 });
 
+describe("[P1] the per-hour rate is gated below the analyzed-speech floor (D-14)", () => {
+  it("17 findings over ~2 min is NOT rate-reliable — surfaces show counts, not 450/hr", () => {
+    // Two minutes of analyzed speech with 17 findings extrapolates to ~510/hr — the
+    // collapsing-denominator artifact the floor exists to suppress (D-20 short-capture norm).
+    const twoMinutes = 2 * 60 * 1000;
+    const findings = Array.from({ length: 17 }, () => fnd("grammar"));
+    const model = computeFocus([session({ speechMs: twoMinutes, findings })]);
+    expect(model.totalFindings).toBe(17);
+    expect(model.rateReliable).toBe(false); // below MIN_RATE_SPEECH_MINUTES → no rate shown
+    // The raw rate is still computed (available to callers) but the UI must not headline it.
+    expect(model.overallRatePerHour).toBeGreaterThan(400);
+  });
+
+  it("becomes rate-reliable once enough speech accrues (≥ the floor)", () => {
+    const sixMinutes = 6 * 60 * 1000;
+    const model = computeFocus([session({ speechMs: sixMinutes, findings: [fnd("grammar")] })]);
+    expect(model.rateReliable).toBe(true);
+  });
+
+  it("an hour of analyzed speech is comfortably rate-reliable", () => {
+    expect(computeFocus([session({ findings: [fnd("grammar")] })]).rateReliable).toBe(true);
+  });
+});
+
 describe("computeFocus — trend across sessions (criterion 2)", () => {
   it("reflects a falling rate as improving, regardless of input order", () => {
     const early = session({ id: "early", createdAt: "2026-01-01 00:00:00", speechMs: HOUR, findings: [fnd("grammar"), fnd("grammar"), fnd("grammar"), fnd("grammar")] });
