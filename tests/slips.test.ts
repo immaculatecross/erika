@@ -8,6 +8,8 @@ import { upsertSegment } from "@/lib/segments";
 import { persistSegmentFindings, type Category } from "@/lib/analysis/findings";
 import { enqueueAnalysis, type AnalysisState } from "@/lib/analysis/cascade";
 import { generateCards, gradeCard, listDueCards } from "@/lib/cards";
+import { recordEvidence } from "@/lib/knowledge";
+import { ensureLemmaItem } from "@/lib/knowledge/items";
 import { recordCompletion } from "@/lib/lessons/mastery";
 import { buildFocusPayload } from "@/lib/focus";
 import {
@@ -163,12 +165,43 @@ function seed(
   db.prepare("UPDATE analysis_jobs SET state = ?, progress = 1 WHERE id = ?").run(state, job.id);
 }
 
-/** [RETRO-002 P3] Earn a positive drill event for a slip: card every finding and
- *  grade it `good`, so green (remission/resolved) can be reached — green is now
- *  gated on a positive production/drill event, not mere absence of recurrence. */
+/** Link every card to a knowledge item so a passing grade writes cued production
+ *  evidence — [T3] green reads the timestamped `evidence` log, not the card snapshot,
+ *  so a drill must be knowledge-linked to register (E-25/D-19). */
+function linkCardsToItem(db: Db): void {
+  ensureLemmaItem(db, "casa", "NOUN");
+  db.prepare("UPDATE cards SET item_id = 'lemma:casa#NOUN' WHERE item_id IS NULL").run();
+}
+
+/** [T3] Earn a positive drill event for a slip: card every finding, link it to a
+ *  knowledge item, and grade it `good` — a passing grade appends a cued positive
+ *  `evidence` row (source_ref = the finding), the signal green now reads. */
 function drillClean(db: Db): void {
   generateCards(db);
+  linkCardsToItem(db);
   for (const c of listDueCards(db)) gradeCard(db, c.id, "good");
+}
+
+/** The finding ids of one seeded session, in insertion order. */
+function findingIds(db: Db, sessionId: string): string[] {
+  return (
+    db.prepare("SELECT id FROM findings WHERE session_id = ? ORDER BY start_ms").all(sessionId) as { id: string }[]
+  ).map((r) => r.id);
+}
+
+/** Record a positive cued production event for a finding at a controlled time — the
+ *  [T3] time-aware green signal (postdates-the-last-recurrence is what matters). */
+function positiveEventFor(db: Db, findingId: string, at: string): void {
+  ensureLemmaItem(db, "casa", "NOUN");
+  recordEvidence(db, {
+    itemId: "lemma:casa#NOUN",
+    source: "finding",
+    sourceRef: findingId,
+    polarity: 1,
+    mode: "cued",
+    audioDerived: false,
+    createdAt: at,
+  });
 }
 
 describe("materializeSlips (criterion 1 persistence)", () => {
@@ -242,16 +275,54 @@ describe("listSlips + state from later analysed sessions (criterion 2 data path)
     expect(listSlips(db)[0].standing.state).toBe("active");
     expect(resolvedSlipCount(db)).toBe(0);
 
-    // A failed drill (all `again`) is a lapse, not a positive event — still not green.
+    // A failed drill (all `again`) is a lapse — a NEGATIVE evidence row, not a positive
+    // one — still not green.
     generateCards(db);
+    linkCardsToItem(db);
     for (const c of listDueCards(db)) gradeCard(db, c.id, "again");
     expect(listSlips(db)[0].standing.state).toBe("active");
     expect(resolvedSlipCount(db)).toBe(0);
 
-    // A passing drill is the positive event that unlocks green.
+    // A passing drill appends a positive cued evidence row (postdating every
+    // occurrence) — the event that unlocks green.
     for (const c of listDueCards(db)) gradeCard(db, c.id, "good");
     expect(listSlips(db)[0].standing.state).toBe("resolved");
     expect(resolvedSlipCount(db)).toBe(1);
+    db.close();
+  });
+
+  // [T3] The drill-then-recur FOSSIL: a slip drilled correctly and THEN heard again is
+  // NOT mastered — the positive event predates the recurrence. Green must require a
+  // positive event whose timestamp POSTDATES the last occurrence.
+  it("a slip drilled BEFORE it recurred stays active through clean sessions (fossil)", () => {
+    const db = freshDb();
+    seed(db, "occ1", "2026-07-01", [["il congiuntivo", "grammar"]]);
+    const [firstFinding] = findingIds(db, "occ1");
+    // Drilled correctly on 2 Jul — BEFORE the recurrence.
+    positiveEventFor(db, firstFinding, "2026-07-02 09:00:00");
+
+    // The SAME slip recurs on 5 Jul (a new occurrence), then three clean sessions.
+    seed(db, "occ2", "2026-07-05", [["il congiuntivo", "grammar"]]);
+    seed(db, "clean1", "2026-07-06", [], "done");
+    seed(db, "clean2", "2026-07-07", [], "done");
+    seed(db, "clean3", "2026-07-08", [], "done");
+    materializeSlips(db);
+
+    // Last occurrence is 5 Jul; the only positive event is 2 Jul, BEFORE it. Three
+    // clean sessions since, but the fossil has NOT been re-produced correctly → active.
+    const slip = listSlips(db)[0];
+    expect(slip.occurrences).toBe(2);
+    expect(slip.standing.cleanSessionsSince).toBe(3);
+    expect(slip.standing.state).toBe("active");
+    expect(resolvedSlipCount(db)).toBe(0);
+    expect(getSlipDossier(db, slip.id)!.standing.state).toBe("active");
+
+    // A positive event AFTER the recurrence finally resolves it.
+    const [recurFinding] = findingIds(db, "occ2");
+    positiveEventFor(db, recurFinding, "2026-07-09 09:00:00");
+    expect(listSlips(db)[0].standing.state).toBe("resolved");
+    expect(resolvedSlipCount(db)).toBe(1);
+    expect(getSlipDossier(db, listSlips(db)[0].id)!.standing.state).toBe("resolved");
     db.close();
   });
 });
