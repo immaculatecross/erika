@@ -53,16 +53,19 @@ export function tutorExtendMinutes(raw: string | undefined = process.env.TUTOR_E
 }
 
 /**
- * [T2b — money] The server-chosen HARD ceiling on a single tutor session, in minutes —
- * an independent second guard alongside the spend cap, bounding a call's LENGTH rather
- * than its cost, and a bound the client cannot lengthen.
+ * [T2b — money] The server-chosen ceiling on a single tutor session, in minutes — an
+ * independent second guard alongside the spend cap, bounding a call's LENGTH rather than
+ * its cost.
  *
  * Enforcement lives in the heartbeat route, `app/api/tutor/session/[id]/heartbeat/route.ts`:
  * once the SERVER-tracked elapsed time (now − `tutorLeaseOpenedAtMs`, the same source
- * [T2c] finalize floors on) passes `maxTutorSessionSeconds()`, the heartbeat refuses with
- * `covered: false` / 402 — the same shape the budget refusal returns, so the client winds
- * the call down. The refusal never releases the lease, so the spend already incurred is
- * still committed by `/end` (or by the [T2a] sweep if the call is abandoned).
+ * [T2c] finalize floors on) passes `maxTutorSessionSeconds()`, the server refuses to
+ * extend the lease — `covered: false` / 402, the same shape the budget refusal returns,
+ * so the client winds the call down. Precisely: this is a REFUSAL, not a kill. A client
+ * that ignores the refusal keeps billing, bounded from there by the hard spend cap (the
+ * cap is what makes overrun finite; the ceiling is what makes it stop on a well-behaved
+ * client). The refusal never releases the lease, so the spend already incurred is still
+ * committed by `/end` (or by the [T2a] sweep if the call is abandoned).
  *
  * It is deliberately NOT sent to OpenAI. The Realtime session schema has no such field,
  * and posting it as an unknown param 400s the mint — the bug OBS-001 chased; see the

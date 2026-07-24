@@ -41,10 +41,19 @@ export interface RealtimeSessionConfig {
   audio: { output: { voice: string } };
   tools: RealtimeTool[];
   tool_choice: "auto";
-  /** [T2b — money] The server-chosen HARD ceiling on this session's length, in
-   *  seconds. A bound the client cannot lengthen, so a long call cannot run unbounded
-   *  (an independent second guard alongside the per-heartbeat cap). Mapped to the
-   *  Realtime session-limit field at the operator-gated real-run (like `TUTOR_VOICE`). */
+  /** [T2b — money] The server-chosen ceiling on this session's length, in seconds — an
+   *  independent second guard alongside the spend cap, bounding a call's LENGTH rather
+   *  than its cost.
+   *
+   *  Enforced server-side by the heartbeat route,
+   *  `app/api/tutor/session/[id]/heartbeat/route.ts`: once the SERVER-tracked elapsed
+   *  time passes it, the heartbeat refuses to extend the lease (402, `covered: false`)
+   *  and the client winds the call down. It is a REFUSAL, not a kill — a client that
+   *  ignores it keeps billing, bounded from there by the hard spend cap.
+   *
+   *  Deliberately NEVER sent to OpenAI: the Realtime session schema has no such
+   *  parameter, and posting it as an unknown param 400s the mint (OBS-001). The mint
+   *  body is built from the explicit allowlist in lib/tutor/mint.ts, which omits it. */
   maxSessionSeconds: number;
 }
 

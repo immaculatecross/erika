@@ -63,9 +63,10 @@ export async function POST(request: Request, { params }: Ctx) {
     );
   }
 
-  // [T2b] The hard ceiling on a single session's LENGTH — a bound the client cannot
-  // lengthen, independent of the cap. Same refusal shape as the budget refusal, so the
-  // existing client wind-down ends the call with no client change.
+  // [T2b] The ceiling on a single session's LENGTH, independent of the cap. Same refusal
+  // shape as the budget refusal, so the existing client wind-down ends the call with no
+  // client change. It is a REFUSAL, not a kill: a client that ignores it keeps billing,
+  // bounded from there by the hard spend cap.
   const maxSeconds = maxTutorSessionSeconds();
   if (serverElapsedSeconds > maxSeconds) {
     return NextResponse.json(
