@@ -120,11 +120,17 @@ describe("post-placement composer — the RETRO-003 fix, end to end (criterion 2
     // Place the learner at B1.
     seedPlacement(db, { level: "B1", recognizedItemIds: [] });
 
-    // AFTER: no A1 rule is offered as new — the composer starts above the basics.
+    // AFTER: the composer still offers grammar (Finding #1 — a placed learner must
+    // NOT be handed zero rules), but at the learner's EDGE, not the basics: no A1,
+    // and ≥1 rule at B1/B2. Recognition-`introduced` sub-level prereqs now satisfy
+    // teaching-eligibility (TEACH_ELIGIBLE_PREREQ), unlocking the rules at the level.
     const after = compose(db, "2026-07-25", WIDE).items.filter((i) => i.kind === "rule").map((i) => i.ref);
     const afterCefr = ruleCefr(db, after);
-    expect([...afterCefr.values()].filter((c) => c === "A1")).toEqual([]);
+    expect(after.length).toBeGreaterThan(0); // NOT zero — fails under the pre-fix behavior
+    expect([...afterCefr.values()].filter((c) => c === "A1")).toEqual([]); // no basics
     expect(after).not.toContain("rule:alfabeto-suoni");
+    // At least one offered rule sits at the learner's edge (B1) or just above (B2).
+    expect([...afterCefr.values()].filter((c) => c === "B1" || c === "B2").length).toBeGreaterThan(0);
     db.close();
   });
 
