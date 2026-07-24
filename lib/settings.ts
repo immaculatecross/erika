@@ -1,15 +1,14 @@
 import type { Db } from "./db";
 import { REGISTERS, DEFAULT_REGISTER, isRegister, type Register } from "./register";
+import { REALTIME_TIERS, type RealtimeTier } from "./analysis/rates";
 
-// The four preferences E-1 persists. "modelTier" and "monthlyBudgetUsd" are
-// stored fields only — no behavior hangs off them until E-4 (see WO scope).
-export const MODEL_TIERS = ["mini", "standard", "deep"] as const;
-export type ModelTier = (typeof MODEL_TIERS)[number];
+// The persisted preferences. [RETRO-002 P5] The vestigial `modelTier` (no behavior
+// ever hung off it) is REMOVED here — the real tier switch is now the E-34 realtime
+// `realtimeTier` (flagship / mini), which drives the tutor's Realtime model.
 
 export interface Settings {
   targetLanguage: string;
   nativeLanguage: string;
-  modelTier: ModelTier;
   monthlyBudgetUsd: number;
   // The daily composer's new-item caps (E-31, D-19): how many NEW items at the
   // knowledge edge enter each day's plan, per kind. Defaults 10 / 3 / 10 (WO).
@@ -21,6 +20,10 @@ export interface Settings {
   // style, and the E-34 tutor persona (lib/register.ts). Style only, never
   // correctness.
   register: Register;
+  // The realtime tutor tier (E-34, WO criterion 2): flagship `gpt-realtime-2.1`
+  // (default) or the cheaper `gpt-realtime-2.1-mini`. The one live tier control in
+  // the app — it replaces the dead `modelTier` [RETRO-002 P5].
+  realtimeTier: RealtimeTier;
 }
 
 /** The three new-item-per-day caps that are user-settable — the composer's
@@ -30,7 +33,6 @@ export const NEW_ITEM_CAP_KEYS = ["newVocabPerDay", "newRulesPerDay", "newPronPe
 export const DEFAULT_SETTINGS: Settings = {
   targetLanguage: "Italian",
   nativeLanguage: "English",
-  modelTier: "standard",
   // E-28 raises the default cap 25 → 50 to match the richness dial's posture
   // (D-20): short captures are now 100% deep-listened and day dumps triage
   // looser, so the app spends more for the richest picture of the user's speech.
@@ -42,9 +44,10 @@ export const DEFAULT_SETTINGS: Settings = {
   newRulesPerDay: 3,
   newPronPerDay: 10,
   register: DEFAULT_REGISTER,
+  realtimeTier: "flagship",
 };
 
-/** Read all four preferences, filling any unset key from DEFAULT_SETTINGS. */
+/** Read every preference, filling any unset key from DEFAULT_SETTINGS. */
 export function readSettings(db: Db): Settings {
   const rows = db.prepare("SELECT key, value FROM settings").all() as {
     key: string;
@@ -59,13 +62,20 @@ export function readSettings(db: Db): Settings {
   return {
     targetLanguage: stored.get("targetLanguage") ?? DEFAULT_SETTINGS.targetLanguage,
     nativeLanguage: stored.get("nativeLanguage") ?? DEFAULT_SETTINGS.nativeLanguage,
-    modelTier: (stored.get("modelTier") as ModelTier) ?? DEFAULT_SETTINGS.modelTier,
     monthlyBudgetUsd: budget !== undefined ? Number(budget) : DEFAULT_SETTINGS.monthlyBudgetUsd,
     newVocabPerDay: capOr("newVocabPerDay"),
     newRulesPerDay: capOr("newRulesPerDay"),
     newPronPerDay: capOr("newPronPerDay"),
     register: isRegister(stored.get("register")) ? (stored.get("register") as Register) : DEFAULT_SETTINGS.register,
+    realtimeTier: isRealtimeTier(stored.get("realtimeTier"))
+      ? (stored.get("realtimeTier") as RealtimeTier)
+      : DEFAULT_SETTINGS.realtimeTier,
   };
+}
+
+/** Whether a stored/submitted value is a valid realtime tier. */
+function isRealtimeTier(x: unknown): x is RealtimeTier {
+  return typeof x === "string" && (REALTIME_TIERS as readonly string[]).includes(x);
 }
 
 /** Thrown when a submitted value fails validation. Message is user-facing. */
@@ -87,12 +97,11 @@ export function validateSettings(patch: Record<string, unknown>): Partial<Settin
     out[key] = v.trim();
   }
 
-  if (patch.modelTier !== undefined) {
-    const v = patch.modelTier;
-    if (typeof v !== "string" || !MODEL_TIERS.includes(v as ModelTier)) {
-      throw new SettingsValidationError(`modelTier must be one of: ${MODEL_TIERS.join(", ")}.`);
+  if (patch.realtimeTier !== undefined) {
+    if (!isRealtimeTier(patch.realtimeTier)) {
+      throw new SettingsValidationError(`realtimeTier must be one of: ${REALTIME_TIERS.join(", ")}.`);
     }
-    out.modelTier = v as ModelTier;
+    out.realtimeTier = patch.realtimeTier;
   }
 
   if (patch.monthlyBudgetUsd !== undefined) {

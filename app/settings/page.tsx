@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MODEL_TIERS, type ModelTier, type Settings } from "@/lib/settings";
+import { type Settings } from "@/lib/settings";
 import { REGISTERS, type Register } from "@/lib/register";
+import { REALTIME_TIERS, type RealtimeTier } from "@/lib/analysis/rates";
 import { formatUsd } from "@/lib/format";
 
 type Status = { kind: "idle" | "saving" | "saved" } | { kind: "error"; message: string };
@@ -74,23 +75,30 @@ export default function SettingsPage() {
           />
         </label>
 
-        <div className="flex flex-col gap-1.5">
-          <span className={LABEL}>Model tier</span>
+        {/* The realtime tutor tier (E-34, WO criterion 2): flagship vs the cheaper
+            mini. The ONE live tier control — it replaced the dead Model-Tier control
+            [RETRO-002 P5]. */}
+        <div className="flex flex-col gap-1.5" data-realtime-tier>
+          <span className={LABEL}>Tutor voice model</span>
           <div className="inline-flex gap-1 rounded-control border border-hairline p-1">
-            {MODEL_TIERS.map((tier) => (
+            {REALTIME_TIERS.map((tier) => (
               <button
                 key={tier}
                 type="button"
-                data-selected={form.modelTier === tier ? "true" : "false"}
-                onClick={() => set("modelTier", tier as ModelTier)}
+                data-tier={tier}
+                data-selected={form.realtimeTier === tier ? "true" : "false"}
+                onClick={() => set("realtimeTier", tier as RealtimeTier)}
                 className={`flex-1 rounded-[9px] px-3 py-1.5 text-[15px] capitalize transition-colors ${
-                  form.modelTier === tier ? "bg-accent text-accent-ink" : "text-secondary"
+                  form.realtimeTier === tier ? "bg-accent text-accent-ink" : "text-secondary"
                 }`}
               >
                 {tier}
               </button>
             ))}
           </div>
+          <span className="text-[13px] text-secondary">
+            Flagship is the most capable spoken tutor; mini is cheaper per minute.
+          </span>
         </div>
 
         {/* The register dial (E-33, D-23): how Erika phrases Italian — corrections,

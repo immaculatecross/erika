@@ -82,8 +82,9 @@ export function callCost(model: ModelId, durationMs: number): number {
 export const TEXT_MODEL = "gpt-4.1-mini" as const;
 export type TextModelId = typeof TEXT_MODEL;
 
-/** Every model that can bill into the shared ledger — audio (E-4), text (E-6), or TTS (E-21). */
-export type BillableModelId = ModelId | TextModelId | TtsModelId;
+/** Every model that can bill into the shared ledger — audio (E-4), text (E-6),
+ *  TTS (E-21), or the realtime tutor (E-34). */
+export type BillableModelId = ModelId | TextModelId | TtsModelId | RealtimeModelId;
 
 export interface TextModelRate {
   usdPerPromptToken: number;
@@ -156,3 +157,90 @@ export function ttsCallCost(model: TtsModelId, charCount: number): number {
 export const ASK_MODEL = TEXT_MODEL;
 /** Output-token allowance for one ask-note — bounds its worst-case pre-call cost. */
 export const ASK_MAX_OUTPUT_TOKENS = 700;
+
+// ---- realtime tutor (E-34) -----------------------------------------------
+//
+// The spoken tutor (E-34) runs on OpenAI's **Realtime** speech-to-speech models
+// over WebRTC. These bill on AUDIO TOKENS (input + output), separately from any
+// text tokens, so they carry their own rate shape — but their spend records into
+// the SAME spend_ledger and counts against the SAME monthly cap as everything else
+// (D-10). This is the MOST EXPENSIVE money path in the app, so the estimate and the
+// lease are derived here from a single, documented per-minute approximation.
+//
+// VALIDATED LIVE 2026-07-24 (operator directive — do not trust the training
+// cutoff): the flagship family is `gpt-realtime` (current version
+// `gpt-realtime-2.1`, the DEFAULT) with a cheaper `gpt-realtime-2.1-mini`; the
+// legacy `gpt-4o-realtime-preview` is not used. Flagship audio pricing ≈ $32 / 1M
+// audio-input tokens ($0.40/1M cached) + $64 / 1M audio-output tokens; mini is
+// cheaper. Pin the EXACT ids and prices from the account's model list at real-run;
+// these are the single price knob and an explicit approximation to recalibrate
+// against real `usage` once a key exists (T1 owed — no live key in the sandbox).
+
+export const REALTIME_FLAGSHIP = "gpt-realtime-2.1" as const;
+export const REALTIME_MINI = "gpt-realtime-2.1-mini" as const;
+export type RealtimeModelId = typeof REALTIME_FLAGSHIP | typeof REALTIME_MINI;
+
+/** The Settings tier switch (WO criterion 2): flagship (default) or mini. */
+export const REALTIME_TIERS = ["flagship", "mini"] as const;
+export type RealtimeTier = (typeof REALTIME_TIERS)[number];
+
+export function realtimeModelForTier(tier: RealtimeTier): RealtimeModelId {
+  return tier === "mini" ? REALTIME_MINI : REALTIME_FLAGSHIP;
+}
+
+export interface RealtimeModelRate {
+  /** USD per audio-INPUT token (the learner's speech reaching the model). */
+  usdPerAudioInputToken: number;
+  /** USD per CACHED audio-input token — much cheaper; not used by the pre-call
+   *  estimate (which must be an upper bound), documented for recalibration. */
+  usdPerCachedAudioInputToken: number;
+  /** USD per audio-OUTPUT token (the tutor's spoken reply). */
+  usdPerAudioOutputToken: number;
+}
+
+// Per-token audio prices (WO). Mini is set at ~¼ of flagship — a documented
+// approximation ("mini cheaper", no published figure at authoring time), to pin to
+// the real account rates at real-run (D-13). Both remain the single price knob.
+export const REALTIME_RATES: Record<RealtimeModelId, RealtimeModelRate> = {
+  "gpt-realtime-2.1": {
+    usdPerAudioInputToken: 32 / 1_000_000,
+    usdPerCachedAudioInputToken: 0.4 / 1_000_000,
+    usdPerAudioOutputToken: 64 / 1_000_000,
+  },
+  "gpt-realtime-2.1-mini": {
+    usdPerAudioInputToken: 8 / 1_000_000,
+    usdPerCachedAudioInputToken: 0.1 / 1_000_000,
+    usdPerAudioOutputToken: 16 / 1_000_000,
+  },
+};
+
+/**
+ * Assumed audio-token throughput PER ELAPSED CONVERSATION MINUTE, split by
+ * direction. A spoken exchange has both parties active across a minute; realtime
+ * audio tokenizes at roughly 1.5k tokens per spoken minute, so a conservative,
+ * upper-bound-leaning default books ~1500 input + ~1500 output tokens per elapsed
+ * minute (the pre-call estimate must never UNDER-price, or the cap could be
+ * overshot). A single documented knob, tunable via env, to recalibrate against real
+ * `usage` (D-13, T1). This is the ONE place the per-minute realtime cost is derived.
+ */
+export function realtimeAudioTokensPerMinute(
+  raw: string | undefined = process.env.REALTIME_TOKENS_PER_MINUTE,
+): { input: number; output: number } {
+  const n = raw === undefined || raw === "" ? NaN : Number(raw);
+  const per = Number.isFinite(n) && n > 0 ? n : 1500;
+  return { input: per, output: per };
+}
+
+/** USD per elapsed conversation minute on `model`, from the token throughput and
+ *  the per-token rates — the single per-minute realtime rate the estimate/lease use. */
+export function realtimePerMinuteUsd(model: RealtimeModelId): number {
+  const r = REALTIME_RATES[model];
+  const { input, output } = realtimeAudioTokensPerMinute();
+  return input * r.usdPerAudioInputToken + output * r.usdPerAudioOutputToken;
+}
+
+/** USD to run `minutes` of conversation on `model` — the per-session estimate and
+ *  the reserved lease amount (WO criterion 5). Never negative. */
+export function realtimeSessionCost(model: RealtimeModelId, minutes: number): number {
+  return Math.max(0, minutes) * realtimePerMinuteUsd(model);
+}
