@@ -102,7 +102,7 @@ Operator ruling, on being told this milestone would change what analysis surface
 
 ```
 RESULT: done
-PR:     feat/e45-lesson-and-deck
+PR:     https://github.com/immaculatecross/erika/pull/82
 ```
 
 Nine infrastructure deaths during this run; the branch was checkpointed twice by the
