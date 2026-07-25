@@ -4,7 +4,8 @@ import {
   continueResponse,
   dispatchRealtimeEvent,
   functionCallOutput,
-  isAudioDelta,
+  isSpeakingStarted,
+  isSpeakingStopped,
   isResponseComplete,
   isSpeechStarted,
   openingResponse,
@@ -77,14 +78,27 @@ describe("the tutor's voice arrives on the media track, not the data channel", (
     expect(onRemoteAudio).toHaveBeenCalledWith(stream);
   });
 
-  it("recognises an audio delta under EITHER the GA or the beta event name", () => {
-    // spike-7 §2 measured only the GA name (`response.output_audio.delta`) arriving on
-    // this account; the beta lineage used `response.audio.delta`. Matching the suffix
-    // costs nothing and cannot strand the turn line on the wrong state.
-    expect(isAudioDelta({ type: "response.output_audio.delta", delta: "AAA" })).toBe(true);
-    expect(isAudioDelta({ type: "response.audio.delta", delta: "AAA" })).toBe(true);
-    expect(isAudioDelta({ type: "input_audio_buffer.speech_started" })).toBe(false);
-    expect(isAudioDelta({ type: "response.done" })).toBe(false);
+  it("knows Erika is speaking from the events WebRTC actually sends", () => {
+    // 🚩 Found by driving the built app: `response.output_audio.delta` NEVER arrives
+    // over WebRTC — the audio is on the media track and the data channel carries
+    // `output_audio_buffer.started` around it. A 45-second browser session emitted the
+    // buffer event, `response.output_audio.done` and transcript deltas, and not one
+    // audio delta [MEASURED], so the turn line sat on "Listening" while Erika talked.
+    expect(isSpeakingStarted({ type: "output_audio_buffer.started" })).toBe(true);
+    expect(isSpeakingStarted({ type: "response.output_audio_transcript.delta", delta: "Ciao" })).toBe(true);
+    // …and the WebSocket-shaped signal still counts, since both transports exist.
+    expect(isSpeakingStarted({ type: "response.output_audio.delta", delta: "AAA" })).toBe(true);
+    expect(isSpeakingStarted({ type: "input_audio_buffer.speech_started" })).toBe(false);
+    expect(isSpeakingStarted({ type: "response.done" })).toBe(false);
+  });
+
+  it("separates the end of PLAYBACK from the end of the RESPONSE", () => {
+    // The continuation is gated on the response closing; `response.create` while one is
+    // still active is an API error. So the buffer-drained event drives the turn line
+    // and must NOT be mistaken for the protocol's turn end.
+    expect(isSpeakingStopped({ type: "output_audio_buffer.stopped" })).toBe(true);
+    expect(isResponseComplete({ type: "output_audio_buffer.stopped" })).toBe(false);
+    expect(isResponseComplete({ type: "response.done" })).toBe(true);
   });
 
   it("recognises the end of a turn and the start of the learner's speech", () => {
@@ -100,7 +114,7 @@ describe("the tutor's voice arrives on the media track, not the data channel", (
     const onSpeechStarted = vi.fn();
     const onLogEvidence = vi.fn();
     const handlers = { onLogEvidence, onSpeakingStarted, onTurnComplete, onSpeechStarted };
-    dispatchRealtimeEvent({ type: "response.output_audio.delta", delta: "AAA" }, handlers);
+    dispatchRealtimeEvent({ type: "output_audio_buffer.started" }, handlers);
     dispatchRealtimeEvent({ type: "response.done" }, handlers);
     dispatchRealtimeEvent({ type: "input_audio_buffer.speech_started" }, handlers);
     dispatchRealtimeEvent(

@@ -79,16 +79,44 @@ export function extractLogEvidenceCall(event: RealtimeEvent): ExtractedLogEviden
 // stuck on the wrong state if the naming moves — the same reasoning the mint allowlist
 // earns its comment with.
 
-/** Whether this event is a piece of the tutor's spoken reply — the cue that Erika has
- *  started (or is still) speaking. The audio itself never passes through here; this is
- *  only the signal that it is flowing. */
-export function isAudioDelta(event: RealtimeEvent): boolean {
-  return typeof event.type === "string" && event.type.endsWith("audio.delta");
+/**
+ * Whether this event says Erika has STARTED SPEAKING.
+ *
+ * ⚠️ `response.output_audio.delta` DOES NOT ARRIVE OVER WebRTC, and assuming it did
+ * was a real defect — found by driving the built app, not by reading. Over a WebSocket
+ * the audio is base64 on the event stream, so a delta event is the natural signal;
+ * over WebRTC the audio is on the MEDIA TRACK and the data channel carries only
+ * `output_audio_buffer.started` / `.stopped` around it. A full 45-second browser
+ * session emitted `output_audio_buffer.started`, `response.output_audio.done` and
+ * `response.output_audio_transcript.delta` — and not one `response.output_audio.delta`
+ * [MEASURED]. So the turn line sat on "Listening — just talk" while Erika was audibly
+ * talking.
+ *
+ * All three signals are accepted, because this product may yet speak over either
+ * transport and a turn line that is silently wrong is worse than a noisy one: the
+ * WebRTC buffer event, the transcript delta (which accompanies the audio on both), and
+ * the WebSocket-shaped audio delta.
+ */
+export function isSpeakingStarted(event: RealtimeEvent): boolean {
+  const t = event.type;
+  if (typeof t !== "string") return false;
+  return t === "output_audio_buffer.started" || t.endsWith("audio_transcript.delta") || t.endsWith("output_audio.delta");
 }
 
-/** Whether this event says the tutor has finished its turn. */
+/**
+ * Whether this event closes the RESPONSE — the protocol signal, and deliberately NOT
+ * the playback one. The continuation (`response.create`) is gated on this, and sending
+ * it while a response is still active is an API error, so `output_audio_buffer.stopped`
+ * — which is about the audio buffer draining, not the response resolving — must not
+ * appear here. It drives the turn line instead, through `isSpeakingStopped`.
+ */
 export function isResponseComplete(event: RealtimeEvent): boolean {
   return event.type === "response.done" || event.type === "response.completed";
+}
+
+/** Whether Erika's audio has STOPPED playing — a UI signal only (see above). */
+export function isSpeakingStopped(event: RealtimeEvent): boolean {
+  return event.type === "output_audio_buffer.stopped" || event.type === "output_audio_buffer.cleared";
 }
 
 /** Whether this event says the LEARNER has started speaking. Under audio-out the
@@ -105,7 +133,9 @@ export interface RealtimeHandlers {
   onLogEvidence: (args: unknown, callId: string | null) => void | Promise<void>;
   /** The tutor has begun speaking this turn. */
   onSpeakingStarted?: () => void;
-  /** The tutor has finished this turn. */
+  /** The tutor's audio has stopped playing (UI only, not the protocol's turn end). */
+  onSpeakingStopped?: () => void;
+  /** The tutor's RESPONSE has closed — the protocol's turn end. */
   onTurnComplete?: () => void;
   /** The learner started speaking. */
   onSpeechStarted?: () => void;
@@ -116,7 +146,8 @@ export interface RealtimeHandlers {
 /** Dispatch one parsed realtime event to the handlers that care about it. */
 export function dispatchRealtimeEvent(event: RealtimeEvent, handlers: RealtimeHandlers): void {
   handlers.onEvent?.(event);
-  if (isAudioDelta(event)) handlers.onSpeakingStarted?.();
+  if (isSpeakingStarted(event)) handlers.onSpeakingStarted?.();
+  if (isSpeakingStopped(event)) handlers.onSpeakingStopped?.();
   if (isResponseComplete(event)) handlers.onTurnComplete?.();
   if (isSpeechStarted(event)) handlers.onSpeechStarted?.();
   const call = extractLogEvidenceCall(event);

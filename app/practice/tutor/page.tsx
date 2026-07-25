@@ -169,6 +169,7 @@ export default function TutorPage() {
           // (`interrupt_response`), so talking over Erika cancels her reply upstream
           // and this only has to say so.
           onSpeakingStarted: () => setSpeaking(true),
+          onSpeakingStopped: () => setSpeaking(false),
           onTurnComplete: () => setSpeaking(false),
           onSpeechStarted: () => setSpeaking(false),
         },
