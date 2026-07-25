@@ -49,3 +49,9 @@ Gates green plus tripwires. **Branch and push first**: empty commit and `git pus
 ## Exit report
 
 Append here and **write it before returning**. Include the criterion-by-criterion status, the "What this deletes" list, the full enumeration of `deriveFront` paths with the proof of totality, the enumeration of every findings-model consumer affected by the speaker predicate, the mutation proofs, and the proof of which server answered.
+
+---
+
+## Amendment 1 — 2026-07-25, from the Full review of PR #66 (merged)
+
+7. **The blurred final vowel is instructed into two classes at once, and the collision mints exactly the card the operator complained about.** `lib/mistakes.ts` places it in class A (grammar — **cardable**) and class C (pronunciation — **uncardable**). The reviewer drove a real cascade and got a card whose front is `"____ · grammar"` and whose *answer is the word the learner already said*. Criterion 3's totality proof must include this case explicitly as a named test: a finding that is simultaneously a plausible grammar agreement error and a pronunciation artifact must resolve to **one** class deterministically, and whichever way it resolves, no unanswerable front may result. Decide and document the tie-break rule; do not leave it to whichever branch runs first.
