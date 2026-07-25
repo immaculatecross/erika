@@ -102,6 +102,26 @@ export interface ItemLesson {
 /** A lesson body ready to persist (no created_at yet) — the parsed model output. */
 export type NewItemLesson = ItemLesson;
 
+/** A row of GET /api/learn/items — one composer-chosen item to practise today. */
+export interface LearnItemSummary {
+  itemId: string;
+  kind: ItemLessonKind;
+  /** The headline label: a rule's title, or a lemma's word. */
+  label: string;
+  /** A secondary label: a rule's CEFR level, or a lemma's part of speech. */
+  detail: string;
+  /** True once a lesson exists for it. [E-45] A grammar item is ALWAYS true: the
+   *  syllabus lesson needs no generation, so it is ready before anything is spent. */
+  hasLesson: boolean;
+  /** Worst-case generation cost in USD; null when no call is needed at all. */
+  estimateUsd: number | null;
+}
+
+/** The fewest exercises a GENERATED lesson must carry to be worth what it cost.
+ *  Below this the deterministic drills top it up rather than the learner being
+ *  handed a lesson with one question in it. */
+export const MIN_ITEM_EXERCISES = 2;
+
 /** The default register for a generated lesson (D-23, default colto). */
 export const DEFAULT_REGISTER: string = REGISTER_DEFAULT;
 
