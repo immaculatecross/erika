@@ -12,7 +12,7 @@ import {
   reclaimStuckAnalysisJobs,
   runAnalysisJob,
 } from "../lib/analysis/cascade";
-import { resumeHaltedAnalysis, sweepPendingAnalysis } from "../lib/analysis/auto";
+import { resumeHaltedAnalysis, resumeKeylessRefusals, sweepPendingAnalysis } from "../lib/analysis/auto";
 import { sweepStaleReservations } from "../lib/analysis/budget";
 import { openAiAudioModel } from "../lib/analysis/audio-model";
 import { resolveEmbedder, type SpeakerEmbedder } from "../lib/speaker";
@@ -83,6 +83,9 @@ async function tick(db: ReturnType<typeof getDb>, embedder: SpeakerEmbedder): Pr
   // And a run the cap halted resumes once there is headroom, without the learner
   // re-uploading anything (criterion 8). Returns nothing at all while still capped.
   for (const id of resumeHaltedAnalysis(db)) console.error(`[worker] resuming halted analysis ${id}`);
+  // And a run refused for want of a key resumes once a key exists — the learner did
+  // what the UI told them to do, so the wall must move with the reason for it.
+  for (const id of resumeKeylessRefusals(db)) console.error(`[worker] key found — retrying analysis ${id}`);
   const next = claimNextJob(db);
   if (next) {
     await runOne(db, next, embedder);

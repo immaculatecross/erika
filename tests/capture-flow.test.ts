@@ -5,7 +5,12 @@ import { openDatabase } from "@/lib/db";
 import { processJob } from "@/lib/ingest/pipeline";
 import { listSegments, upsertSegment } from "@/lib/segments";
 import { getAnalysisJobBySession, enqueueAnalysis } from "@/lib/analysis/cascade";
-import { enqueueAfterIngest, resumeHaltedAnalysis, sweepPendingAnalysis } from "@/lib/analysis/auto";
+import {
+  enqueueAfterIngest,
+  resumeHaltedAnalysis,
+  resumeKeylessRefusals,
+  sweepPendingAnalysis,
+} from "@/lib/analysis/auto";
 import { recordSpend, monthToDateSpend } from "@/lib/analysis/budget";
 import { writeSettings } from "@/lib/settings";
 import { analysisUnavailableMessage, isMissingKeyMessage, REQUIRED_KEY } from "@/lib/analysis-key";
@@ -190,6 +195,48 @@ describe("a missing key is a permanent condition, described as one (criterion 9)
     expect(isMissingKeyMessage("gpt-audio call failed: 500")).toBe(false);
     expect(isMissingKeyMessage(null)).toBe(false);
     expect(isMissingKeyMessage(undefined)).toBe(false);
+  });
+
+  it("the wall moves when the reason for it moves: adding a key retries the refused run", () => {
+    // Found by DRIVING the built app, not by reading the diff. Refusing a keyless job
+    // terminally is right — it is what stops the worker looping. But `failed` is
+    // terminal for the claim AND the reclaim, so a learner who did exactly what the UI
+    // told them (add the key, restart the worker) came back to a recording still
+    // saying "waiting for an API key" — with no way to run it, because this milestone
+    // removed the Analyze button that used to be their escape. The mirror image of the
+    // fix, exactly as five v0.6 repairs produced.
+    ws = workspace();
+    const { sessionId } = ws.seed([{ kind: "tone", seconds: 1 }]);
+    const job = enqueueAnalysis(ws.db, sessionId);
+    ws.db
+      .prepare("UPDATE analysis_jobs SET state='failed', error=? WHERE id=?")
+      .run(analysisUnavailableMessage(), job.id);
+
+    const had = process.env[REQUIRED_KEY];
+    try {
+      delete process.env[REQUIRED_KEY];
+      expect(resumeKeylessRefusals(ws.db)).toEqual([]); // still no key: leave it alone
+
+      process.env[REQUIRED_KEY] = "sk-not-a-real-key-for-tests";
+      expect(resumeKeylessRefusals(ws.db)).toEqual([job.id]);
+      const after = ws.db.prepare("SELECT state, error FROM analysis_jobs WHERE id=?").get(job.id) as {
+        state: string;
+        error: string | null;
+      };
+      expect(after.state).toBe("queued");
+      expect(after.error).toBeNull();
+
+      // A run that failed for ANY OTHER reason is left exactly where it is — its own
+      // message is still true, and the detail page's "Try again" is what it is for.
+      const other = enqueueAnalysis(ws.db, sessionId);
+      ws.db
+        .prepare("UPDATE analysis_jobs SET state='failed', error='gpt-audio call failed: 500' WHERE id=?")
+        .run(other.id);
+      expect(resumeKeylessRefusals(ws.db)).toEqual([]);
+    } finally {
+      if (had === undefined) delete process.env[REQUIRED_KEY];
+      else process.env[REQUIRED_KEY] = had;
+    }
   });
 
   it("never promises transience for something nothing changes on its own", () => {

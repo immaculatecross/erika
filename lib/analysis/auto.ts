@@ -2,6 +2,7 @@ import type { Db } from "../db";
 import { monthToDateSpend } from "./budget";
 import { enqueueAnalysis, type AnalysisJob } from "./cascade";
 import { readSettings } from "../settings";
+import { hasAnalysisKey, isMissingKeyMessage } from "../env-file";
 
 // ANALYSIS STARTS ITSELF (E-42 criterion 3, D-26).
 //
@@ -141,6 +142,45 @@ export function resumeHaltedAnalysis(
     const info = db
       .prepare(
         "UPDATE analysis_jobs SET state = 'queued', error = NULL, updated_at = datetime('now') WHERE id = ? AND state = 'halted'",
+      )
+      .run(r.id);
+    if (info.changes > 0) resumed.push(r.id);
+  }
+  return resumed;
+}
+
+/**
+ * Re-queue analysis runs that were refused for want of an API key, once a key
+ * exists. Returns the job ids it re-queued.
+ *
+ * THIS IS THE OPPOSITE FAILURE OF THE ONE ABOVE IT, and it was found by driving the
+ * built app rather than by reading the diff. Refusing a keyless analysis job
+ * *terminally, per job* is right — it is what stops the worker looping on a wall that
+ * will not move (RETRO-004 §DE-1). But `failed` is terminal for the claim AND the
+ * reclaim, so a learner who did the exact thing the UI told them to do — add the key,
+ * restart the worker — came back to a recording still saying "waiting for an API key",
+ * with no way to run it and no button to press, because this milestone deliberately
+ * removed the Analyze button that used to be their escape.
+ *
+ * So the wall moves when the reason for it moves. The gate is narrow in both
+ * directions: nothing is re-queued while there is still no key, and only jobs whose
+ * stored error IS the missing-key message are touched — a run that failed for any
+ * other reason stays failed and keeps its own message, which is what the detail
+ * page's "Try again" repair (criterion 10) is for. It cannot spin: with a key
+ * present the job actually runs, and if it then fails it fails with a different
+ * error that this predicate does not match.
+ */
+export function resumeKeylessRefusals(db: Db): string[] {
+  if (!hasAnalysisKey()) return []; // the condition is unchanged; leave them alone
+  const rows = db
+    .prepare("SELECT id, error FROM analysis_jobs WHERE state = 'failed' ORDER BY created_at, id")
+    .all() as { id: string; error: string | null }[];
+  const resumed: string[] = [];
+  for (const r of rows) {
+    if (!isMissingKeyMessage(r.error)) continue;
+    const info = db
+      .prepare(
+        "UPDATE analysis_jobs SET state = 'queued', error = NULL, updated_at = datetime('now') WHERE id = ? AND state = 'failed'",
       )
       .run(r.id);
     if (info.changes > 0) resumed.push(r.id);

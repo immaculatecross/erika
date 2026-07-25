@@ -95,12 +95,7 @@ export function AnalysisPanel({
       )}
 
       {view && view.state === "failed" && (
-        <Stopped
-          message={view.error}
-          onRetry={isMissingKeyMessage(view.error) ? null : retry}
-          retrying={retrying}
-          retryError={retryError}
-        />
+        <Stopped message={view.error} onRetry={retry} retrying={retrying} retryError={retryError} />
       )}
 
       {view && view.state === "halted" && (
@@ -181,9 +176,21 @@ function NotStartedYet({ segmentCount }: { segmentCount: number }) {
 }
 
 /**
- * A stopped run: its own message, and a way forward. The retry is offered only when
- * trying again could actually differ — `onRetry` is null for a missing key, whose
- * fix is a key, not a button.
+ * A stopped run: its own message, and a way forward.
+ *
+ * ONE authority decides which way forward, and it is this predicate. The call site
+ * used to pass `onRetry={isMissingKeyMessage(...) ? null : retry}` as well — a second
+ * copy of the same rule, and a DEAD one, since this component already branches on
+ * `needsKey` before it looks at `onRetry`. A mutation test proved it dead: removing
+ * the call-site guard changed nothing and every test stayed green, which is exactly
+ * the shape RETRO-004 found in `isAssumedRunLeaseHash` (exported, documented as the
+ * authority, and deletable green). So the duplicate is gone and this is the rule.
+ *
+ * The rule: a retry is offered only where trying again could differ. A missing key is
+ * not such a case — it would fail identically until a key exists, which is the retry
+ * loop RETRO-004 named — so that branch gets a link to where the requirement is
+ * explained instead. (The worker re-runs the job by itself once a key appears; see
+ * `resumeKeylessRefusals`.)
  */
 function Stopped({
   message,
@@ -192,7 +199,7 @@ function Stopped({
   retryError,
 }: {
   message: string | null;
-  onRetry: (() => void) | null;
+  onRetry: () => void;
   retrying: boolean;
   retryError: string | null;
 }) {
@@ -211,17 +218,15 @@ function Stopped({
           What Erika needs
         </Link>
       ) : (
-        onRetry && (
-          <button
-            type="button"
-            onClick={() => void onRetry()}
-            disabled={retrying}
-            data-retry-analysis
-            className="self-start rounded-full bg-black/[0.06] px-4 py-2 text-[15px] font-medium text-ink transition-transform active:scale-[0.98] disabled:opacity-50 dark:bg-white/[0.08]"
-          >
-            {retrying ? "Starting…" : "Try again"}
-          </button>
-        )
+        <button
+          type="button"
+          onClick={() => void onRetry()}
+          disabled={retrying}
+          data-retry-analysis
+          className="self-start rounded-full bg-black/[0.06] px-4 py-2 text-[15px] font-medium text-ink transition-transform active:scale-[0.98] disabled:opacity-50 dark:bg-white/[0.08]"
+        >
+          {retrying ? "Starting…" : "Try again"}
+        </button>
       )}
       {retryError && (
         <p className="text-[13px] text-severe" role="alert">

@@ -60,70 +60,22 @@ export default function SettingsPage() {
   }
 
   if (!form) {
-    return <div className="p-8 text-[15px] text-secondary">Loading settings…</div>;
+    return (
+      <div className="mx-auto max-w-xl p-8">
+        <h1 className="mb-6 text-[34px] font-bold tracking-tight">Settings</h1>
+        <WhatErikaNeeds keyPresent={keyPresent} />
+        <p className="text-[15px] text-secondary">
+          {status.kind === "error" ? status.message : "Loading settings…"}
+        </p>
+      </div>
+    );
   }
 
   return (
     <div className="mx-auto max-w-xl p-8">
       <h1 className="mb-6 text-[34px] font-bold tracking-tight">Settings</h1>
+      <WhatErikaNeeds keyPresent={keyPresent} />
 
-      {/* [E-42 criterion 7] WHAT ERIKA NEEDS, AND WHAT IT COSTS — stated once, in
-          prose, where a person meets it before anything runs.
-
-          This block is the other half of removing every price tag from the capture
-          path. Money left the flow; it did not leave the product. And because
-          analysis is now AUTOMATIC — nobody presses anything, so nobody is shown a
-          figure at the moment of spending — disclosing the standing cost here is
-          more obligatory than it was before, not less. That trade is the whole
-          reason removing the estimates is honest rather than merely tidier.
-
-          Before this, the ONLY place a new user learned that an API key was required
-          was a leaked internal error string on the tutor screen (RETRO-004 §1). */}
-      <section
-        data-analysis-disclosure
-        className="mb-6 flex flex-col gap-3 rounded-card bg-card p-6 shadow-card"
-      >
-        <h2 className="text-[22px] font-semibold tracking-tight">What Erika needs</h2>
-        <p className="text-[15px] leading-[1.47] text-secondary">
-          Erika listens to your recordings with OpenAI&rsquo;s audio models, so she needs an{" "}
-          <strong className="font-medium text-ink">OpenAI API key</strong>. Put it in a file called{" "}
-          <code className="rounded bg-black/[0.06] px-1.5 py-0.5 font-mono text-[13px] text-ink dark:bg-white/[0.08]">
-            .env.local
-          </code>{" "}
-          in the project folder, as{" "}
-          <code className="rounded bg-black/[0.06] px-1.5 py-0.5 font-mono text-[13px] text-ink dark:bg-white/[0.08]">
-            OPENAI_API_KEY=sk-…
-          </code>
-          , then restart. Without one your recordings are still saved and their speech still
-          extracted — but nothing is analyzed, and that stays true until you add one.
-        </p>
-        {keyPresent !== null && (
-          <p
-            data-key-status
-            className={`text-[15px] ${keyPresent ? "text-secondary" : "text-medium"}`}
-            role="status"
-          >
-            {keyPresent
-              ? "A key is set — analysis will run."
-              : "No key is set right now, so analysis will not run."}
-          </p>
-        )}
-        <p className="text-[15px] leading-[1.47] text-secondary">
-          <strong className="font-medium text-ink">
-            Recordings are analyzed automatically when they finish uploading.
-          </strong>{" "}
-          There is nothing to start: you record or drop in a file, and Erika does the rest. A ten-minute
-          take costs roughly twenty cents of API usage; a full day&rsquo;s audio is a couple of dollars,
-          because silence never reaches a model and only the parts that sound off are listened to closely.
-        </p>
-        <p className="text-[15px] leading-[1.47] text-secondary">
-          The <strong className="font-medium text-ink">monthly budget</strong> below is a hard cap on
-          that spending, not a warning. When a month reaches it, analysis stops — your recordings are
-          kept, their speech is kept, and whatever Erika already heard is kept. Each held recording says
-          so and resumes on its own when there is room again, either because you raised the cap or
-          because the month rolled over. You never have to upload anything twice.
-        </p>
-      </section>
 
       <div className="flex flex-col gap-5 rounded-card bg-card p-6 shadow-card">
         <label className="flex flex-col gap-1.5">
@@ -307,5 +259,68 @@ export default function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * [E-42 criterion 7] WHAT ERIKA NEEDS, AND WHAT IT COSTS — stated once, in prose,
+ * where a person meets it before anything runs.
+ *
+ * Deliberately OUTSIDE the loading guard and outside the settings form. This is the
+ * single most important thing on the page for someone who has never used Erika, and
+ * making it wait on a fetch — or vanish when that fetch fails — would have recreated
+ * the defect it exists to fix: before this, the only place a new user learned an API
+ * key was required was a leaked internal error string on the tutor screen
+ * (RETRO-004 §1). It renders from static prose, always. Only the one dynamic line —
+ * whether a key is currently set — waits for the server, and its absence degrades to
+ * silence rather than to a wrong claim.
+ */
+function WhatErikaNeeds({ keyPresent }: { keyPresent: boolean | null }) {
+  return (
+        <section
+          data-analysis-disclosure
+          className="mb-6 flex flex-col gap-3 rounded-card bg-card p-6 shadow-card"
+        >
+          <h2 className="text-[22px] font-semibold tracking-tight">What Erika needs</h2>
+          <p className="text-[15px] leading-[1.47] text-secondary">
+            Erika listens to your recordings with OpenAI&rsquo;s audio models, so she needs an{" "}
+            <strong className="font-medium text-ink">OpenAI API key</strong>. Put it in a file called{" "}
+            <code className="rounded bg-black/[0.06] px-1.5 py-0.5 font-mono text-[13px] text-ink dark:bg-white/[0.08]">
+              .env.local
+            </code>{" "}
+            in the project folder, as{" "}
+            <code className="rounded bg-black/[0.06] px-1.5 py-0.5 font-mono text-[13px] text-ink dark:bg-white/[0.08]">
+              OPENAI_API_KEY=sk-…
+            </code>
+            , then restart. Without one your recordings are still saved and their speech still
+            extracted — but nothing is analyzed, and that stays true until you add one.
+          </p>
+          {keyPresent !== null && (
+            <p
+              data-key-status
+              className={`text-[15px] ${keyPresent ? "text-secondary" : "text-medium"}`}
+              role="status"
+            >
+              {keyPresent
+                ? "A key is set — analysis will run."
+                : "No key is set right now, so analysis will not run."}
+            </p>
+          )}
+          <p className="text-[15px] leading-[1.47] text-secondary">
+            <strong className="font-medium text-ink">
+              Recordings are analyzed automatically when they finish uploading.
+            </strong>{" "}
+            There is nothing to start: you record or drop in a file, and Erika does the rest. A ten-minute
+            take costs roughly twenty cents of API usage; a full day&rsquo;s audio is a couple of dollars,
+            because silence never reaches a model and only the parts that sound off are listened to closely.
+          </p>
+          <p className="text-[15px] leading-[1.47] text-secondary">
+            The <strong className="font-medium text-ink">monthly budget</strong> below is a hard cap on
+            that spending, not a warning. When a month reaches it, analysis stops — your recordings are
+            kept, their speech is kept, and whatever Erika already heard is kept. Each held recording says
+            so and resumes on its own when there is room again, either because you raised the cap or
+            because the month rolled over. You never have to upload anything twice.
+          </p>
+        </section>
   );
 }
