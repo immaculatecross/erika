@@ -53,21 +53,73 @@ describe("settings persistence", () => {
       newRulesPerDay: 3,
       newPronPerDay: 10,
       register: "colto",
+      tutorVoice: "alloy",
       realtimeTier: "flagship",
+      tutorMinMinutes: 10,
     });
     reopened.close();
   });
 
-  it("persists the realtime tutor tier and rejects an unknown tier (E-34)", () => {
+  it("persists the tutor voice and rejects one the Realtime API does not accept (E-43)", () => {
     const p = tmpDbPath();
     const db = openDatabase(p);
-    expect(readSettings(db).realtimeTier).toBe("flagship"); // default flagship
+    // Default `alloy`: the only one of the ten with the operator's own ear behind it,
+    // and deliberately not `marin`, the voice their complaint was formed against.
+    expect(readSettings(db).tutorVoice).toBe("alloy");
+    writeSettings(db, { tutorVoice: "cedar" });
+    db.close();
+    const reopened = openDatabase(p);
+    expect(readSettings(reopened).tutorVoice).toBe("cedar");
+    reopened.close();
+    // `nova` is a real OpenAI TTS voice AND the value this branch briefly defaulted to,
+    // but the Realtime API rejects it with HTTP 400 (spike-7 §1.2). A plausible-looking
+    // wrong value is exactly what a validator is for.
+    expect(() => validateSettings({ tutorVoice: "nova" })).toThrow(SettingsValidationError);
+    expect(() => validateSettings({ tutorVoice: "female" })).toThrow(SettingsValidationError);
+  });
+
+  it("persists the conversation minimum and rejects a nonsense one (E-43)", () => {
+    const p = tmpDbPath();
+    const db = openDatabase(p);
+    expect(readSettings(db).tutorMinMinutes).toBe(10); // operator ruling; was 5
+    writeSettings(db, { tutorMinMinutes: 8 });
+    db.close();
+    const reopened = openDatabase(p);
+    expect(readSettings(reopened).tutorMinMinutes).toBe(8);
+    reopened.close();
+    expect(() => validateSettings({ tutorMinMinutes: -1 })).toThrow(SettingsValidationError);
+    expect(() => validateSettings({ tutorMinMinutes: "soon" })).toThrow(SettingsValidationError);
+  });
+
+  it("persists the realtime tier and rejects an unknown one (E-43)", () => {
+    const p = tmpDbPath();
+    const db = openDatabase(p);
+    // Flagship by operator ruling, made with spike-6's hallucination measurement in
+    // front of them. Mini is selectable, not default.
+    expect(readSettings(db).realtimeTier).toBe("flagship");
     writeSettings(db, { realtimeTier: "mini" });
     db.close();
     const reopened = openDatabase(p);
     expect(readSettings(reopened).realtimeTier).toBe("mini");
     reopened.close();
-    expect(() => validateSettings({ realtimeTier: "turbo" })).toThrow(SettingsValidationError);
+    expect(() => validateSettings({ realtimeTier: "gpt-realtime-2.1" })).toThrow(SettingsValidationError);
+  });
+
+  it("reads a database holding a value a removed dial once wrote (E-43)", () => {
+    // `tutorVoice` briefly held `female`/`male` while the speaking leg was TTS. An
+    // unrecognized stored value must read as the default rather than throwing or
+    // reaching the wire — the Realtime mint 400s on an unknown voice, so a stale value
+    // that survived would break every conversation on that database.
+    const p = tmpDbPath();
+    const db = openDatabase(p);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('tutorVoice', 'female')").run();
+    db.prepare("INSERT INTO settings (key, value) VALUES ('modelTier', 'fast')").run();
+    writeSettings(db, { register: "standard" });
+    const s = readSettings(db);
+    expect(s.register).toBe("standard");
+    expect(s.tutorVoice).toBe("alloy");
+    expect((s as unknown as Record<string, unknown>).modelTier).toBeUndefined();
+    db.close();
   });
 
   it("no longer knows the removed modelTier control [RETRO-002 P5]", () => {

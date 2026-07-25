@@ -66,27 +66,152 @@ export function extractLogEvidenceCall(event: RealtimeEvent): ExtractedLogEviden
   return { callId: typeof event.call_id === "string" ? event.call_id : null, args };
 }
 
+// ── the reply, as AUDIO (E-43, Amendment 5) ──────────────────────────────────
+//
+// With `output_modalities: ["audio"]` the tutor's voice arrives on the WebRTC MEDIA
+// track, not on this data channel — `pc.ontrack` below — so nothing here has to
+// assemble, chunk or queue it. The data channel still carries the events, and two of
+// them are all the UI needs to say whose turn it is.
+//
+// The GA audio-delta event is `response.output_audio.delta`; the beta lineage used
+// `response.audio.delta`. spike-7 §2 MEASURED that only the GA name arrives on this
+// account, but a matcher on the suffix costs nothing and cannot leave the turn line
+// stuck on the wrong state if the naming moves — the same reasoning the mint allowlist
+// earns its comment with.
+
+/**
+ * Whether this event says Erika has STARTED SPEAKING.
+ *
+ * ⚠️ `response.output_audio.delta` DOES NOT ARRIVE OVER WebRTC, and assuming it did
+ * was a real defect — found by driving the built app, not by reading. Over a WebSocket
+ * the audio is base64 on the event stream, so a delta event is the natural signal;
+ * over WebRTC the audio is on the MEDIA TRACK and the data channel carries only
+ * `output_audio_buffer.started` / `.stopped` around it. A full 45-second browser
+ * session emitted `output_audio_buffer.started`, `response.output_audio.done` and
+ * `response.output_audio_transcript.delta` — and not one `response.output_audio.delta`
+ * [MEASURED]. So the turn line sat on "Listening — just talk" while Erika was audibly
+ * talking.
+ *
+ * All three signals are accepted, because this product may yet speak over either
+ * transport and a turn line that is silently wrong is worse than a noisy one: the
+ * WebRTC buffer event, the transcript delta (which accompanies the audio on both), and
+ * the WebSocket-shaped audio delta.
+ */
+export function isSpeakingStarted(event: RealtimeEvent): boolean {
+  const t = event.type;
+  if (typeof t !== "string") return false;
+  return t === "output_audio_buffer.started" || t.endsWith("audio_transcript.delta") || t.endsWith("output_audio.delta");
+}
+
+/**
+ * Whether this event closes the RESPONSE — the protocol signal, and deliberately NOT
+ * the playback one. The continuation (`response.create`) is gated on this, and sending
+ * it while a response is still active is an API error, so `output_audio_buffer.stopped`
+ * — which is about the audio buffer draining, not the response resolving — must not
+ * appear here. It drives the turn line instead, through `isSpeakingStopped`.
+ */
+export function isResponseComplete(event: RealtimeEvent): boolean {
+  return event.type === "response.done" || event.type === "response.completed";
+}
+
+/** Whether Erika's audio has STOPPED playing — a UI signal only (see above). */
+export function isSpeakingStopped(event: RealtimeEvent): boolean {
+  return event.type === "output_audio_buffer.stopped" || event.type === "output_audio_buffer.cleared";
+}
+
+/** Whether this event says the LEARNER has started speaking. Under audio-out the
+ *  barge-in itself is the SERVER's job (`interrupt_response` in TUTOR_TURN_DETECTION
+ *  cancels the reply upstream), so this is a UI signal only — it flips the turn line
+ *  back to "listening" the instant the learner talks over Erika. */
+export function isSpeechStarted(event: RealtimeEvent): boolean {
+  return event.type === "input_audio_buffer.speech_started";
+}
+
 export interface RealtimeHandlers {
-  /** Called with the parsed args of each completed `log_evidence` tool call. */
-  onLogEvidence: (args: unknown) => void | Promise<void>;
-  /** Any other event, for UI (e.g. audio-activity dots). Optional. */
+  /** Called with the parsed args of each completed `log_evidence` tool call, and the
+   *  `call_id` the model expects an answer on. */
+  onLogEvidence: (args: unknown, callId: string | null) => void | Promise<void>;
+  /** The tutor has begun speaking this turn. */
+  onSpeakingStarted?: () => void;
+  /** The tutor's audio has stopped playing (UI only, not the protocol's turn end). */
+  onSpeakingStopped?: () => void;
+  /** The tutor's RESPONSE has closed — the protocol's turn end. */
+  onTurnComplete?: () => void;
+  /** The learner started speaking. */
+  onSpeechStarted?: () => void;
+  /** Any other event, for UI (e.g. the dots field). Optional. */
   onEvent?: (event: RealtimeEvent) => void;
 }
 
-/** Dispatch one parsed realtime event: forward a `log_evidence` call to the handler,
- *  and pass every event to the optional `onEvent` sink. */
+/** Dispatch one parsed realtime event to the handlers that care about it. */
 export function dispatchRealtimeEvent(event: RealtimeEvent, handlers: RealtimeHandlers): void {
   handlers.onEvent?.(event);
+  if (isSpeakingStarted(event)) handlers.onSpeakingStarted?.();
+  if (isSpeakingStopped(event)) handlers.onSpeakingStopped?.();
+  if (isResponseComplete(event)) handlers.onTurnComplete?.();
+  if (isSpeechStarted(event)) handlers.onSpeechStarted?.();
   const call = extractLogEvidenceCall(event);
-  if (call && call.args !== null) void handlers.onLogEvidence(call.args);
+  if (call && call.args !== null) void handlers.onLogEvidence(call.args, call.callId);
 }
+
+// ── ANSWERING THE TOOL CALL — the turn that used to go missing ───────────────
+//
+// 🚩 A LOGGED PIECE OF EVIDENCE USED TO COST THE LEARNER THE CORRECTION IT CAME FROM.
+//
+// `extractLogEvidenceCall` has always returned a `call_id`, and until now every caller
+// threw it away: the browser POSTed the args to /api/tutor/evidence and sent the model
+// nothing back. A Realtime function call is a REQUEST — the model emits a short holding
+// line while the call is in flight and then waits for `function_call_output` before
+// finishing its turn. With no answer it waits forever.
+//
+// So on every turn where the tutor logged evidence, the learner heard the holding line
+// — "Un momento, ti rispondo con una correzione mirata e poi proseguiamo" — and then
+// silence, and the correction itself was never spoken. MEASURED on this branch, 9
+// labelled fixtures on the shipping configuration: 5 of 9 replies were a holding line
+// and nothing else, every one of them on a turn that called `log_evidence`. Answering
+// the call turns the same fixture into "Hai detto 'ieri ho andato al cinema': l'errore
+// è nell'ausiliare, con 'andare' si usa essere, quindi 'ieri sono andato al cinema'."
+//
+// It is worth being precise about why this was invisible. It is not a persona problem
+// and the "never narrate your tools" line cannot fix it — the holding line is the
+// CORRECT behaviour of a model that expects to continue. It is not a rate problem, a
+// transport problem or a UI problem. It is a protocol half-implemented, and every unit
+// test passed because they all assert what the app does with the args.
+
+/** The event that hands a tool call's result back to the model. Pure, so the wire
+ *  shape is unit-testable without a channel. */
+export function functionCallOutput(callId: string, output: unknown): Record<string, unknown> {
+  return {
+    type: "conversation.item.create",
+    item: { type: "function_call_output", call_id: callId, output: JSON.stringify(output) },
+  };
+}
+
+/** Ask the model to produce the turn it was holding. Sent only after the holding
+ *  response has finished — `response.create` while one is still streaming is an error
+ *  (`conversation_already_has_active_response`). */
+export function continueResponse(): Record<string, unknown> {
+  return { type: "response.create" };
+}
+
+/** At most this many continuations per learner turn. One is what the protocol needs;
+ *  a bound is what stops a model that logs evidence in its continuation from driving
+ *  an unbounded chain of billed responses off a single learner sentence. */
+export const MAX_CONTINUATIONS_PER_TURN = 1;
 
 // ── connection handshake (injectable, unit-tested against fakes) ──────────────
 
 /** Minimal structural shapes so the seam is testable without the DOM WebRTC types. */
 export interface DataChannelLike {
   onmessage: ((ev: { data: string }) => void) | null;
+  onopen?: (() => void) | null;
   send(data: string): void;
+}
+
+/** The `response.create` event that makes Erika speak first. Pure, so the wire shape
+ *  is unit-tested without a channel. */
+export function openingResponse(instructions: string): Record<string, unknown> {
+  return { type: "response.create", response: { instructions } };
 }
 export interface TrackLike {
   kind: string;
@@ -100,6 +225,7 @@ export interface PeerConnectionLike {
   createOffer(): Promise<{ sdp?: string; type: string }>;
   setLocalDescription(desc: { sdp?: string; type: string }): Promise<void>;
   setRemoteDescription(desc: { sdp: string; type: string }): Promise<void>;
+  /** The tutor's voice arrives here, as a remote media track. */
   ontrack: ((ev: { streams: MediaStreamLike[] }) => void) | null;
   close(): void;
 }
@@ -114,6 +240,12 @@ export interface TutorConnectDeps {
    *  EPHEMERAL client secret (never the key). Default impl POSTs to the realtime
    *  endpoint; tests inject a fake. */
   exchangeSdp: (offerSdp: string, opts: { clientSecret: string; model: string }) => Promise<string>;
+  /** Sent on the event channel once the channel opens, if given — this is how Erika
+   *  speaks FIRST. Without it a learner who has never seen this app is left staring at
+   *  a silent screen wondering whose turn it is. */
+  greeting?: string;
+  /** The tutor's voice, as a remote media stream, the moment the track arrives. The
+   *  caller attaches it to an `<audio>` element; nothing here touches the DOM. */
   onRemoteAudio?: (stream: MediaStreamLike) => void;
 }
 
@@ -136,11 +268,50 @@ export async function connectTutor(deps: TutorConnectDeps): Promise<TutorConnect
   for (const track of stream.getTracks()) pc.addTrack(track, stream);
 
   const channel = pc.createDataChannel(REALTIME_EVENT_CHANNEL);
-  channel.onmessage = (ev) => {
-    const event = parseRealtimeEvent(ev.data);
-    if (event) dispatchRealtimeEvent(event, deps.handlers);
+
+  // Answering the tool call belongs HERE, not in the page: it is part of the protocol,
+  // it must happen whatever the app does with the evidence, and it must not wait on the
+  // server round-trip that persists it. See the block above for what happens without it.
+  let owed = false;
+  let continuations = 0;
+  const handlers: RealtimeHandlers = {
+    ...deps.handlers,
+    onLogEvidence: (args, callId) => {
+      if (callId && continuations < MAX_CONTINUATIONS_PER_TURN) {
+        channel.send(JSON.stringify(functionCallOutput(callId, { ok: true })));
+        owed = true;
+      }
+      return deps.handlers.onLogEvidence(args, callId);
+    },
+    onTurnComplete: () => {
+      if (owed) {
+        owed = false;
+        continuations += 1;
+        channel.send(JSON.stringify(continueResponse()));
+      }
+      deps.handlers.onTurnComplete?.();
+    },
+    onSpeechStarted: () => {
+      // A new learner turn: the budget of continuations resets, and anything owed by
+      // the turn the learner just interrupted is abandoned rather than spoken over.
+      continuations = 0;
+      owed = false;
+      deps.handlers.onSpeechStarted?.();
+    },
   };
 
+  channel.onmessage = (ev) => {
+    const event = parseRealtimeEvent(ev.data);
+    if (event) dispatchRealtimeEvent(event, handlers);
+  };
+  // Erika opens the conversation. `deps.greeting` is an instruction for the FIRST
+  // response only; the persona still governs everything after it.
+  if (deps.greeting) {
+    channel.onopen = () => channel.send(JSON.stringify(openingResponse(deps.greeting as string)));
+  }
+
+  // The tutor's voice comes DOWN this connection as a media track. Wired before the
+  // offer, because the track can arrive as soon as the remote description is set.
   pc.ontrack = (ev) => deps.onRemoteAudio?.(ev.streams[0]);
 
   const offer = await pc.createOffer();

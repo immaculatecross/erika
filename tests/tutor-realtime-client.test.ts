@@ -46,7 +46,12 @@ describe("realtime event parsing + log_evidence extraction", () => {
     };
     dispatchRealtimeEvent(event, { onLogEvidence });
     expect(onLogEvidence).toHaveBeenCalledTimes(1);
-    expect(onLogEvidence).toHaveBeenCalledWith({ itemId: "rule:articoli", polarity: "incorrect", mode: "cued" });
+    // An event with no `call_id` still reaches the handler — the evidence is recorded
+    // either way — and passes null, so nothing downstream fabricates an id to answer on.
+    expect(onLogEvidence).toHaveBeenCalledWith(
+      { itemId: "rule:articoli", polarity: "incorrect", mode: "cued" },
+      null,
+    );
   });
 });
 
@@ -92,15 +97,21 @@ describe("connectTutor handshake (against fakes)", () => {
     expect(sentOffer).toBe("OFFER_SDP");
     expect(sentSecret).toBe("ek_ephemeral_only");
 
-    // A log_evidence event arriving on the channel reaches the handler.
+    // A log_evidence event arriving on the channel reaches the handler, with the
+    // model's own call_id — the id the tutor must answer on (see
+    // tests/tutor-audio-transport.test.ts for what happens when it is dropped).
     channel!.onmessage!({
       data: JSON.stringify({
         type: "response.function_call_arguments.done",
         name: "log_evidence",
+        call_id: "call_casa",
         arguments: JSON.stringify({ itemId: "lemma:casa#NOUN", polarity: "correct", mode: "cued" }),
       }),
     });
-    expect(onLogEvidence).toHaveBeenCalledWith({ itemId: "lemma:casa#NOUN", polarity: "correct", mode: "cued" });
+    expect(onLogEvidence).toHaveBeenCalledWith(
+      { itemId: "lemma:casa#NOUN", polarity: "correct", mode: "cued" },
+      "call_casa",
+    );
 
     conn.stop();
     expect(pc.close).toHaveBeenCalled();

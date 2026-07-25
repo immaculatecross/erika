@@ -5,10 +5,13 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { DotsField } from "@/components/tutor/dots-field";
-import { formatUsd } from "@/lib/format";
-import { formatElapsed, recordingFilename } from "@/lib/recording";
-import { SUPPORTED_FORMATS, type AudioFormat } from "@/lib/session-types";
+import { ConversationProgress } from "@/components/tutor/conversation-progress";
+import { toUploadableWav } from "@/lib/recording";
 import { uploadAudio } from "@/lib/upload-audio";
+import { landConversationTake } from "@/lib/tutor/take";
+import { closingLine, costLine } from "@/lib/tutor/closing-line";
+import { TUTOR_OPENING } from "@/lib/tutor/persona";
+import { startFailureMessage } from "@/lib/tutor/failure-message";
 import {
   connectTutor,
   exchangeSdpOverHttp,
@@ -17,31 +20,48 @@ import {
   type TutorConnection,
 } from "@/lib/tutor/realtime-client";
 
-// The Learn-tab spoken tutor (E-34, D-24). One calm surface: the dots field breathing
-// with the voice, a per-session estimate, a plain start/stop, an elapsed timer in
-// tabular numerals — no avatar, no waveform. The call records locally and, on end,
-// lands as a NORMAL session through the same upload→ingest path as any capture
-// (uploadAudio), so its findings are the one truth (E-17). The live WebRTC connection
-// is the operator-gated step (needs a configured key + network); a failure here is a
-// quiet, honest line, never a dead control.
+// The Learn-tab spoken tutor (E-34, rebuilt at E-43).
+//
+// HOW A TURN WORKS. The learner speaks; the Realtime session hears them NATIVELY (D-3:
+// a transcript erases pronunciation, hesitation and the almost-right word — and spike-6
+// measured `whisper-1` silently repairing this repo's own planted errors); the reply
+// comes back as AUDIO on the same connection and plays. Server VAD ends a turn on
+// silence, so the learner presses NOTHING between turns — one button to begin, one to
+// stop, and that is the whole interaction.
+//
+// THE REPLY USED TO BE TEXT SPOKEN THROUGH TTS, and this page held the machinery for
+// it: a sentence chunker, a pipelined synthesis queue, a per-clip fetch and an ordered
+// player. The operator drove that and rejected it — "the lag is too high" — so all of
+// it is gone and the model speaks on the connection that is already open. What is left
+// here is an `<audio>` element and the track that fills it; the three latency sources
+// (waiting for a sentence boundary, a second network round trip, buffering the clip)
+// were exactly the three files deleted.
+//
+// D-24 and DESIGN hold: a quiet field of dots breathing with the voice, no avatar, no
+// waveform, tabular numbers, no countdown and no guilt copy if the learner leaves
+// early.
 
 type Phase = "idle" | "connecting" | "live" | "ending" | "refused" | "error";
 
-interface Estimate {
+interface SessionInfo {
   estimateUsd: number;
   remainingUsd: number;
   budgetUsd: number;
   model: string;
+  minSeconds: number;
+  keyConfigured: boolean;
 }
 
 const HEARTBEAT_MS = 20_000;
 
 export default function TutorPage() {
-  const [estimate, setEstimate] = useState<Estimate | null>(null);
+  const [info, setInfo] = useState<SessionInfo | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [level, setLevel] = useState(0.4);
+  const [speaking, setSpeaking] = useState(false);
+  const [closing, setClosing] = useState<string | null>(null);
+  const [cost, setCost] = useState<string | null>(null);
 
   const conn = useRef<TutorConnection | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -51,23 +71,31 @@ export default function TutorPage() {
   const startedAt = useRef<number>(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioEl = useRef<HTMLAudioElement | null>(null);
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     fetch("/api/tutor/session")
       .then((r) => r.json())
-      .then(setEstimate)
-      .catch(() => setEstimate(null));
+      .then(setInfo)
+      .catch(() => setInfo(null));
   }, []);
+
+  useEffect(refresh, [refresh]);
 
   const cleanup = useCallback(() => {
     if (timer.current) clearInterval(timer.current);
     if (heartbeat.current) clearInterval(heartbeat.current);
     timer.current = null;
     heartbeat.current = null;
+    if (audioEl.current) {
+      audioEl.current.pause();
+      audioEl.current.srcObject = null;
+    }
     conn.current?.stop();
     conn.current = null;
     stream.current?.getTracks().forEach((t) => t.stop());
     stream.current = null;
+    setSpeaking(false);
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
@@ -80,21 +108,44 @@ export default function TutorPage() {
     }).catch(() => {});
   }
 
+  /** Attach the tutor's voice track and play it. One element, reused across turns —
+   *  the model streams every reply down the same track, so there is nothing to queue,
+   *  order or buffer. */
+  function attachRemoteAudio(remote: MediaStreamLike) {
+    const el = audioEl.current ?? new Audio();
+    audioEl.current = el;
+    el.autoplay = true;
+    el.srcObject = remote as unknown as MediaStream;
+    void el.play().catch(() => {
+      // Autoplay is only ever blocked before a user gesture, and reaching here always
+      // follows the learner pressing "Start talking" — but a silent tutor is the worst
+      // failure this surface has, so say it rather than swallow it.
+      setMessage("Your browser blocked the audio. Allow sound for this site and start again.");
+    });
+  }
+
   async function start() {
     setMessage(null);
+    setClosing(null);
+    setCost(null);
     setPhase("connecting");
     try {
       const res = await fetch("/api/tutor/session", { method: "POST" });
       const body = await res.json();
       if (res.status === 402) {
         setPhase("refused");
-        setMessage(body?.error?.message ?? "The monthly budget cannot cover a session right now.");
+        setMessage(body?.error?.message ?? "The monthly budget cannot cover a conversation right now.");
         return;
       }
-      if (!res.ok) throw new Error(body?.error?.message ?? "Could not start the tutor.");
+      if (!res.ok) throw new Error(body?.error?.message ?? "Erika could not start a conversation.");
 
       tutorId.current = body.tutorId;
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Echo cancellation matters here specifically: the mic stays open while Erika
+      // speaks so the learner can talk over her, and without AEC her own voice would
+      // come back as a learner turn.
+      const mic = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       stream.current = mic;
 
       // Record the take locally so it lands as a normal session on end.
@@ -107,20 +158,20 @@ export default function TutorPage() {
       conn.current = await connectTutor({
         clientSecret: body.clientSecret,
         model: body.model,
+        greeting: TUTOR_OPENING,
         getMicStream: async () => mic as unknown as MediaStreamLike,
         createPeerConnection: () => new RTCPeerConnection() as unknown as PeerConnectionLike,
         exchangeSdp: exchangeSdpOverHttp,
+        onRemoteAudio: attachRemoteAudio,
         handlers: {
           onLogEvidence: logEvidence,
-          onEvent: (ev) => {
-            if (typeof ev.type === "string" && ev.type.includes("audio")) setLevel((l) => Math.min(1, l + 0.15));
-            else setLevel((l) => Math.max(0.35, l - 0.05));
-          },
-        },
-        onRemoteAudio: (s) => {
-          const el = new Audio();
-          el.srcObject = s as unknown as MediaStream;
-          void el.play().catch(() => {});
+          // The turn line, and nothing more. Barge-in itself is the server's
+          // (`interrupt_response`), so talking over Erika cancels her reply upstream
+          // and this only has to say so.
+          onSpeakingStarted: () => setSpeaking(true),
+          onSpeakingStopped: () => setSpeaking(false),
+          onTurnComplete: () => setSpeaking(false),
+          onSpeechStarted: () => setSpeaking(false),
         },
       });
 
@@ -142,10 +193,7 @@ export default function TutorPage() {
       }, HEARTBEAT_MS);
     } catch (err) {
       setPhase("error");
-      setMessage(
-        (err as Error).message ??
-          "The live tutor needs a configured key and network — this is an operator-gated step.",
-      );
+      setMessage(startFailureMessage(err, info));
       cleanup();
     }
   }
@@ -164,6 +212,7 @@ export default function TutorPage() {
     // there is no reason to keep firing them once the user has ended the call.
     if (heartbeat.current) clearInterval(heartbeat.current);
     heartbeat.current = null;
+    audioEl.current?.pause();
 
     // Stop recording and assemble the take.
     const rec = recorder.current;
@@ -174,30 +223,62 @@ export default function TutorPage() {
     });
     recorder.current = null;
 
-    // Land the recording as a normal session (→ ingest → deep analysis).
-    if (blob && blob.size > 0) {
-      const raw = (blob.type.split("/")[1] || "webm").split(";")[0];
-      const ext: AudioFormat = (SUPPORTED_FORMATS as readonly string[]).includes(raw) ? (raw as AudioFormat) : "webm";
-      await uploadAudio(recordingFilename(ext), blob).catch(() => {});
-    }
+    // Land the recording as a normal session (→ ingest → deep analysis), converted to
+    // WAV first so the server can probe its duration — a raw MediaRecorder container
+    // has none and is refused 422 (lib/tutor/take.ts). `capturedAt` is the instant the
+    // conversation began, which is also how the server links this recording to the
+    // conversation record (E-42's v28 column).
+    const landed = await landConversationTake({
+      blob,
+      capturedAt: new Date(startedAt.current),
+      toWav: toUploadableWav,
+      upload: uploadAudio,
+    });
 
-    // Finalize the money lease to actual.
+    // Finalize the money lease and close the durable conversation record.
     if (id) {
-      await fetch(`/api/tutor/session/${id}/end`, {
+      const closed = await fetch(`/api/tutor/session/${id}/end`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ elapsedSeconds }),
-      }).catch(() => {});
+      })
+        .then((r) => r.json())
+        .catch(() => null);
+      // Factual, once, and silent when the minimum was not reached — leaving early
+      // costs nothing and is told nothing (D-24).
+      // Factual, once. What it says depends on what actually happened to the take —
+      // never a cheerful line over a recording that was refused.
+      setClosing(closingLine(closed?.metMinimum === true, landed));
+      // The committed actual, never the reservation (lib/tutor/closing-line.ts).
+      setCost(costLine(closed?.committedUsd));
     }
 
     cleanup();
     tutorId.current = null;
     setPhase("idle");
-    // Refresh the estimate/remaining after a finalized session.
-    fetch("/api/tutor/session").then((r) => r.json()).then(setEstimate).catch(() => {});
-  }, [phase, cleanup]);
+    refresh();
+  }, [phase, cleanup, refresh]);
+
+  // A closed tab is the common way a conversation ends without the button. The beacon
+  // carries the client's own elapsed time so the record closes honestly rather than
+  // being written off as an unknown by the abandoned-conversation sweep.
+  useEffect(() => {
+    const onHide = () => {
+      const id = tutorId.current;
+      if (!id || phase !== "live") return;
+      navigator.sendBeacon?.(
+        `/api/tutor/session/${id}/end`,
+        new Blob([JSON.stringify({ elapsedSeconds: (Date.now() - startedAt.current) / 1000 })], {
+          type: "application/json",
+        }),
+      );
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, [phase]);
 
   const live = phase === "live" || phase === "ending";
+  const minSeconds = info?.minSeconds ?? 0;
 
   return (
     <div data-tutor className="mx-auto max-w-2xl p-8">
@@ -209,23 +290,28 @@ export default function TutorPage() {
       </div>
 
       <header className="mb-6">
-        <h1 className="text-[34px] font-bold tracking-tight">Tutor</h1>
+        <h1 className="text-[34px] font-bold tracking-tight">Conversation</h1>
         <p className="mt-1 text-[17px] text-secondary">
-          A spoken conversation, steered toward your own recurring mistakes. It records like any session,
-          so what you say still becomes findings.
+          Speak Italian with Erika. She listens to how you actually say it, corrects one thing at a
+          time, and records the whole thing like any other session — so it still becomes findings.
         </p>
       </header>
 
       <section className="flex flex-col items-center gap-6 rounded-card bg-card p-8 shadow-card">
-        <DotsField active={live} intensity={live ? level : 0.4} />
+        <DotsField active={live} intensity={speaking ? 0.9 : 0.4} />
 
         {live ? (
-          <p data-tutor-timer className="tabular text-[22px] font-semibold text-ink" aria-label="Elapsed">
-            {formatElapsed(elapsedMs)}
-          </p>
-        ) : estimate ? (
-          <p className="tabular text-[15px] text-secondary" data-tutor-estimate>
-            About {formatUsd(estimate.estimateUsd)} for a session · {formatUsd(estimate.remainingUsd)} left this month
+          <>
+            <ConversationProgress elapsedMs={elapsedMs} minSeconds={minSeconds} />
+            <p className="text-[13px] text-secondary" data-tutor-turn aria-live="polite">
+              {speaking ? "Erika is speaking" : "Listening — just talk"}
+            </p>
+          </>
+        ) : info ? (
+          <p className="tabular text-[15px] text-secondary" data-tutor-ready>
+            {minSeconds > 0
+              ? `${Math.round(minSeconds / 60)} minutes of conversation counts toward your day.`
+              : "A spoken conversation, steered toward your own recurring mistakes."}
           </p>
         ) : (
           <p className="text-[15px] text-secondary">Preparing…</p>
@@ -251,13 +337,30 @@ export default function TutorPage() {
           </motion.button>
         )}
 
+        {closing && !live && (
+          <p className="max-w-sm text-center text-[13px] text-secondary" role="status" data-tutor-closing>
+            {closing}
+          </p>
+        )}
+
+        {/* What that conversation actually cost — the committed ledger figure, after
+            the fact, never an estimate before it (D-26 removed pre-run estimates from
+            the flow; this is the app telling the truth about what it charged, which
+            D-26 demands in the same breath). Tabular numerals, no chart, no colour. */}
+        {cost && !live && (
+          <p className="tabular max-w-sm text-center text-[13px] text-secondary" data-tutor-cost>
+            {cost}
+          </p>
+        )}
+
         {message && (
-          <p
-            className={`max-w-sm text-center text-[13px] ${phase === "refused" ? "text-secondary" : "text-secondary"}`}
-            role="status"
-            data-tutor-message
-          >
-            {message}
+          <p className="max-w-sm text-center text-[13px] text-secondary" role="status" data-tutor-message>
+            {message}{" "}
+            {info && !info.keyConfigured && (
+              <Link href="/settings" className="underline underline-offset-2 hover:text-ink">
+                Open Settings
+              </Link>
+            )}
           </p>
         )}
       </section>

@@ -161,11 +161,8 @@ export function releaseReservation(db: Db, r: SpendReservation | string): void {
   db.prepare("DELETE FROM spend_ledger WHERE id = ? AND state = 'pending'").run(id);
 }
 
-/** A pending reservation whose `content_hash` groups a tutor session's lease
- *  (`tutor:<id>`) commits rather than releases on sweep — see below. */
-export function isTutorLeaseHash(contentHash: string): boolean {
-  return contentHash.startsWith("tutor:");
-}
+/** The tutor lease prefix (`tutor:<id>`), grouping one spoken session's rows. */
+export const TUTOR_LEASE_PREFIX = "tutor:";
 
 /**
  * The content-hash prefixes whose abandoned leases COMMIT on sweep instead of
@@ -182,13 +179,31 @@ export function isTutorLeaseHash(contentHash: string): boolean {
  *
  * Every OTHER stale reservation still releases: a crashed bounded model call in the
  * cascade was never charged.
+ *
+ * [RETRO-004 §3 — ONE RULE, ONE DIALECT] This list is now the single authority and
+ * the SQL below is GENERATED from it. Previously the predicate and its SQL twin were
+ * written out separately, and the retro proved the drift was real rather than
+ * theoretical: dropping the `pa:` clause from the exported predicate passed
+ * 1012/1012, because the sweep never consulted it. Two dialects of one rule produced
+ * two defects in v0.6; a generated one cannot disagree with itself.
  */
+export const ASSUMED_RUN_PREFIXES = [TUTOR_LEASE_PREFIX, "pa:"] as const;
+
 export function isAssumedRunLeaseHash(contentHash: string): boolean {
-  return isTutorLeaseHash(contentHash) || contentHash.startsWith("pa:");
+  return ASSUMED_RUN_PREFIXES.some((p) => contentHash.startsWith(p));
 }
 
-/** The SQL predicate form of `isAssumedRunLeaseHash`, for the sweep's grouping. */
-const ASSUMED_RUN_SQL = "(content_hash LIKE 'tutor:%' OR content_hash LIKE 'pa:%')";
+/** A pending reservation whose `content_hash` groups a tutor session's lease. */
+export function isTutorLeaseHash(contentHash: string): boolean {
+  return contentHash.startsWith(TUTOR_LEASE_PREFIX);
+}
+
+/** The SQL predicate form of `isAssumedRunLeaseHash`, generated from the one list so
+ *  the two can never drift. The prefixes are compile-time constants with no quotes or
+ *  wildcards in them, so the interpolation carries no untrusted input. */
+export const ASSUMED_RUN_SQL = `(${ASSUMED_RUN_PREFIXES.map(
+  (p) => `content_hash LIKE '${p}%'`,
+).join(" OR ")})`;
 
 /**
  * Sweep every pending reservation older than `ttlMs` — the startup sweep, mirroring
@@ -199,14 +214,63 @@ const ASSUMED_RUN_SQL = "(content_hash LIKE 'tutor:%' OR content_hash LIKE 'pa:%
  * number of pending rows swept.
  *
  * [T2 — money, never-waivable] A stale ASSUMED-RUN lease — a tutor session
- * (`tutor:<id>`, E-34) or an Azure pronunciation assessment (`pa:<attemptId>`, E-37) —
- * COMMITS instead of releasing: work assumed to have reached the provider must not
- * vanish from the ledger just because the process died before it could finalize
- * (releasing to $0 understated real spend). Each stale lease's pending rows collapse
- * into ONE committed row at the reserved sum (the amount the cap already admitted).
- * All OTHER stale reservations release (delete) as before — a crashed bounded cascade
- * call was never charged. The whole sweep runs in one transaction; the cutoff instant
- * is snapshotted once so every statement compares against the same boundary.
+ * (`tutor:<id>`, E-34) or an Azure pronunciation assessment (`pa:<attemptId>`,
+ * E-37) — COMMITS instead of releasing:
+ * work assumed to have reached the provider must not vanish from the ledger just
+ * because the process died before it could finalize (releasing to $0 understated real
+ * spend). All OTHER stale reservations release (delete) as before — a crashed bounded
+ * cascade call was never charged. The whole sweep runs in one transaction; the cutoff
+ * instant is snapshotted once so every statement compares against the same boundary.
+ *
+ * ── [E-43] THE 1.9× OVERBILL, AND WHY THE FIX IS AN INVARIANT AND NOT A CONSTANT ──
+ *
+ * RETRO-004 §2 measured a LEGAL 21-minute tutor call billing **1.9×** ($1.584 →
+ * $3.024). The mechanism was a PARTIAL sweep. `RESERVATION_STALE_MS` (15 min) is
+ * shorter than `maxTutorSessionMinutes()` (30 min) and the sweep runs at the top of
+ * every analysis job, so mid-call the sweep found the lease's OLDEST rows — the open
+ * reservation and the early heartbeat extensions — past the cutoff while the recent
+ * extensions were not. It committed the old half; the live half stayed pending. Two
+ * consequences, both bad:
+ *
+ *   1. `/end` then finalized the surviving half, so the session paid twice.
+ *   2. `tutorLeaseOpenedAtMs` reads MIN(reserved_at) over the PENDING rows, so
+ *      deleting the oldest ones moved the lease's apparent start forward — server
+ *      elapsed reset 20.0 → 0.0 min, disabling BOTH the [T2b] duration ceiling and
+ *      the [T2c] under-report floor at once.
+ *
+ * Raising the TTL past the session ceiling would fix the reported instance and leave
+ * the invariant broken — anyone raising `TUTOR_MAX_SESSION_MINUTES` would silently
+ * re-arm it. The invariant is: **an assumed-run lease is ONE unit and is never
+ * partially resolved.** So staleness is judged on the lease's NEWEST pending row
+ * (`HAVING MAX(reserved_at) <= cutoff`) and, when it is stale, EVERY pending row of
+ * that lease is swept together into exactly one committed row.
+ *
+ * That makes the overbill structurally impossible rather than merely fixed:
+ *
+ *   * A LIVE call's heartbeat keeps its newest row fresh, so the lease is never stale
+ *     and the sweep cannot touch a live session at ANY ttl.
+ *
+ *     ⚠️ An earlier version of this comment claimed that and was WRONG. It assumed a
+ *     live call reserves again every minute, but `ensureTutorLeaseCovers` only inserts
+ *     when the call outlasts what is already reserved — so for the first
+ *     `defaultTutorMinutes()` minutes the newest row is the one written at OPEN, and
+ *     the claim held only because that default (10) happened to be under this TTL (15).
+ *     Nothing pinned that, and the tutor's minimum is now 10 minutes, so long calls are
+ *     the norm. `touchTutorLease` (lib/tutor/money.ts) closes it: a heartbeat that
+ *     needs no money still writes a ZERO-COST pending row, so liveness is an observed
+ *     fact rather than an inference from two constants that were never related.
+ *   * Even if extensions stop (the cap refused one, the client froze), the lease is
+ *     swept WHOLE and commits ONCE. A later `/end` then finds nothing pending, and
+ *     `finalizeTutorLease` clamps to the reserved amount — which is now zero — so it
+ *     commits nothing. One charge, either way.
+ *   * `tutorLeaseOpenedAtMs` can no longer move forward while a lease is open, because
+ *     a lease's rows never disappear one at a time.
+ *
+ * And the opposite failures were checked, per the "fix invariants, not instances"
+ * rule: a charge is never LOST (an abandoned lease still commits its full reserved
+ * sum), never DOUBLED (one committed row per lease, and finalize clamps to what
+ * remains reserved), and the cap is never LOOSENED (the committed amount is exactly
+ * the amount the cap already admitted).
  */
 export function sweepStaleReservations(db: Db, ttlMs: number = RESERVATION_STALE_MS): number {
   return db.transaction((): number => {
@@ -214,19 +278,20 @@ export function sweepStaleReservations(db: Db, ttlMs: number = RESERVATION_STALE
       db.prepare("SELECT datetime('now', ?) AS c").get(`-${Math.round(ttlMs / 1000)} seconds`) as { c: string }
     ).c;
 
-    // Abandoned assumed-run leases COMMIT (assume the provider ran). Group each
-    // lease's stale pending rows and write one committed row at their reserved sum.
+    // Abandoned assumed-run leases COMMIT (assume the provider ran) — as ONE unit.
+    // The HAVING clause is the whole fix: a lease is stale only when its most recent
+    // row is past the cutoff, and then all of its rows go together.
     const assumedRunGroups = db
       .prepare(
-        "SELECT content_hash, model, COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS total FROM spend_ledger " +
-          `WHERE state = 'pending' AND reserved_at <= ? AND ${ASSUMED_RUN_SQL} GROUP BY content_hash, model`,
+        "SELECT content_hash, MIN(model) AS model, COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS total " +
+          `FROM spend_ledger WHERE state = 'pending' AND ${ASSUMED_RUN_SQL} ` +
+          "GROUP BY content_hash HAVING MAX(reserved_at) <= ?",
       )
       .all(cutoff) as { content_hash: string; model: BillableModelId; n: number; total: number }[];
     let committed = 0;
     for (const g of assumedRunGroups) {
-      db.prepare(
-        "DELETE FROM spend_ledger WHERE state = 'pending' AND reserved_at <= ? AND content_hash = ?",
-      ).run(cutoff, g.content_hash);
+      // No `reserved_at` filter: the lease is resolved whole or not at all.
+      db.prepare("DELETE FROM spend_ledger WHERE state = 'pending' AND content_hash = ?").run(g.content_hash);
       if (g.total > 0) {
         db.prepare(
           "INSERT INTO spend_ledger (id, month, model, content_hash, cost_usd, state) VALUES (?, ?, ?, ?, ?, 'committed')",

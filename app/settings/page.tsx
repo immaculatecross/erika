@@ -5,6 +5,7 @@ import Link from "next/link";
 import { type Settings } from "@/lib/settings";
 import { ACTIVE_NEW_ITEM_KNOBS, PENDING_NEW_ITEM_KNOBS } from "@/lib/settings-knobs";
 import { REGISTERS, type Register } from "@/lib/register";
+import { REALTIME_VOICES, voiceLabel, type RealtimeVoice } from "@/lib/tutor/voices";
 import { REALTIME_TIERS, type RealtimeTier } from "@/lib/analysis/rates";
 import { formatUsd } from "@/lib/format";
 
@@ -96,11 +97,43 @@ export default function SettingsPage() {
           />
         </label>
 
-        {/* The realtime tutor tier (E-34, WO criterion 2): flagship vs the cheaper
-            mini. The ONE live tier control — it replaced the dead Model-Tier control
-            [RETRO-002 P5]. */}
+        {/* The tutor's voice (E-43, Amendment 5). This REPLACES the realtime tier
+            switch, which offered a model spike-6 measured as unfit for the tutor's core
+            job — so the knob count is unchanged, and the one that remains is the one a
+            learner can judge with their own ears (D-26). Ten wrapping pills rather than
+            a ten-position segmented control: a segmented control is for a mode switch,
+            and ten names in a row is unreadable at phone width. */}
+        <div className="flex flex-col gap-1.5" data-tutor-voice>
+          <span className={LABEL}>Erika&rsquo;s voice</span>
+          <div className="flex flex-wrap gap-1 rounded-control border border-hairline p-1">
+            {REALTIME_VOICES.map((choice) => (
+              <button
+                key={choice}
+                type="button"
+                data-voice={choice}
+                data-selected={form.tutorVoice === choice ? "true" : "false"}
+                onClick={() => set("tutorVoice", choice as RealtimeVoice)}
+                className={`rounded-[9px] px-3 py-1.5 text-[15px] transition-colors ${
+                  form.tutorVoice === choice ? "bg-accent text-accent-ink" : "text-secondary"
+                }`}
+              >
+                {voiceLabel(choice)}
+              </button>
+            ))}
+          </div>
+          <span className="text-[13px] text-secondary">
+            Ten voices. Try one for a conversation and change it if it does not suit you — it takes
+            effect on your next conversation.
+          </span>
+        </div>
+
+        {/* Which Realtime tier the tutor runs on. Restored by operator ruling once the
+            flagship price was visible — they want to try mini themselves rather than
+            have it decided for them. The note is one true sentence, not a lecture and
+            not scare copy: spike-6 measured mini inventing corrections, and that is
+            what the person choosing needs to weigh against the price. */}
         <div className="flex flex-col gap-1.5" data-realtime-tier>
-          <span className={LABEL}>Tutor voice model</span>
+          <span className={LABEL}>Conversation model</span>
           <div className="inline-flex gap-1 rounded-control border border-hairline p-1">
             {REALTIME_TIERS.map((tier) => (
               <button
@@ -118,9 +151,29 @@ export default function SettingsPage() {
             ))}
           </div>
           <span className="text-[13px] text-secondary">
-            Flagship is the most capable spoken tutor; mini is cheaper per minute.
+            Mini costs about a third as much per conversation. In our testing it sometimes missed a
+            mistake, and twice corrected something that was already right.
           </span>
         </div>
+
+        {/* How long a conversation must run to count toward the day (E-43 criterion 6).
+            Stated plainly here because otherwise the rule is a mystery the learner meets
+            only as a progress bar. No countdown and no penalty: a shorter conversation
+            is still real, it just has not met the bar (D-24). */}
+        <label className="flex flex-col gap-1.5" data-tutor-minimum>
+          <span className={LABEL}>Conversation counts after</span>
+          <input
+            className={FIELD}
+            type="number"
+            min={0}
+            step={1}
+            value={form.tutorMinMinutes}
+            onChange={(e) => set("tutorMinMinutes", Number(e.target.value))}
+          />
+          <span className="text-[13px] text-secondary">
+            Minutes. A shorter conversation still happens and still teaches Erika about you.
+          </span>
+        </label>
 
         {/* The register dial (E-33, D-23): how Erika phrases Italian — corrections,
             lessons, the tutor voice, and spoken renders. Style only, never

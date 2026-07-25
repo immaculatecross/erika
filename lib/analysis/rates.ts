@@ -8,6 +8,8 @@
 // audio-minutes here, a deliberate, documented approximation. Recalibrate these
 // numbers against real `usage` from a run; this module is the single knob.
 
+import type { RealtimeModelId } from "./rates-realtime";
+
 export const MINI_MODEL = "gpt-audio-mini" as const;
 /** Deep-listen chain: primary first, then the D-3 fallback. */
 export const DEEP_MODELS = ["gpt-audio-1.5", "gpt-audio"] as const;
@@ -254,32 +256,130 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-// ---- TTS model (E-21 Contrastive playback) -------------------------------
+// ---- TTS model (E-21 contrastive playback, E-33/E-37 phrase renders) ------
 //
-// Rendering a finding's correction in the audio model's voice is a text-to-speech
-// call. TTS models bill on the number of INPUT CHARACTERS synthesized (not tokens
-// or audio-minutes), so they carry their own rate shape and cost function — but
-// their spend records into the SAME spend_ledger and counts against the SAME
-// monthly cap as the audio cascade and the text lessons (D-10). The id lives here,
-// the one price knob; the founding-era rate is an approximation to recalibrate
-// against real usage, exactly like the audio and text numbers above.
+// ⚠️ STILL BILLED, AND THE REPRICING BELOW STAYS. The tutor's voice left this model
+// when the operator sent the speaking leg back to Realtime audio-out, but TTS is not
+// dead: `lib/render/engine.ts` (E-21 contrastive renditions) and
+// `lib/render/phrase.ts` (E-33 canon lines, E-37's pronunciation reference) both price
+// every call through `ttsCallCost`, which IS the reservation and the cap check for
+// them. Deleting this table because one consumer went away would have re-opened the
+// exact under-pricing three separate spikes ordered fixed.
+//
+// 🚩 THE UNIT WAS WRONG, IN THE UNSAFE DIRECTION, AND THIS IS THE THIRD
+// INDEPENDENT FINDING OF IT. `spike-3` (2026-07-23), `spike-5` §5.3 (2026-07-25)
+// and `spike-6` §5.6 (2026-07-25) each flagged it; only the `instructions` half of
+// spike-3's order ever landed. E-43 fixes the SHAPE, not just the value, because a
+// value cannot express what is wrong here.
+//
+// `gpt-4o-mini-tts` bills **$12 per 1M audio-OUTPUT tokens** (+ $0.60/1M text-in),
+// NOT $12 per 1M input characters. The per-character shape is correct for
+// `tts-1`/`tts-1-hd`, which genuinely bill per character; it was carried across to a
+// token-billed model and never re-derived. Measured under-pricing: **1.23×–1.76×,
+// VOICE-DEPENDENT** — the same 92 characters run 5.448 s (marin) to 7.752 s (alloy),
+// a 1.42× spread, because speaking rate is a property of the VOICE and a
+// per-character model cannot express that at all (spike-5 §2.2/§5.3).
+//
+// The shape now is: characters → audio SECONDS → audio-output TOKENS → USD.
+//
+//   * BEFORE a call only the text is known, so `ttsCallCost` bounds the duration at
+//     TTS_AUDIO_SECONDS_PER_CHARACTER, a floor over the SLOWEST voice measured. That
+//     is the reservation and the cap check, so it must never be optimistic.
+//   * AFTER a call the real duration is known and `ttsCostFromAudioSeconds` gives the
+//     honest charge, which is what gets committed. `/v1/audio/speech` returns no
+//     `usage` object, so duration is the only honest basis — and it is free to
+//     obtain, because the mp3 stream is constant-bitrate (see TTS_MP3_BYTES_PER_SECOND).
+//
+// The tutor no longer speaks through this model, so TTS is back to what it was before
+// E-43: short strings, rendered once and cached forever. That lowers the STAKES of an
+// under-count; it does not make one acceptable, and the fix is already correct.
 
 export const TTS_MODEL = "gpt-4o-mini-tts" as const;
+/** The pinnable snapshot behind the floating alias. spike-5 §1: prefer pinning on a
+ *  path that bills; spike-6 synthesized its entire fixture set against this id. */
+export const TTS_MODEL_SNAPSHOT = "gpt-4o-mini-tts-2025-12-15" as const;
 export type TtsModelId = typeof TTS_MODEL;
 
 export interface TtsModelRate {
-  usdPerCharacter: number;
+  /** USD per audio-OUTPUT token — the real billing unit. */
+  usdPerAudioOutputToken: number;
+  /** USD per TEXT-INPUT token. Small, never zero: no leg is priced at $0. */
+  usdPerTextInputToken: number;
 }
 
-// ≈ $12 per 1M input characters — a short correction ("un problema", ~40 chars)
-// costs a small fraction of a cent, rendered once and cached forever.
+// [DOCUMENTED] developers.openai.com/api/docs/models/gpt-4o-mini-tts, retrieved
+// 2026-07-25 (spike-5 §5.1): $0.60/1M text-in + $12.00/1M audio-out ≈ $0.015/min.
 export const TTS_RATES: Record<TtsModelId, TtsModelRate> = {
-  "gpt-4o-mini-tts": { usdPerCharacter: 12 / 1_000_000 },
+  "gpt-4o-mini-tts": {
+    usdPerAudioOutputToken: 12 / 1_000_000,
+    usdPerTextInputToken: 0.6 / 1_000_000,
+  },
 };
 
-/** USD to synthesize `charCount` characters with `model`, per the rates table. */
+/**
+ * Audio-output tokens per second of synthesized speech. [DOCUMENTED]-derived from
+ * the two published figures for the same model: $12/1M audio-output tokens ↔
+ * $0.015/audio-minute ⇒ 20.83 tokens/second. spike-5 §5.3 records the derivation and
+ * flags honestly that it is not directly measurable, since the endpoint returns no
+ * `usage`.
+ */
+export const TTS_AUDIO_TOKENS_PER_SECOND = 20.83;
+
+/**
+ * Seconds of speech booked per input character — the PRE-CALL bound, used by the
+ * reservation and the cap check.
+ *
+ * [MEASURED] spike-5 §2.2 synthesized the same 92-character sentence in five voices:
+ * marin 5.448 s (0.0592 s/char) · nova 6.120 s (0.0665) · alloy-instructed 7.056 s
+ * (0.0767) · coral 7.656 s (0.0832) · alloy-plain 7.752 s (**0.0843**). This books
+ * **0.096**, above the SLOWEST voice measured — because the estimate must bound the
+ * voice the learner actually chose, and both operator-chosen voices (`alloy`, `nova`)
+ * are in that range.
+ *
+ * ⇒ 0.096 × 20.83 × $12/1M ≈ **$24.0 per 1M characters**, exactly the "at least
+ * 24/1M" spike-5 §5.3 prescribed, and 2× the $12/1M this file used to charge.
+ */
+export const TTS_AUDIO_SECONDS_PER_CHARACTER = 0.096;
+
+/**
+ * Bytes per second of the mp3 this model returns. [MEASURED] spike-5 §2.2 lists
+ * duration and byte size for five renditions and every one divides to exactly
+ * 16,000 B/s (128 kbps CBR): 124032/7.752, 112896/7.056, 122496/7.656, 87168/5.448,
+ * 97920/6.120. That constancy is what makes the honest post-call charge free — the
+ * caller holds the bytes, so it knows the duration without ffprobe and without a
+ * `usage` object the endpoint does not return.
+ */
+export const TTS_MP3_BYTES_PER_SECOND = 16_000;
+
+/**
+ * USD to synthesize `charCount` characters — the PRE-CALL upper bound that is
+ * reserved and checked against the cap. Rounds the duration UP via the slowest
+ * measured voice; `ttsCostFromAudioSeconds` is the honest charge once the audio
+ * exists, and is never larger.
+ */
 export function ttsCallCost(model: TtsModelId, charCount: number): number {
-  return Math.max(0, charCount) * TTS_RATES[model].usdPerCharacter;
+  const chars = Math.max(0, charCount);
+  const r = TTS_RATES[model];
+  const audioSeconds = chars * TTS_AUDIO_SECONDS_PER_CHARACTER;
+  return (
+    audioSeconds * TTS_AUDIO_TOKENS_PER_SECOND * r.usdPerAudioOutputToken +
+    estimateTokens("x".repeat(chars)) * r.usdPerTextInputToken
+  );
+}
+
+/** USD for `seconds` of synthesized speech plus its `charCount`-sized prompt — the
+ *  honest charge, computed from the audio that actually came back. */
+export function ttsCostFromAudioSeconds(model: TtsModelId, seconds: number, charCount: number): number {
+  const r = TTS_RATES[model];
+  return (
+    Math.max(0, seconds) * TTS_AUDIO_TOKENS_PER_SECOND * r.usdPerAudioOutputToken +
+    estimateTokens("x".repeat(Math.max(0, charCount))) * r.usdPerTextInputToken
+  );
+}
+
+/** Seconds of speech in `byteCount` bytes of this model's mp3 output. */
+export function ttsAudioSecondsFromMp3Bytes(byteCount: number): number {
+  return Math.max(0, byteCount) / TTS_MP3_BYTES_PER_SECOND;
 }
 
 // ---- ask notes (E-23 Ask Erika) ------------------------------------------
@@ -296,136 +396,38 @@ export const ASK_MODEL = TEXT_MODEL;
 /** Output-token allowance for one ask-note — bounds its worst-case pre-call cost. */
 export const ASK_MAX_OUTPUT_TOKENS = 700;
 
-// ---- realtime tutor (E-34) -----------------------------------------------
+// ---- realtime tutor (E-34, rebuilt for E-43) -----------------------------
 //
-// The spoken tutor (E-34) runs on OpenAI's **Realtime** speech-to-speech models
-// over WebRTC. These bill on AUDIO TOKENS (input + output), separately from any
-// text tokens, so they carry their own rate shape — but their spend records into
-// the SAME spend_ledger and counts against the SAME monthly cap as everything else
-// (D-10). This is the MOST EXPENSIVE money path in the app, so the estimate and the
-// lease are derived here from a single, documented per-minute approximation.
+// The spoken tutor both listens AND speaks over the **Realtime** API — audio in,
+// audio out, one connection. Its price table and cost model live in
+// ./rates-realtime.ts purely so both files stay under the 500-line hook; every name is
+// re-exported here, so lib/analysis/rates.ts remains the ONE import surface for prices
+// (D-10) and no caller needs to know about the split.
 //
-// VALIDATED LIVE 2026-07-24 (operator directive — do not trust the training
-// cutoff): the flagship family is `gpt-realtime` (current version
-// `gpt-realtime-2.1`, the DEFAULT) with a cheaper `gpt-realtime-2.1-mini`; the
-// legacy `gpt-4o-realtime-preview` is not used. Both ids are real — they appear in
-// the first-party SDK model unions (`openai-python` `types/realtime/`,
-// `openai-node` `resources/realtime/calls.ts`), which enumerate
-// `gpt-realtime-1.5` | `gpt-realtime-2` | `gpt-realtime-2.1` |
-// `gpt-realtime-2.1-mini` | `gpt-realtime-2025-08-28`. This family moved from dated
-// snapshots to semver-style version ids, so `gpt-realtime-2.1` IS the pinned
-// snapshot; there is no dated variant to prefer.
-
-export const REALTIME_FLAGSHIP = "gpt-realtime-2.1" as const;
-export const REALTIME_MINI = "gpt-realtime-2.1-mini" as const;
-export type RealtimeModelId = typeof REALTIME_FLAGSHIP | typeof REALTIME_MINI;
-
-/** The Settings tier switch (WO criterion 2): flagship (default) or mini. */
-export const REALTIME_TIERS = ["flagship", "mini"] as const;
-export type RealtimeTier = (typeof REALTIME_TIERS)[number];
-
-export function realtimeModelForTier(tier: RealtimeTier): RealtimeModelId {
-  return tier === "mini" ? REALTIME_MINI : REALTIME_FLAGSHIP;
-}
-
-export interface RealtimeModelRate {
-  /** USD per audio-INPUT token (the learner's speech reaching the model). */
-  usdPerAudioInputToken: number;
-  /** USD per CACHED audio-input token — much cheaper; not used by the pre-call
-   *  estimate (which must be an upper bound), documented for recalibration. */
-  usdPerCachedAudioInputToken: number;
-  /** USD per audio-OUTPUT token (the tutor's spoken reply). */
-  usdPerAudioOutputToken: number;
-}
-
-// ⚠️ THE ERROR DIRECTIONS ARE NOT SYMMETRIC — read before editing a number down.
-// These rates drive the pre-call estimate and the reserved lease, which is what the
-// hard monthly cap is enforced against. So:
-//
-//   * OVER-estimating a rate costs the user a slightly EARLY refusal — the cap bites
-//     a little sooner than it strictly had to. Annoying; harmless.
-//   * UNDER-estimating a rate makes the cap a LIE — the modelled budget believes it
-//     has headroom the invoice will not honour, so real spend can exceed the cap the
-//     user set. Under-pricing is the ONE direction that can overshoot.
-//
-// So a rate here must be at or ABOVE reality. If a figure cannot be verified, round
-// it UP and say so on the line; never round down, and never "split the difference".
-//
-// VERIFIED 2026-07-24 by live research (the sandbox cannot reach
-// `platform.openai.com` / `developers.openai.com` — both 403 at the egress gateway —
-// so these came from machine-readable mirrors of OpenAI's own model pages, agreeing
-// across four+ independent sources): assistant-ui/modelpedia
-// (`providers/openai/models/gpt-realtime-2.1{,-mini}.json`, which mirrors the docs
-// pricing table verbatim and links back to it, 2026-07-08/09), mlflow's
-// `model_catalog/openai.json` (`last_updated_at: 2026-07-10`), LiteLLM's
-// `model_prices_and_context_window.json`, and promptfoo's OpenAI provider table.
-// This repo's own `docs/research/spike-3-extraction-tutor.md` already carried the
-// same mini figures with citations — the table below had simply not been updated
-// from it.
-//
-//   gpt-realtime-2.1       audio in $32 / 1M · cached in $0.40 / 1M · out $64 / 1M
-//   gpt-realtime-2.1-mini  audio in $10 / 1M · cached in $0.30 / 1M · out $20 / 1M
-//
-// The MINI row was previously a placeholder set at ~¼ of flagship ($8/$0.10/$16)
-// when no published figure was to hand. That UNDER-priced mini audio by 20% (real
-// rates are 25% higher than modelled) and cached mini audio by 3× — exactly the
-// unsafe direction, so it is corrected upward here. The FLAGSHIP row was already
-// right and is unchanged.
-//
-// Still the single price knob, and still an approximation in one respect: the
-// per-minute cost multiplies these by an assumed token throughput (below). The
-// standing T1 reconciliation — real `usage` from a live run against the invoice —
-// remains the real fix; the cap guards the MODELLED budget, not the invoice.
-export const REALTIME_RATES: Record<RealtimeModelId, RealtimeModelRate> = {
-  "gpt-realtime-2.1": {
-    usdPerAudioInputToken: 32 / 1_000_000,
-    usdPerCachedAudioInputToken: 0.4 / 1_000_000,
-    usdPerAudioOutputToken: 64 / 1_000_000,
-  },
-  "gpt-realtime-2.1-mini": {
-    usdPerAudioInputToken: 10 / 1_000_000,
-    usdPerCachedAudioInputToken: 0.3 / 1_000_000,
-    usdPerAudioOutputToken: 20 / 1_000_000,
-  },
-};
-
-/**
- * Assumed audio-token throughput PER ELAPSED CONVERSATION MINUTE, split by
- * direction. A spoken exchange has both parties active across a minute, and the
- * pre-call estimate must never UNDER-price (see the asymmetry note above the rate
- * table), so this deliberately over-books: ~1500 input + ~1500 output tokens per
- * elapsed minute, 3000/min all in.
- *
- * That is a CONSERVATIVE OVER-ESTIMATE, on purpose. The figures reachable in
- * 2026-07 research put realtime audio nearer ~600 input + ~1200 output tokens per
- * minute (~1800/min — see `docs/research/spike-3-extraction-tutor.md` and its
- * citations), so the default books roughly 1.7× the expected throughput. Left high
- * because it is unverified against this account's real `usage`: an over-estimate
- * only refuses slightly early, while an under-estimate would let real spend pass the
- * cap. Tunable via env; the T1 usage→invoice reconciliation is what should eventually
- * lower it (D-13). This is the ONE place the per-minute realtime cost is derived.
- */
-export function realtimeAudioTokensPerMinute(
-  raw: string | undefined = process.env.REALTIME_TOKENS_PER_MINUTE,
-): { input: number; output: number } {
-  const n = raw === undefined || raw === "" ? NaN : Number(raw);
-  const per = Number.isFinite(n) && n > 0 ? n : 1500;
-  return { input: per, output: per };
-}
-
-/** USD per elapsed conversation minute on `model`, from the token throughput and
- *  the per-token rates — the single per-minute realtime rate the estimate/lease use. */
-export function realtimePerMinuteUsd(model: RealtimeModelId): number {
-  const r = REALTIME_RATES[model];
-  const { input, output } = realtimeAudioTokensPerMinute();
-  return input * r.usdPerAudioInputToken + output * r.usdPerAudioOutputToken;
-}
-
-/** USD to run `minutes` of conversation on `model` — the per-session estimate and
- *  the reserved lease amount (WO criterion 5). Never negative. */
-export function realtimeSessionCost(model: RealtimeModelId, minutes: number): number {
-  return Math.max(0, minutes) * realtimePerMinuteUsd(model);
-}
+// Realtime spend records into the SAME spend_ledger under the SAME monthly cap as
+// everything else.
+export {
+  REALTIME_FLAGSHIP,
+  REALTIME_MINI,
+  REALTIME_TIERS,
+  DEFAULT_REALTIME_TIER,
+  isRealtimeTier,
+  realtimeModelForTier,
+  REALTIME_RATES,
+  REALTIME_AUDIO_TOKENS_PER_MINUTE,
+  REALTIME_AUDIO_OUTPUT_TOKENS_PER_MINUTE,
+  REALTIME_TEXT_OUTPUT_TOKENS_PER_MINUTE,
+  REALTIME_FRESH_TEXT_TOKENS_PER_MINUTE,
+  REALTIME_TURNS_PER_MINUTE,
+  REALTIME_CONTEXT_TOKENS_PER_TURN,
+  REALTIME_SESSION_PROMPT_TOKENS,
+  REALTIME_MIN_BILLED_MINUTES,
+  realtimeCachedTokens,
+  realtimeCostBreakdown,
+  realtimeSessionCost,
+  tutorRealtimeModel,
+} from "./rates-realtime";
+export type { RealtimeModelId, RealtimeModelRate, RealtimeCostBreakdown, RealtimeTier } from "./rates-realtime";
 
 // ---- pronunciation assessment (E-37) --------------------------------------
 //

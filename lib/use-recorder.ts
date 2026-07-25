@@ -4,11 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useMotionValue, type MotionValue } from "framer-motion";
 import {
   assembleChunks,
-  encodeWav,
   levelFromAnalyser,
   pickRecordingMime,
   TAKE_LOST_MESSAGE,
   takeOutcome,
+  toUploadableWav,
 } from "./recording";
 import type { AudioFormat } from "./session-types";
 
@@ -55,21 +55,7 @@ export interface Recorder {
 // the tab is killed mid-recording, rather than riding on one fragile buffer.
 const TIMESLICE_MS = 1000;
 
-// Decode the recorded container to PCM and re-encode as WAV. The browser can
-// decode its own MediaRecorder output; the PCM re-encode is what gives the file
-// a container duration the server's ffprobe can read.
-async function toWav(recorded: Blob): Promise<Blob> {
-  const arrayBuffer = await recorded.arrayBuffer();
-  const ctx = new AudioContext();
-  try {
-    const audio = await ctx.decodeAudioData(arrayBuffer);
-    const channels: Float32Array[] = [];
-    for (let c = 0; c < audio.numberOfChannels; c++) channels.push(audio.getChannelData(c));
-    return encodeWav(channels, audio.sampleRate);
-  } finally {
-    void ctx.close().catch(() => {});
-  }
-}
+// The container→WAV conversion is shared with the tutor (lib/recording.ts).
 
 export function useRecorder(): Recorder {
   const [status, setStatus] = useState<RecorderStatus>("idle");
@@ -189,7 +175,7 @@ export function useRecorder(): Recorder {
         const recorded = assembleChunks(chunksRef.current, mimeRef.current);
         // The live container has no duration ffprobe can read, so decode it and
         // re-encode to WAV, whose header states an exact, probeable length.
-        const wav = recorded.size > 0 ? await toWav(recorded).catch(() => null) : null;
+        const wav = recorded.size > 0 ? await toUploadableWav(recorded).catch(() => null) : null;
         const durationMs = Math.max(0, performance.now() - startedAtRef.current);
         const { take, lost } = takeOutcome(wav, startedAtEpochRef.current, durationMs);
         cleanup();

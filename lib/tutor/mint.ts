@@ -36,9 +36,24 @@ const CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
  * The EXPLICIT allowlist of session fields OpenAI recognizes on
  * `POST /v1/realtime/client_secrets`. Verified against the live OpenAI Realtime
  * `client_secrets` / RealtimeSessionCreateRequest schema (2026-07-24): the recognized
- * session fields are `type, model, instructions, audio, tools, tool_choice` (the GA
- * schema also allows `output_modalities`/`max_output_tokens`, which this tutor config
- * does not set). The endpoint **400s on any unknown param**, so the mint body is built
+ * session fields are `type, model, instructions, audio, tools, tool_choice`, plus
+ * `output_modalities` / `max_output_tokens` on the GA schema.
+ *
+ * [E-43] `output_modalities` IS ON THIS LIST, AND THIS PRODUCT HAS NOW SHIPPED BOTH OF
+ * ITS VALUES — which is the reason it is stated explicitly rather than left to the
+ * default. It carried `["text"]` while the reply was synthesized through TTS; the
+ * operator drove that and rejected its lag, so it carries `["audio"]` again
+ * (Amendment 5). Both are verified accepted by this exact route: `["text"]` in spike-6
+ * §0 and `["audio"]` — with `audio.output.voice`, all ten voices — in spike-7 §1.1/§3,
+ * both HTTP 200 and echoed back [MEASURED].
+ *
+ * The allowlist's own hazard is unchanged and worth keeping in view: the mint builds
+ * its body from THIS list rather than by spreading the config, so a field dropped from
+ * it does not 400 — it silently mints a valid session with OpenAI's default behaviour
+ * instead of ours, with every test still green. `["audio"]` happens to BE that default
+ * today, so this particular field is currently forgiving; the next one may not be.
+ *
+ * The endpoint **400s on any unknown param**, so the mint body is built
  * from THIS allowlist — NOT by spreading the internal config — so no internal-only
  * field can ride along. In particular `maxSessionSeconds` is deliberately NOT an OpenAI
  * wire field: it is an INTERNAL, server-only value that OpenAI has no parameter for.
@@ -53,6 +68,7 @@ export const MINT_SESSION_WIRE_FIELDS = [
   "type",
   "model",
   "instructions",
+  "output_modalities",
   "audio",
   "tools",
   "tool_choice",
