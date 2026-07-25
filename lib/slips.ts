@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { capturedAtSql } from "./capture-time";
 import type { Db } from "./db";
 import type { Category } from "./analysis/findings";
 import type { Grade } from "./srs";
@@ -234,9 +235,11 @@ function collectSlipFindings(db: Db): SlipFinding[] {
   }));
 }
 
-/** The `created_at` of every analysed session, oldest first (findings-model scope). */
+/** The CAPTURE time of every analysed session, oldest first (findings-model scope).
+ *  The ruler a slip's remission is measured against is "sessions you have recorded
+ *  since", so it counts recordings by when they were SPOKEN, not uploaded (E-42). */
 function analysedSessionDates(db: Db): string[] {
-  return listAnalysedSessions(db).map((s) => s.createdAt);
+  return listAnalysedSessions(db).map((s) => s.capturedAt);
 }
 
 // [RETRO-003 T3] The time-aware "positive event" green signal — reading the passing
@@ -293,7 +296,7 @@ export function listSlips(db: Db): SlipSummary[] {
   const rows = db
     .prepare(
       `SELECT sl.id AS id, sl.category AS category, sl.correction AS correction,
-              COUNT(*) AS n, MIN(s.created_at) AS first_at, MAX(s.created_at) AS last_at
+              COUNT(*) AS n, MIN(${capturedAtSql()}) AS first_at, MAX(${capturedAtSql()}) AS last_at
          FROM slips sl
          JOIN finding_slips fs ON fs.slip_id = sl.id
          JOIN findings f ON f.id = fs.finding_id
@@ -357,7 +360,7 @@ export function computeSlipStandings(db: Db): { category: Category; state: SlipS
   const dates = analysedSessionDates(db);
   const eventTimeByFinding = positiveEventTimeByFinding(db);
   const findingSession = new Map<string, string>();
-  for (const f of listIncludedFindingsWithSession(db)) findingSession.set(f.id, f.sessionCreatedAt);
+  for (const f of listIncludedFindingsWithSession(db)) findingSession.set(f.id, f.sessionCapturedAt);
   const standings: { category: Category; state: SlipState }[] = [];
   for (const c of clusters) {
     let lastAt = "";
@@ -406,12 +409,12 @@ export function getSlipDossier(db: Db, id: string): SlipDossier | null {
     .prepare(
       `SELECT f.id AS finding_id, f.quote AS quote, f.correction AS correction,
               f.session_id AS session_id, f.start_ms AS start_ms,
-              s.created_at AS at, s.original_filename AS fname
+              ${capturedAtSql()} AS at, s.original_filename AS fname
          FROM finding_slips fs
          JOIN findings f ON f.id = fs.finding_id
          JOIN sessions s ON s.id = f.session_id
         WHERE fs.slip_id = ? AND ${INCLUDED_FINDING_SCOPE}
-        ORDER BY s.created_at, f.start_ms, f.id`,
+        ORDER BY at, f.start_ms, f.id`,
     )
     .all(id) as OccurrenceRow[];
   if (occRows.length === 0) return null;

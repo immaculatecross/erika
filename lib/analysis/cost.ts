@@ -1,4 +1,4 @@
-import { MINI_MODEL, DEEP_MODELS, RATES, assumedFlagRate, type ModelId } from "./rates";
+import { MINI_MODEL, DEEP_MODELS, assumedFlagRate, callCost, type ModelId } from "./rates";
 
 // Pure pre-run cost estimator (D-10). Given the segments a run would actually
 // bill for (the *not-yet-cached* ones) it returns a USD figure from the rates
@@ -49,21 +49,21 @@ export interface EstimateOpts {
 export function estimateCost(pending: PendingSegment[], opts: EstimateOpts): CostEstimate {
   const flagRate = opts.flagRate ?? assumedFlagRate();
   const deepModel: ModelId = opts.deepModel ?? DEEP_MODELS[0];
-  const miniRate = RATES[MINI_MODEL].usdPerAudioMinute;
-  const deepRate = RATES[deepModel].usdPerAudioMinute;
 
-  let renditionMinutes = 0;
-  let nativeMinutes = 0;
+  // Priced PER CALL through the same `callCost` the run itself bills with, rather
+  // than by multiplying total minutes against a per-minute rate. Since E-42 a call
+  // carries a fixed TEXT cost as well as its audio (criterion 13 — the deep prompt
+  // is ~2,600 tokens and is re-sent on every call), so a per-minute-only estimate
+  // would under-price a run of many short segments, which is precisely what VAD
+  // produces. Segment COUNT is now part of the price, and this is where that shows.
+  let miniUsd = 0;
+  let deepUsd = 0;
   for (const seg of pending) {
-    const minutes = seg.durationMs / 60_000;
-    renditionMinutes += minutes / opts.tempo; // mini hears the compressed rendition
-    nativeMinutes += minutes; // deep hears the native-speed original
+    // Full-deep skips triage entirely and deep-listens 100%; the cascade triages all
+    // and deep-listens the assumed flagged fraction.
+    if (!opts.fullDeep) miniUsd += callCost(MINI_MODEL, seg.durationMs / opts.tempo);
+    deepUsd += (opts.fullDeep ? 1 : flagRate) * callCost(deepModel, seg.durationMs);
   }
-
-  // Full-deep skips triage entirely and deep-listens 100%; the cascade triages all
-  // and deep-listens the assumed flagged fraction.
-  const miniUsd = opts.fullDeep ? 0 : renditionMinutes * miniRate;
-  const deepUsd = (opts.fullDeep ? 1 : flagRate) * nativeMinutes * deepRate;
   return {
     pendingCount: pending.length,
     miniUsd,

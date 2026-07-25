@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { readSettings, writeSettings, SettingsValidationError } from "@/lib/settings";
 import { monthToDateSpend } from "@/lib/analysis/budget";
+import { hasAnalysisKey } from "@/lib/env-file";
 
 // API-first (D-2): a later mobile client reuses these handlers. The DB stays
 // server-side — it is never touched from a React render path. GET also reports
@@ -12,7 +13,16 @@ export const dynamic = "force-dynamic";
 
 export function GET() {
   const db = getDb();
-  return NextResponse.json({ ...readSettings(db), spentThisMonth: monthToDateSpend(db) });
+  return NextResponse.json({
+    ...readSettings(db),
+    spentThisMonth: monthToDateSpend(db),
+    // WHETHER a key is configured — never the key itself, and never any part of it
+    // (E-42 criterion 7). Settings is the one place that explains Erika needs one, so
+    // it is also the one place that can say whether it currently has one; before this
+    // the only way a new user learned a key was required was a leaked internal error
+    // string on the tutor screen.
+    analysisKeyPresent: hasAnalysisKey(),
+  });
 }
 
 export async function PUT(request: Request) {

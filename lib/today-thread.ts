@@ -1,4 +1,5 @@
 import type { Db } from "./db";
+import { capturedAtSql } from "./capture-time";
 import { localDay, localDayBoundsUtc, localHour } from "./local-day";
 import { parseItemId, getItem } from "./knowledge/items";
 
@@ -45,6 +46,13 @@ import { parseItemId, getItem } from "./knowledge/items";
 // capture time is missing or unreadable is SKIPPED, not cited — the same
 // "unverifiable ⇒ not a claim we make" stance as the rest of this module.
 //
+// [E-42] The field this reads is now `sessions.captured_at` (v28). It used to read
+// `sessions.created_at`, which is the UPLOAD instant — so this module's own stated
+// rule ("when they spoke ≠ when we noticed") was violated by the very column it
+// trusted, and a take recorded at 08:10 and uploaded at 21:30 was still reported as
+// "this evening". That was the fifth of v0.6's five mirror-image repairs: the logic
+// here was already right, and the field under it was not.
+//
 // This module WRITES NOTHING: `evidence` is append-only and read-only to E-38.
 
 /** The one beat, or null when nothing true can be said. */
@@ -63,7 +71,7 @@ interface ProducedRow {
   session_id: string | null;
   /** The SESSION's capture time — when the learner actually spoke. NULL when the
    *  session is gone, in which case the row is skipped rather than cited. */
-  session_created_at: string | null;
+  session_captured_at: string | null;
 }
 
 /**
@@ -120,14 +128,14 @@ function producedOnLocalDay(db: Db, day: string): { itemId: string; spokenMs: nu
   const rows = db
     .prepare(
       `SELECT e.item_id AS item_id, e.source_ref AS source_ref, e.session_id AS session_id,
-              s.created_at AS session_created_at
+              ${capturedAtSql()} AS session_captured_at
          FROM evidence e
          LEFT JOIN sessions s ON s.id = e.session_id
         WHERE e.source = 'finding' AND e.mode = 'spontaneous' AND e.polarity = 1
           AND e.source_ref IS NOT NULL
           AND COALESCE(s.exclude_from_evidence, 0) = 0
-          AND s.created_at IS NOT NULL
-          AND s.created_at >= ? AND s.created_at < ?`,
+          AND ${capturedAtSql()} IS NOT NULL
+          AND ${capturedAtSql()} >= ? AND ${capturedAtSql()} < ?`,
     )
     .all(sqliteUtc(startMs - CAPTURE_PREFILTER_DAYS * 86_400_000), sqliteUtc(endMs)) as ProducedRow[];
 
@@ -140,8 +148,8 @@ function producedOnLocalDay(db: Db, day: string): { itemId: string; spokenMs: nu
 
   const out: { itemId: string; spokenMs: number }[] = [];
   for (const r of rows) {
-    if (!r.session_created_at || !r.session_id) continue; // no capture time ⇒ never cited
-    const captureMs = utcMs(r.session_created_at);
+    if (!r.session_captured_at || !r.session_id) continue; // no capture time ⇒ never cited
+    const captureMs = utcMs(r.session_captured_at);
     if (Number.isNaN(captureMs)) continue; // unreadable capture time ⇒ never cited
     const hash = contentHashOfSourceRef(r.source_ref);
     if (!hash) continue; // unverifiable provenance ⇒ never cited

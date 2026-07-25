@@ -3,6 +3,7 @@ import path from "node:path";
 import { Server, type Upload } from "@tus/server";
 import { FileStore } from "@tus/file-store";
 import { ensureSessionDir, removeSessionDir, sourcePath } from "@/lib/audio-storage";
+import { CAPTURED_AT_HINT_KEY, CAPTURED_AT_KEY } from "@/lib/capture-time";
 import { finalizeStagedUpload, UploadRejected } from "@/lib/finalize-upload";
 import { getPrincipal } from "@/lib/auth/principal";
 import { maxUploadBytes, newSessionId } from "@/lib/sessions";
@@ -79,7 +80,17 @@ async function onUploadFinish(_req: Request, upload: Upload): Promise<{ status_c
     await ensureSessionDir(id);
     const dest = sourcePath(id, format || "bin");
     await copyFile(stagedPath, dest);
-    await finalizeStagedUpload({ id, filename, format, sourceFile: dest, sizeBytes });
+    await finalizeStagedUpload({
+      id,
+      filename,
+      format,
+      sourceFile: dest,
+      sizeBytes,
+      // The same two capture claims the streamed fallback sends as headers, carried
+      // here as tus metadata (E-42 criterion 5) — one gate, one resolution rule.
+      capturedAt: upload.metadata?.[CAPTURED_AT_KEY] ?? null,
+      capturedAtHint: upload.metadata?.[CAPTURED_AT_HINT_KEY] ?? null,
+    });
   } catch (err) {
     await removeSessionDir(id).catch(() => {});
     await dropUpload(upload.id);

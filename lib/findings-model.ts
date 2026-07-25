@@ -1,3 +1,4 @@
+import { capturedAtSql } from "./capture-time";
 import type { Db } from "./db";
 import type { Category, Finding, FindingRow, FindingWithSession, Severity } from "./analysis/findings";
 import { toFinding } from "./analysis/findings";
@@ -103,8 +104,14 @@ export const INCLUDED_FINDING_SCOPE = hashIsAnalysed("f.content_hash");
 /** One analysed session, with the speech that was actually listened to. */
 export interface AnalysedSessionRow {
   id: string;
-  /** SQLite UTC `created_at` — the chronological / ISO-week key. */
-  createdAt: string;
+  /**
+   * SQLite UTC `captured_at` — when the learner SPOKE, and the chronological /
+   * ISO-week key for every consumer (Focus's trend, the letter's weeks, the slips
+   * "clean sessions since" ruler). Named for what it is: this used to be
+   * `createdAt` and carried the UPLOAD instant, which put an 08:10 take uploaded at
+   * 21:30 in the wrong day and the wrong week (E-42 criterion 6, v28).
+   */
+  capturedAt: string;
   /** Σ duration of this session's ANALYSED segments, in ms (the denominator). */
   analysedSpeechMs: number;
   /** Every speech segment the session has. */
@@ -123,7 +130,7 @@ export interface AnalysedSessionRow {
 export function listAnalysedSessions(db: Db): AnalysedSessionRow[] {
   const rows = db
     .prepare(
-      `SELECT s.id AS id, s.created_at AS created_at,
+      `SELECT s.id AS id, ${capturedAtSql()} AS captured_at,
               COALESCE(SUM(CASE WHEN ${WITNESS_COMPLETE} THEN sg.duration_ms ELSE 0 END), 0) AS analysed_ms,
               COUNT(sg.id) AS segment_count,
               COALESCE(SUM(CASE WHEN ${WITNESS_COMPLETE} THEN 1 ELSE 0 END), 0) AS analysed_count
@@ -133,12 +140,12 @@ export function listAnalysedSessions(db: Db): AnalysedSessionRow[] {
         WHERE ${sessionHasOwnRun("s.id")}
         GROUP BY s.id
        HAVING analysed_count > 0
-        ORDER BY s.created_at, s.id`,
+        ORDER BY captured_at, s.id`,
     )
-    .all() as { id: string; created_at: string; analysed_ms: number; segment_count: number; analysed_count: number }[];
+    .all() as { id: string; captured_at: string; analysed_ms: number; segment_count: number; analysed_count: number }[];
   return rows.map((r) => ({
     id: r.id,
-    createdAt: r.created_at,
+    capturedAt: r.captured_at,
     analysedSpeechMs: r.analysed_ms,
     segmentCount: r.segment_count,
     analysedSegmentCount: r.analysed_count,
@@ -191,15 +198,15 @@ export function listIncludedFindings(db: Db): Finding[] {
 export function listIncludedFindingsWithSession(db: Db): FindingWithSession[] {
   const rows = db
     .prepare(
-      `SELECT f.*, s.created_at AS session_created_at, s.original_filename AS session_filename
+      `SELECT f.*, ${capturedAtSql()} AS session_captured_at, s.original_filename AS session_filename
          FROM findings f JOIN sessions s ON s.id = f.session_id
         WHERE ${INCLUDED_FINDING_SCOPE}
-        ORDER BY s.created_at DESC, f.session_id, f.start_ms, f.id`,
+        ORDER BY session_captured_at DESC, f.session_id, f.start_ms, f.id`,
     )
-    .all() as (FindingRow & { session_created_at: string; session_filename: string })[];
+    .all() as (FindingRow & { session_captured_at: string; session_filename: string })[];
   return rows.map((r) => ({
     ...toFinding(r),
-    sessionCreatedAt: r.session_created_at,
+    sessionCapturedAt: r.session_captured_at,
     sessionFilename: r.session_filename,
   }));
 }

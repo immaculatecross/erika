@@ -41,7 +41,7 @@ export type TrendDirection = "improving" | "worsening" | "flat";
 /** One analyzed session reduced to what the metrics need (the pure input row). */
 export interface AnalyzedSession {
   id: string;
-  createdAt: string;
+  capturedAt: string;
   /** Σ of the session's kept-speech segment durations, in ms. */
   speechMs: number;
   findings: { category: Category; severity: Severity }[];
@@ -92,10 +92,10 @@ function direction(earlier: number, later: number): TrendDirection {
   return "flat";
 }
 
-/** Chronological, deterministic order: by createdAt, ties broken by id. */
+/** Chronological, deterministic order: by CAPTURE time, ties broken by id (E-42). */
 function chronological(sessions: readonly AnalyzedSession[]): AnalyzedSession[] {
   return [...sessions].sort((a, b) =>
-    a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+    a.capturedAt < b.capturedAt ? -1 : a.capturedAt > b.capturedAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
   );
 }
 
@@ -191,7 +191,7 @@ export function collectAnalyzedSessions(db: Db): AnalyzedSession[] {
   }
   return listAnalysedSessions(db).map((s) => ({
     id: s.id,
-    createdAt: s.createdAt,
+    capturedAt: s.capturedAt,
     speechMs: s.analysedSpeechMs,
     findings: bySession.get(s.id) ?? [],
   }));
@@ -225,7 +225,7 @@ export interface FocusPayload extends FocusModel {
 function collectSlipHours(db: Db): SlipHourDistribution {
   return slipHourDistribution(
     listIncludedFindingsWithSession(db).map((f) => ({
-      sessionCreatedAt: f.sessionCreatedAt,
+      sessionCapturedAt: f.sessionCapturedAt,
       startMs: f.startMs,
     })),
   );

@@ -15,7 +15,7 @@ export type SlipState = "active" | "remission" | "resolved";
 /** A slip's computed standing: its state and the evidence behind it. */
 export interface SlipStanding {
   state: SlipState;
-  /** The `created_at` of the most recent session this slip occurred in. */
+  /** The CAPTURE time of the most recent session this slip occurred in (E-42). */
   lastOccurrenceAt: string;
   /** Analysed sessions strictly after the last occurrence — all necessarily clean. */
   cleanSessionsSince: number;

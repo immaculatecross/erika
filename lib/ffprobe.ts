@@ -34,3 +34,31 @@ export async function probeDurationSeconds(filePath: string): Promise<number> {
   }
   return seconds;
 }
+
+/**
+ * The container's embedded `creation_time` tag, or null (E-42 criterion 5).
+ *
+ * Phone and field recorders write this into m4a/mp4/mov; most wav and mp3 files
+ * carry nothing, which is a normal answer and NOT an error — a missing tag simply
+ * means the next capture-time source is used. So unlike `probeDurationSeconds`
+ * this NEVER throws: an absent tag, an unreadable file, or a missing ffprobe all
+ * return null, because failing to guess when a recording was made must never cost
+ * a learner the recording itself.
+ */
+export async function probeCreationTime(filePath: string): Promise<string | null> {
+  try {
+    const { stdout } = await run("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format_tags=creation_time",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ]);
+    const value = stdout.trim();
+    return value === "" || value === "N/A" ? null : value;
+  } catch {
+    return null;
+  }
+}

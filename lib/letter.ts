@@ -37,8 +37,10 @@ export interface LetterFinding {
 /** One analyzed session reduced to what the letter needs (the pure input row). */
 export interface LetterSession {
   id: string;
-  /** The session's `createdAt` (SQLite UTC) — which ISO week it falls in. */
-  createdAt: string;
+  /** The session's `capturedAt` (SQLite UTC) — when the learner SPOKE, and hence
+   *  which ISO week the recording falls in. Reading the upload instant here put an
+   *  evening-uploaded Sunday take into the following week's letter (E-42, v28). */
+  capturedAt: string;
   /** Σ of the session's kept-speech segment durations, in ms. */
   speechMs: number;
   findings: LetterFinding[];
@@ -83,8 +85,8 @@ export interface Letter {
   focusNext: LetterFocus | null;
 }
 
-function parseUtc(createdAt: string): Date {
-  return new Date(`${createdAt.replace(" ", "T")}Z`);
+function parseUtc(capturedAt: string): Date {
+  return new Date(`${capturedAt.replace(" ", "T")}Z`);
 }
 
 function pad2(n: number): string {
@@ -96,12 +98,12 @@ function ymd(d: Date): string {
 }
 
 /**
- * The Monday 00:00 UTC that opens the ISO-8601 week containing `createdAt`,
+ * The Monday 00:00 UTC that opens the ISO-8601 week containing `capturedAt`,
  * as "YYYY-MM-DD". ISO weeks run Monday→Sunday; JS `getUTCDay` is 0=Sunday, so
  * `(day + 6) % 7` is the number of days since Monday.
  */
-export function isoWeekStart(createdAt: string): string {
-  const d = parseUtc(createdAt);
+export function isoWeekStart(capturedAt: string): string {
+  const d = parseUtc(capturedAt);
   const sinceMonday = (d.getUTCDay() + 6) % 7;
   const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - sinceMonday * DAY_MS);
   return ymd(monday);
@@ -126,7 +128,7 @@ function direction(prior: number, current: number): TrendDirection {
 
 const toAnalyzed = (s: LetterSession): AnalyzedSession => ({
   id: s.id,
-  createdAt: s.createdAt,
+  capturedAt: s.capturedAt,
   speechMs: s.speechMs,
   findings: s.findings.map((f) => ({ category: f.category, severity: f.severity })),
 });
@@ -175,12 +177,12 @@ export function selectRecasts(findings: readonly LetterFinding[], limit = 3): Le
 
 /** All findings of the sessions falling inside the ISO week opened by `weekStart`. */
 function weekFindings(sessions: readonly LetterSession[], weekStart: string): LetterFinding[] {
-  return sessions.filter((s) => isoWeekStart(s.createdAt) === weekStart).flatMap((s) => s.findings);
+  return sessions.filter((s) => isoWeekStart(s.capturedAt) === weekStart).flatMap((s) => s.findings);
 }
 
 /** The rate (findings ÷ speech-hours) over a week's sessions — reuses `computeFocus`. */
 function weekRate(sessions: readonly LetterSession[], weekStart: string): number {
-  const inWeek = sessions.filter((s) => isoWeekStart(s.createdAt) === weekStart);
+  const inWeek = sessions.filter((s) => isoWeekStart(s.capturedAt) === weekStart);
   return computeFocus(inWeek.map(toAnalyzed)).overallRatePerHour;
 }
 
@@ -193,11 +195,11 @@ function weekRate(sessions: readonly LetterSession[], weekStart: string): number
  * a direction.
  */
 export function composeWeek(sessions: readonly LetterSession[], weekStart: string): Letter {
-  const inWeek = sessions.filter((s) => isoWeekStart(s.createdAt) === weekStart);
+  const inWeek = sessions.filter((s) => isoWeekStart(s.capturedAt) === weekStart);
   const focus = computeFocus(inWeek.map(toAnalyzed));
 
   const priorStart = priorWeekStart(weekStart);
-  const priorSessions = sessions.filter((s) => isoWeekStart(s.createdAt) === priorStart);
+  const priorSessions = sessions.filter((s) => isoWeekStart(s.capturedAt) === priorStart);
   const hasPrior = priorSessions.length > 0;
   const priorRate = hasPrior ? weekRate(sessions, priorStart) : null;
 
@@ -236,7 +238,7 @@ export function latestWeekWithFindings(sessions: readonly LetterSession[]): stri
   let latest: string | null = null;
   for (const s of sessions) {
     if (s.findings.length === 0) continue;
-    const week = isoWeekStart(s.createdAt);
+    const week = isoWeekStart(s.capturedAt);
     if (latest === null || week > latest) latest = week;
   }
   return latest;
@@ -281,7 +283,7 @@ export function collectLetterSessions(db: Db): LetterSession[] {
   }
   return listAnalysedSessions(db).map((s) => ({
     id: s.id,
-    createdAt: s.createdAt,
+    capturedAt: s.capturedAt,
     speechMs: s.analysedSpeechMs,
     findings: bySession.get(s.id) ?? [],
   }));

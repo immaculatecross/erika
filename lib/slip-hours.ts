@@ -26,8 +26,11 @@ export const HOURS_IN_DAY = 24;
 
 /** One finding reduced to what the distribution needs. */
 export interface SlipHourInput {
-  /** The owning session's SQLite UTC capture time ("YYYY-MM-DD HH:MM:SS"). */
-  sessionCreatedAt: string;
+  /** The owning session's SQLite UTC capture time ("YYYY-MM-DD HH:MM:SS") — when
+   *  the learner SPOKE. Reads `sessions.captured_at` (E-42, v28); it used to read
+   *  `created_at`, the UPLOAD instant, so every bar of this histogram was drawn at
+   *  the hour the file happened to be sent rather than the hour it was spoken. */
+  sessionCapturedAt: string;
   /** The finding's offset into the recording, in ms. */
   startMs: number;
 }
@@ -58,7 +61,7 @@ function parseUtc(value: string): number | null {
 export function slipHourDistribution(findings: readonly SlipHourInput[]): SlipHourDistribution {
   const buckets = new Array<number>(HOURS_IN_DAY).fill(0);
   for (const f of findings) {
-    const base = parseUtc(f.sessionCreatedAt);
+    const base = parseUtc(f.sessionCapturedAt);
     if (base === null) continue;
     const hour = localHour(new Date(base + Math.max(0, f.startMs)));
     buckets[hour] += 1;

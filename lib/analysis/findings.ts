@@ -153,10 +153,22 @@ export function isCategory(v: unknown): v is Category {
  * pipeline threw them away over a synonym.
  *
  * Every alias is an UNAMBIGUOUS synonym of exactly one category — a term that could
- * plausibly belong to two (e.g. "register", which is a word-choice error but also the
- * name of a `notes` field, or "usage") is deliberately absent, because guessing would
- * mislabel a finding and mislabelling is worse than rejecting. An unrecognised value
- * still fails the whole reply exactly as before.
+ * plausibly belong to two (e.g. "usage") is deliberately absent, because guessing
+ * would mislabel a finding and mislabelling is worse than rejecting. An unrecognised
+ * value still fails the whole reply exactly as before.
+ *
+ * [E-42 criterion 14] `register` IS NOW ACCEPTED, and it was the one label the prompt
+ * actively invited while the parser refused it. `lib/mistakes.ts` class B names a
+ * register slip as a mistake, `ENRICHED_NOTES_INSTRUCTION` puts "register" in front of
+ * the model as a field name, and D-23 makes the register dial a first-class idea — so
+ * a reply labelling a finding "register" was always likely, and the cost of refusing
+ * it was not one lost finding but the WHOLE SEGMENT (`parseDeepResponse` rejects the
+ * entire reply on an off-vocabulary category). This entry used to be excluded as
+ * "ambiguous", but the ambiguity was ours and it is now settled in one place: a
+ * register slip is a WORD-CHOICE mistake (lib/register.ts, criterion 12), the prompt
+ * says so explicitly, and the schema stores it as `vocabulary`. A class the model is
+ * asked to produce and the schema silently discards is the exact defect PR #66 existed
+ * to remove.
  */
 const CATEGORY_ALIASES: Readonly<Record<string, Category>> = {
   // vocabulary — the wrong-word class, and the aliases a model actually reaches for.
@@ -169,6 +181,7 @@ const CATEGORY_ALIASES: Readonly<Record<string, Category>> = {
   lexicon: "vocabulary",
   "false friend": "vocabulary",
   collocation: "vocabulary",
+  register: "vocabulary",
   // grammar — a wrong form, under any of its technical names.
   grammatical: "grammar",
   syntax: "grammar",
@@ -372,8 +385,10 @@ export function listFindings(db: Db, sessionId: string): Finding[] {
 
 /** A finding enriched with its session's capture date and name — for the Archive. */
 export interface FindingWithSession extends Finding {
-  /** The owning session's `created_at` (SQLite UTC) — the chronological key. */
-  sessionCreatedAt: string;
+  /** The owning session's `captured_at` (SQLite UTC) — when the learner SPOKE, and
+   *  the chronological key. Was `sessionCreatedAt`, which carried the UPLOAD instant
+   *  and put an evening-uploaded morning take on the wrong day (E-42, v28). */
+  sessionCapturedAt: string;
   /** The owning session's original filename — the group header label. */
   sessionFilename: string;
 }

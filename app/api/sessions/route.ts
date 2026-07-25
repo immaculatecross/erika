@@ -2,6 +2,7 @@ import path from "node:path";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api/error";
+import { CAPTURED_AT_HEADER, CAPTURED_AT_HINT_HEADER } from "@/lib/capture-time";
 import { getDb } from "@/lib/db";
 import {
   ensureSessionDir,
@@ -70,7 +71,17 @@ export async function POST(request: Request) {
   }
 
   try {
-    const session = await finalizeStagedUpload({ id, filename, format: ext, sourceFile: dest, sizeBytes });
+    const session = await finalizeStagedUpload({
+      id,
+      filename,
+      format: ext,
+      sourceFile: dest,
+      sizeBytes,
+      // When the learner spoke, as the client declared it (E-42 criterion 5). Never
+      // trusted blindly — `resolveCapturedAt` refuses an instant that is not sane.
+      capturedAt: request.headers.get(CAPTURED_AT_HEADER),
+      capturedAtHint: request.headers.get(CAPTURED_AT_HINT_HEADER),
+    });
     return NextResponse.json(session, { status: 201 });
   } catch (err) {
     if (err instanceof UploadRejected) return apiError(err.code, err.message, err.status);

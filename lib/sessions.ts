@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { capturedAtSql } from "./capture-time";
 import type { Db } from "./db";
 import type { AudioFormat, IngestState, Session } from "./session-types";
 
@@ -30,6 +31,7 @@ interface SessionRow {
   size_bytes: number;
   duration_seconds: number;
   created_at: string;
+  captured_at: string;
   job_state: IngestState;
   exclude_from_evidence: number;
 }
@@ -42,6 +44,7 @@ function toSession(row: SessionRow): Session {
     sizeBytes: row.size_bytes,
     durationSeconds: row.duration_seconds,
     createdAt: row.created_at,
+    capturedAt: row.captured_at,
     jobState: row.job_state,
     excludeFromEvidence: row.exclude_from_evidence === 1,
   };
@@ -49,7 +52,8 @@ function toSession(row: SessionRow): Session {
 
 const SELECT = `
   SELECT s.id, s.original_filename, s.format, s.size_bytes, s.duration_seconds,
-         s.created_at, s.exclude_from_evidence, j.state AS job_state
+         s.created_at, ${capturedAtSql()} AS captured_at,
+         s.exclude_from_evidence, j.state AS job_state
   FROM sessions s
   JOIN ingest_jobs j ON j.session_id = s.id
 `;
@@ -60,6 +64,13 @@ export interface NewSession {
   format: AudioFormat;
   sizeBytes: number;
   durationSeconds: number;
+  /**
+   * When the learner SPOKE, SQLite UTC text (E-42 criterion 5). Resolved by
+   * `resolveCapturedAt` at the finalize gate, so both upload transports land the
+   * same value. Omitted only by fixtures and legacy callers, which fall back to
+   * `datetime('now')` — the same instant `created_at` gets, i.e. the old behaviour.
+   */
+  capturedAt?: string;
 }
 
 /**
@@ -68,8 +79,8 @@ export interface NewSession {
  */
 export function createSession(db: Db, input: NewSession): Session {
   const insertSession = db.prepare(
-    `INSERT INTO sessions (id, original_filename, format, size_bytes, duration_seconds)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions (id, original_filename, format, size_bytes, duration_seconds, captured_at)
+     VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`,
   );
   const insertJob = db.prepare(`INSERT INTO ingest_jobs (id, session_id, state) VALUES (?, ?, 'queued')`);
   db.transaction(() => {
@@ -79,15 +90,27 @@ export function createSession(db: Db, input: NewSession): Session {
       input.format,
       input.sizeBytes,
       input.durationSeconds,
+      input.capturedAt ?? null,
     );
     insertJob.run(randomUUID(), input.id);
   })();
   return getSession(db, input.id)!;
 }
 
-/** Every session, newest first. */
+/**
+ * Every session, newest RECORDING first (E-42 criterion 6).
+ *
+ * Ordered by capture time, not upload time: this list is the learner's recordings,
+ * and its dates are capture dates, so sorting it by when the row happened to be
+ * written would have shown a coherent list in an incoherent order — a file recorded
+ * last Tuesday sitting above one recorded this morning because it was uploaded
+ * later. `created_at` stays as the tiebreak so same-second captures keep a stable,
+ * deterministic order.
+ */
 export function listSessions(db: Db): Session[] {
-  const rows = db.prepare(`${SELECT} ORDER BY s.created_at DESC, s.id DESC`).all() as SessionRow[];
+  const rows = db
+    .prepare(`${SELECT} ORDER BY ${capturedAtSql()} DESC, s.created_at DESC, s.id DESC`)
+    .all() as SessionRow[];
   return rows.map(toSession);
 }
 

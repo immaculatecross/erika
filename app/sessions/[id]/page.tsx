@@ -195,7 +195,10 @@ export default function SessionDetailPage() {
             <Meta label="Duration" value={formatDuration(state.session.durationSeconds)} />
             <Meta label="Size" value={formatBytes(state.session.sizeBytes)} />
             <Meta label="Format" value={state.session.format.toUpperCase()} />
-            <Meta label="Captured" value={formatCreatedAt(state.session.createdAt)} />
+            {/* "Captured" now genuinely reads the capture instant (E-42, v28). It
+                used to read `createdAt` — the upload instant — so this exact label
+                was the app's most direct statement of the wrong fact. */}
+            <Meta label="Captured" value={formatCreatedAt(state.session.capturedAt)} />
           </div>
 
           <div className="rounded-card bg-card p-6 shadow-card">

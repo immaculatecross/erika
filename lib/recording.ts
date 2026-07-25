@@ -72,12 +72,23 @@ export const TAKE_LOST_MESSAGE =
  * Decide what a stopped recording produced. `wav` is null when the take was empty
  * (the mic never delivered a byte) or when the browser could not decode its own
  * MediaRecorder output — both are a lost take, and both must be said out loud.
+ *
+ * A surviving take carries `startedAt` (the wall-clock instant recording began —
+ * `sessions.captured_at`'s authoritative source, E-42) and `durationMs` (what the
+ * keep/discard confirmation states, so the learner is deciding about a take whose
+ * length they can see rather than one they have to remember).
  */
-export function takeOutcome(wav: Blob | null): {
-  take: { blob: Blob; extension: AudioFormat } | null;
+export function takeOutcome(
+  wav: Blob | null,
+  startedAt: number,
+  durationMs: number,
+): {
+  take: { blob: Blob; extension: AudioFormat; startedAt: number; durationMs: number } | null;
   lost: boolean;
 } {
-  return wav ? { take: { blob: wav, extension: UPLOAD_FORMAT }, lost: false } : { take: null, lost: true };
+  return wav
+    ? { take: { blob: wav, extension: UPLOAD_FORMAT, startedAt, durationMs }, lost: false }
+    : { take: null, lost: true };
 }
 
 /**

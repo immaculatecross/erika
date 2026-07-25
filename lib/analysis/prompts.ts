@@ -84,11 +84,14 @@ export const PRODUCED_LEMMAS_INSTRUCTION =
   " (nouns, verbs, adjectives, adverbs). Use [] if there is nothing notable.";
 
 /**
- * The register instruction for the deep pass's CORRECTION voice (E-33, D-23). Each
- * finding's `correction` is a recast of what the learner said — the WO injects the
- * register dial here so the recast is phrased in the learner's chosen register
- * (default colto). Style only: the register never changes WHETHER something is an
- * error, only how the correct form is phrased.
+ * The register instruction for the deep pass's CORRECTION voice (E-33, D-23).
+ *
+ * What the dial does is stated in exactly ONE place — `registerInstruction`
+ * (lib/register.ts) — and composed here. This comment used to restate it, and by
+ * E-39 the restatement was false: it claimed the register "never changes WHETHER
+ * something is an error" while `lib/mistakes.ts` class B, composed into the same
+ * prompt a few lines below, told the model a plain register mismatch IS one
+ * (E-42 criterion 12). Do not re-describe the dial here; change it there.
  */
 export function recastRegisterInstruction(register: Register): string {
   return `${registerInstruction(register)} Each "correction" you give is a recast of the learner's words in this register.`;
@@ -106,7 +109,8 @@ export function recastRegisterInstruction(register: Register): string {
 export const CATEGORY_MAPPING_INSTRUCTION =
   'Map each finding onto exactly one of the five category words: "grammar" for a wrong form;' +
   ' "vocabulary" for a wrong word — a false friend, a calqued word, a wrong collocation, a noun\'s' +
-  ' own gender, or a register slip; "pronunciation" for a wrong sound; "idiom" for a fixed' +
+  " own gender, or a register slip (a register slip is a word-choice mistake: label it" +
+  ' "vocabulary", not "register"); "pronunciation" for a wrong sound; "idiom" for a fixed' +
   ' expression misused or translated literally; "phrasing" for wording that is grammatical and' +
   " understood but not how an Italian would put it. Use one of those five words exactly and" +
   " lower-case: any other value is unreadable to us and loses the whole segment.";
