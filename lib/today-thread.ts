@@ -1,6 +1,7 @@
 import type { Db } from "./db";
 import { localDay, localDayBoundsUtc, localHour } from "./local-day";
 import { parseItemId, getItem } from "./knowledge/items";
+import { learnerSpokeAnyOf } from "./speaker/own-speech";
 
 // "Today's thread" (E-38, RETRO-003 owed item, D-19). ONE factual beat connecting
 // today's plan to something the learner ACTUALLY SAID:
@@ -145,9 +146,11 @@ function producedOnLocalDay(db: Db, day: string): { itemId: string; spokenMs: nu
     if (Number.isNaN(captureMs)) continue; // unreadable capture time ⇒ never cited
     const hash = contentHashOfSourceRef(r.source_ref);
     if (!hash) continue; // unverifiable provenance ⇒ never cited
-    const segs = segmentsFor.all(r.session_id, hash) as { start_ms: number; is_user: number | null }[];
+    const segs = segmentsFor.all(r.session_id, hash) as { start_ms: number; is_user: 0 | 1 | null }[];
     if (segs.length === 0) continue; // the segment is gone — we cannot say whose voice it was
-    if (segs.some((s) => s.is_user === 0)) continue; // attributed to somebody else (E-36, D-22)
+    // The ONE speaker rule (lib/speaker/own-speech.ts); `exclude_from_evidence` is
+    // already filtered in the SQL above, so the session half is satisfied here.
+    if (!learnerSpokeAnyOf(segs, { excludeFromEvidence: false })) continue;
 
     // The moment they spoke: capture time + the segment's offset into the recording.
     // A content hash can REPEAT within one session (the same audio twice), and the

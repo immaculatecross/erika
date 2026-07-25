@@ -109,9 +109,14 @@ export function deleteSession(db: Db, id: string): boolean {
 /**
  * Set/clear the manual "not me" exclusion on a session (E-36, D-22). An excluded
  * session mints no produced-lemma positive evidence on its next analysis run,
- * regardless of the acoustic verdict. Returns whether a row existed. This does NOT
- * retroactively remove already-minted evidence (the log is append-only); it governs
- * future production credit for the session.
+ * regardless of the acoustic verdict. Returns whether a row existed.
+ *
+ * [E-39 §B1] It also takes the session's FINDINGS out of the canonical findings scope
+ * (`lib/speaker/own-speech.ts`, read by `lib/findings-model.ts`), so a recording the
+ * learner says is not them stops contributing their cards, plan, patterns and rates.
+ * That half IS retroactive and reversible — the scope re-reads the flag on every query,
+ * so flipping it back returns everything. Already-minted evidence is untouched either
+ * way: the log is append-only.
  */
 export function setSessionExcluded(db: Db, id: string, excluded: boolean): boolean {
   const info = db

@@ -226,10 +226,16 @@ export default function SessionDetailPage() {
             <UserX size={22} strokeWidth={1.5} aria-hidden className="mt-0.5 shrink-0 text-secondary" />
             <div className="min-w-0 flex-1">
               <p className="text-[15px] font-medium text-ink">This recording isn&rsquo;t me</p>
+              {/* [E-39 §B1] This used to promise "applies going forward" only. Since the
+                  findings scope reads the switch, turning it on also takes this
+                  recording's corrections out of your cards, plan, patterns and rates —
+                  so the copy has to say so. Turning it back off returns them all;
+                  vocabulary already learned is append-only and stays. */}
               <p className="mt-0.5 text-[13px] text-secondary">
-                When this recording is analyzed, Erika won&rsquo;t learn your vocabulary from it —
-                useful when it&rsquo;s someone else speaking. Applies going forward; anything already
-                learned isn&rsquo;t removed.
+                Erika won&rsquo;t treat this recording as your speech — useful when it&rsquo;s someone
+                else speaking. No vocabulary is learned from it, and nothing it found counts as your
+                mistake, so its corrections stay out of your cards and your plan. Turn this back off
+                and they return; vocabulary already learned isn&rsquo;t removed.
               </p>
             </div>
             <button

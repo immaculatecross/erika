@@ -4,6 +4,7 @@ import type { Db } from "../db";
 import { getSession } from "../sessions";
 import { readSettings } from "../settings";
 import { listSegments, type Segment } from "../segments";
+import { learnerSpoke } from "../speaker/own-speech";
 import { renditionCachePath, segmentPath } from "../audio-storage";
 import { triageTempo } from "../ingest/render";
 import {
@@ -214,14 +215,18 @@ async function deepListenSegment(
     findings,
     reservation,
   });
-  // Gate POSITIVE production credit (E-36, D-22). Findings/corrections above are
-  // untouched — a correction may still be surfaced from a mixed segment — but a
-  // produced-lemma positive is minted ONLY for the user's own speech: suppress it
-  // when this segment was attributed to a non-user speaker (`is_user === 0`), or when
-  // the whole session is manually excluded ("not me"). A null verdict (no enrollment,
-  // filter off, or a hiccup) is NOT suppressed — behaviour is identical to before
-  // attribution existed. The suppressed emits are still counted as dropped (honest yield).
-  const suppress = ctx.excludeFromEvidence || seg.isUser === 0;
+  // Gate POSITIVE production credit (E-36, D-22) through the ONE speaker rule
+  // (lib/speaker/own-speech.ts). A produced-lemma positive is minted only for the
+  // learner's own speech; a null verdict (no enrollment, filter off, or a hiccup) is
+  // NOT suppressed, so behaviour is identical to before attribution existed. The
+  // suppressed emits are still counted as dropped (honest yield).
+  //
+  // [E-39 §B1] The findings written just above are no longer "untouched": the same rule
+  // now also decides whether they are the learner's, but it decides it in the read model
+  // (`lib/findings-model.ts`) rather than by dropping rows here — the analysis of the
+  // recording stays complete and auditable, and a learner who flips "this recording
+  // isn't me" back off gets everything returned.
+  const suppress = !learnerSpoke({ isUser: seg.isUser, excludeFromEvidence: ctx.excludeFromEvidence });
   recordProducedLemmas(db, ctx.sessionId, seg.contentHash, produced, { suppress });
 }
 

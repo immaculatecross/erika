@@ -1,6 +1,7 @@
 import type { Db } from "./db";
 import type { Category, Finding, FindingRow, FindingWithSession, Severity } from "./analysis/findings";
 import { toFinding } from "./analysis/findings";
+import { learnerSegmentSql, learnerSpeechSql } from "./speaker/own-speech";
 
 // THE canonical findings read-model (E-17). One place answers "what are the
 // user's findings?" — every surface that asks (the session report, the Focus map,
@@ -22,10 +23,18 @@ import { toFinding } from "./analysis/findings";
 //     flagged it, and not `unreadable`. This is `isSegmentComplete` expressed in
 //     SQL, and it is the only thing that means "a model actually listened to this".
 //   * An **included finding** is one whose own audio is analysed — its
-//     `content_hash` carries that witness. So a finding counts from the moment the
-//     run that produced it committed it (findings and the witness are written in
-//     one transaction, lib/analysis/findings.ts), and no later process state
-//     un-says it.
+//     `content_hash` carries that witness — AND whose audio is the learner's own
+//     speech. So a finding counts from the moment the run that produced it committed
+//     it (findings and the witness are written in one transaction,
+//     lib/analysis/findings.ts), and no later process state un-says it.
+//   * **The learner's own speech** is decided by ONE rule, in
+//     `lib/speaker/own-speech.ts`, and never here: speech is the learner's unless
+//     positively attributed to somebody else (`segments.is_user = 0`) or the learner
+//     marked the recording "isn't me". Unattributed counts as the learner (D-22
+//     recall-first), so this removes nothing at all until an enrollment take exists.
+//     [E-39 §B1] Before this, `is_user` gated positive evidence only and this gate had
+//     no speaker predicate, so a bystander's mistakes became the learner's cards,
+//     slips, drills, Focus rates, patterns, letter and plan.
 //   * An **analysed session** is a session an analysis run OF ITS OWN has run on
 //     (≥1 `analysis_jobs` row past `queued`) that has at least one analysed
 //     segment; its **analysed speech** is the Σ duration of *those* segments only
@@ -97,15 +106,28 @@ function sessionHasOwnRun(sessionIdExpr: string): string {
  * `findingTallies`) Focus and the letter. No own-run check is needed here: a
  * `findings` row is only ever written by the session's own run (directly or by
  * cache reuse), so the row's existence is itself the per-session evidence.
+ *
+ * TWO clauses, both never-waivable: the audio was really analysed, and the audio is
+ * the learner's own speech (`lib/speaker/own-speech.ts` — the only place that rule is
+ * written). Parenthesised as a whole so it stays correct wherever it is interpolated.
  */
-export const INCLUDED_FINDING_SCOPE = hashIsAnalysed("f.content_hash");
+export const INCLUDED_FINDING_SCOPE = `(${hashIsAnalysed("f.content_hash")} AND ${learnerSpeechSql(
+  "f.session_id",
+  "f.content_hash",
+)})`;
 
 /** One analysed session, with the speech that was actually listened to. */
 export interface AnalysedSessionRow {
   id: string;
   /** SQLite UTC `created_at` — the chronological / ISO-week key. */
   createdAt: string;
-  /** Σ duration of this session's ANALYSED segments, in ms (the denominator). */
+  /**
+   * Σ duration of this session's ANALYSED segments that are the LEARNER'S OWN
+   * speech, in ms — the denominator of every per-hour rate. It must count exactly
+   * what the numerator counts: `findingTallies` excludes a bystander's findings, so
+   * counting a bystander's minutes here would silently deflate every rate the app
+   * states about the learner. [E-39 §B1]
+   */
   analysedSpeechMs: number;
   /** Every speech segment the session has. */
   segmentCount: number;
@@ -124,7 +146,9 @@ export function listAnalysedSessions(db: Db): AnalysedSessionRow[] {
   const rows = db
     .prepare(
       `SELECT s.id AS id, s.created_at AS created_at,
-              COALESCE(SUM(CASE WHEN ${WITNESS_COMPLETE} THEN sg.duration_ms ELSE 0 END), 0) AS analysed_ms,
+              COALESCE(SUM(CASE WHEN ${WITNESS_COMPLETE}
+                             AND ${learnerSegmentSql("sg.is_user", "s.exclude_from_evidence")}
+                           THEN sg.duration_ms ELSE 0 END), 0) AS analysed_ms,
               COUNT(sg.id) AS segment_count,
               COALESCE(SUM(CASE WHEN ${WITNESS_COMPLETE} THEN 1 ELSE 0 END), 0) AS analysed_count
          FROM sessions s

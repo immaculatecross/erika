@@ -266,13 +266,23 @@ export type PinOutcome =
  * bare "____ · pronunciation" — a card that cannot be answered. Minting it on request
  * does not make it work; it just means we broke it because the user asked. The pin route
  * sends these to the studio instead, which is the surface that can actually drill them.
+ *
+ * [E-39 §B6] This read used to be a bare `SELECT … FROM findings WHERE id = ?` with no
+ * inclusion gate — the one user-triggerable write path that could act on a finding the
+ * canonical scope hides (an `unreadable` segment's, or since §B1 another speaker's),
+ * which also falsified `lib/findings-model.ts`'s claim that EVERY single-finding read
+ * goes through it. It now applies `INCLUDED_FINDING_SCOPE`, the same fragment
+ * `generateCards` 60 lines above already uses, so the scope is still decided in exactly
+ * one place and an out-of-scope pin answers `not_found` — the same answer the Phrasebook
+ * row it was reached from would give.
  */
 export function pinFinding(db: Db, findingId: string): PinOutcome {
   return db.transaction((): PinOutcome => {
     const f = db
       .prepare(
-        `SELECT id, session_id, quote, correction, explanation, category, start_ms
-           FROM findings WHERE id = ?`,
+        `SELECT f.id AS id, f.session_id AS session_id, f.quote AS quote, f.correction AS correction,
+                f.explanation AS explanation, f.category AS category, f.start_ms AS start_ms
+           FROM findings f WHERE f.id = ? AND ${INCLUDED_FINDING_SCOPE}`,
       )
       .get(findingId) as GeneratableFinding | undefined;
     if (!f) return { status: "not_found" };
