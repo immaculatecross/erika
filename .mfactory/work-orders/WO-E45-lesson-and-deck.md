@@ -81,3 +81,17 @@ Operator, on approving the v0.7 plan: *"aim for a really complete, usable, intui
 **D-28 — where STT is and is not allowed.** Criterion 2's voice-answered drills are explicitly **permitted** to use speech-to-text, because a drill has a **known correct answer** and is therefore scripted assessment (D-21's standing allowance), not free-spoken error detection. What you must not do is let that STT path leak into anything that judges the learner's *spontaneous* speech — D-3 and D-28 forbid it, and the tutor's listening leg is not yours to touch.
 
 This makes criterion 2's honesty requirement sharper, not softer: **a learner whose correct spoken answer is mis-transcribed must have a way to be right.** Design that deliberately — it is the single most corrosive failure a language app can have, and it lands hardest on exactly this product's user, an advanced speaker with an accent. Say in the PR body what you chose and what happens on the third consecutive mishearing.
+
+---
+
+## Amendment 3 — 2026-07-25 · **Criterion 5 (the speaker predicate) is WITHDRAWN. Do not touch `lib/findings-model.ts`.**
+
+Operator ruling, on being told this milestone would change what analysis surfaces: *"I don't think we need the speaker thing right now, maybe add it in the future."* Context for the ruling: they had just driven the merged E-42 capture path and reported that **record and speech analysis work well**, asking that it be kept and not otherwise changed.
+
+**So criterion 5 is out of this milestone.** `lib/findings-model.ts` is **frozen** for E-45 — do not add a speaker predicate, do not change the inclusion scope, do not alter which findings any surface sees. If your work needs to read findings, read them through the gate exactly as it is today.
+
+**Criterion 6 stands and is unaffected:** `pinFinding` still reads `findings` raw with no inclusion gate, violating CLAUDE.md's own E-17 rule and falsifying `findings-model.ts`'s own comment about itself. Routing it *through* the existing gate changes no scope — it makes one outlier obey the rule every other read site already follows. That is a compliance fix, not a behaviour change, and you must confirm in the PR body that it alters no surface's finding set. If you find that it *does* change what a user sees, stop and report it rather than proceeding.
+
+**What we are knowingly accepting by deferring, recorded so it is not forgotten:** a bystander's mistakes continue to become the learner's cards, slips and drills. E-36 gates *positive* evidence only, `is_user` is still read in two places under two different rules, and the findings gate still has no speaker predicate — so the half of speaker attribution that matters most for accuracy remains unwired. This is a **recorded known limitation**, not a closed issue, and it returns as its own item in v0.8 (→ E-39). The operator's reasoning is sound for now: the analysis output is good today, they have not been bothered by bystander findings in practice, and a change that silently *removes* findings from a path they just judged as working is the wrong thing to ship without their having asked for it.
+
+**Consequence for your scope:** this milestone is now purely about the teaching surface — one lesson format, click-or-voice drills, and answerable card fronts. It touches no analysis behaviour at all. Say so plainly in your PR body.
