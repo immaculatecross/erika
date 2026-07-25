@@ -3,7 +3,7 @@ import { recordEvidence } from "./evidence";
 import { rebuildItem } from "./derive";
 import { itemExists } from "./items";
 import { placementSeedRef, recordPlacementRun } from "./placement-runs";
-import { bandIndex, type Band } from "../placement/scoring";
+import { bandIndex, invalidatesMeasurement, type Band, type PlacementCaveat } from "../placement/scoring";
 
 // Seeding the knowledge model from a placement result (E-35, D-19). Placement is a
 // yes/no RECOGNITION test, so everything it writes is `mode:'recognition'` positive
@@ -45,6 +45,29 @@ import { bandIndex, type Band } from "../placement/scoring";
 // The append-only log DOES grow across placements, and that is correct — every
 // observation ever made is retained and auditable. Nothing is updated or deleted, so the
 // v14 triggers are never touched.
+//
+// AN UNMEASURABLE RUN WRITES NOTHING (REVIEW-63 F1). `MAX_FALSE_ALARM_RATE` used to gate
+// PRESENTATION only: the route called this function unconditionally, so a run the screen
+// described as "Nothing has been assumed about your level — your daily plan is unchanged"
+// still wrote 39 recognition rows, and across 15 check seeds 1 in 15 measurably changed
+// the next day's vocabulary list. A second face of the same seam: a 3-of-4 careless run
+// (fa 0.625) was placed at A2 with a caveat and seeded 65 rules + 38 words.
+//
+// Both are now refused at the seam rather than described more carefully, because the words
+// are as unmeasured as the level: an INVALIDATING caveat (`invalidatesMeasurement` —
+// `response-style`, or `no-control` when there were no non-words at all, REVIEW-64 N3) means
+// a "yes" on a real word carries no more information than a "yes" on a non-word. Seeding
+// from it would be recording a response style as vocabulary.
+//
+// Refusing means writing NOTHING — not even the run row. Recording a run is precisely what
+// supersedes the previous one (`VISIBLE_PLACEMENT_EVIDENCE`), so an empty run would retract
+// an earlier honest placement and empty the daily plan: the copy's "your daily plan is
+// unchanged" would be false in the other direction. An unmeasurable check is a non-event.
+//
+// A caveat that merely LIMITS the measurement (`thin-sample`, `inconsistent`) still measured
+// something real, so it seeds what it measured and records a run — which supersedes, and
+// therefore genuinely does change the daily plan. That is legitimate, but it is not silent:
+// `supersededItems` is returned and the result screen states it (REVIEW-64 F4).
 
 /** True once this item already carries a recognition row from THIS run — so one run
  *  cannot write a target twice. Deliberately scoped to the run: a row from an earlier,
@@ -88,11 +111,20 @@ export interface SeedPlacementInput {
   calibrated?: boolean;
   /** The run's measured false-alarm rate — recorded on the run for provenance. */
   falseAlarmRate?: number | null;
+  /** Why the estimate is rough, from the scorer, or null when it is trustworthy. An
+   *  INVALIDATING caveat REFUSES the whole seeding (REVIEW-63 F1, REVIEW-64 N3) — see the
+   *  header. Others seed normally: a thin or uneven check still measured something.
+   *
+   *  [REVIEW-64 N2] REQUIRED, not optional. This is the gate on a belief-forming write path,
+   *  and an optional gate fails OPEN: omitting the argument silently restored the un-gated
+   *  behaviour and still typechecked. Pass `null` to mean "no caveat", explicitly. */
+  caveat: PlacementCaveat | null;
 }
 
 export interface SeedPlacementResult {
-  /** The run this seeding belongs to. A later run supersedes it. */
-  runId: string;
+  /** The run this seeding belongs to. A later run supersedes it. Null when the run was
+   *  refused as unmeasurable, in which case nothing at all was written. */
+  runId: string | null;
   seededWords: number;
   seededRules: number;
   /** Items a PREVIOUS placement had seeded that this one does not — re-derived, so they
@@ -109,8 +141,16 @@ export interface SeedPlacementResult {
  * every `recordEvidence` below (each of which re-derives its item) already sees the new
  * world. Items the previous runs claimed and this one does not are re-derived explicitly
  * at the end — that is the step that actually re-places the learner.
+ *
+ * A run with an INVALIDATING caveat is refused before any write: no run, no evidence, no
+ * re-derivation (REVIEW-63 F1, REVIEW-64 N3). The UI's "nothing has been assumed, your daily
+ * plan is unchanged" is then literally what happened.
  */
 export function seedPlacement(db: Db, input: SeedPlacementInput): SeedPlacementResult {
+  if (invalidatesMeasurement(input.caveat)) {
+    return { runId: null, seededWords: 0, seededRules: 0, supersededItems: 0 };
+  }
+
   const previouslySeeded = everPlacementSeeded(db);
   const runId = recordPlacementRun(db, {
     level: input.level,

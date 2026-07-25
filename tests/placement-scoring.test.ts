@@ -77,12 +77,18 @@ describe("scorePlacement — a realistic responder recovers the seeded band (cri
 });
 
 describe("scorePlacement — false-alarm correction moves the estimate (criterion 1)", () => {
-  // Same hit rates, two false-alarm rates. Without correction B1 (hit 0.7) clears
-  // the 0.5 threshold; with fa 0.5 it drops below it and the level falls to A2.
+  // Same hit rates, two false-alarm rates. Without correction B1 (hit 0.55) clears the
+  // 0.5 threshold; with fa 0.125 it drops below it and the level falls to A2.
+  //
+  // [REVIEW-63 N2] The fa used to be 0.5 — which now trips MAX_FALSE_ALARM_RATE and is
+  // refused a level entirely, so it could no longer show a level MOVING. The rates here
+  // are deliberately BELOW the threshold: this block is about the correction's arithmetic,
+  // and it now demonstrates it on a responder the scorer actually trusts. The
+  // past-threshold behaviour is asserted separately, below.
   const hits = [
     ...reals("A1", 8, true), // 1.0
-    ...realsFrac("A2", 10, 0.9), // 0.9
-    ...realsFrac("B1", 10, 0.7), // 0.7
+    ...realsFrac("A2", 8, 0.9), // 0.875
+    ...realsFrac("B1", 20, 0.55), // 0.55
     ...reals("B2", 8, false), // 0
     ...reals("C1", 8, false),
     ...reals("C2", 8, false),
@@ -91,17 +97,31 @@ describe("scorePlacement — false-alarm correction moves the estimate (criterio
   it("no false alarms → the raw hit rate stands (level B1)", () => {
     const r = scorePlacement([...hits, ...pseudos(16, false)]);
     expect(r.level).toBe("B1");
-    expect(r.bands.find((b) => b.band === "B1")!.corrected).toBeCloseTo(0.7, 5);
+    expect(r.bands.find((b) => b.band === "B1")!.corrected).toBeCloseTo(0.55, 5);
+    expect(r.calibrated).toBe(true);
   });
 
-  it("a yes-biased responder (fa 0.5) is corrected DOWN → level A2", () => {
-    // Deterministic fa 0.5: 8 of 16 non-words marked known.
-    const withFa = scorePlacement([...hits, ...pseudos(8, true), ...pseudos(8, false)]);
-    expect(withFa.falseAlarmRate).toBeCloseTo(0.5, 5);
+  it("a yes-biased responder (fa 0.125) is corrected DOWN → level A2", () => {
+    // Deterministic fa 0.125: 2 of 16 non-words marked known — careless, not past the
+    // threshold, so the estimate still stands and can be compared.
+    const withFa = scorePlacement([...hits, ...pseudos(2, true), ...pseudos(14, false)]);
+    expect(withFa.falseAlarmRate).toBeCloseTo(0.125, 5);
+    expect(withFa.calibrated).toBe(true); // still a measurement
     const b1 = withFa.bands.find((b) => b.band === "B1")!;
-    expect(b1.corrected).toBeCloseTo((0.7 - 0.5) / 0.5, 5); // 0.4 — below threshold
+    expect(b1.corrected).toBeCloseTo((0.55 - 0.125) / 0.875, 5); // 0.486 — below threshold
     expect(b1.corrected).toBeLessThan(b1.hitRate); // correction moved it DOWN
     expect(withFa.level).toBe("A2"); // fell from B1
+  });
+
+  it("past the threshold the correction stops being a measurement — no level at all", () => {
+    // [REVIEW-63 F1] fa 0.5 used to return level A2 with a caveat attached. Half the
+    // invented words claimed as known means a "yes" on a real word carries no more
+    // information than a "yes" on a non-word; there is nothing to hedge.
+    const withFa = scorePlacement([...hits, ...pseudos(8, true), ...pseudos(8, false)]);
+    expect(withFa.falseAlarmRate).toBeCloseTo(0.5, 5);
+    expect(withFa.caveat).toBe("response-style");
+    expect(withFa.calibrated).toBe(false);
+    expect(withFa.level).toBeNull();
   });
 
   it("the correction never invents recognition: threshold is a shared constant", () => {
@@ -111,11 +131,27 @@ describe("scorePlacement — false-alarm correction moves the estimate (criterio
 });
 
 describe("scorePlacement — thin samples degrade truthfully (criterion 1)", () => {
-  it("marks the result uncalibrated when there are too few pseudowords/band items", () => {
+  // [REVIEW-63 N1] This test used to assert that a 2-item A1 sample with 2 non-words
+  // still yielded `level: "A1"` — "a level is still offered (honest best guess), just
+  // flagged uncalibrated". That best guess was the hole: because an unmeasured band was
+  // walked through as if cleared, the same leniency let a crafted 16-answer POST claim a
+  // CONFIDENT C2 with zero evidence about A1–C1. A level below which bands were never
+  // measured is not a best guess, it is an invention, so it is now refused and the reason
+  // is reported. The check the UI actually builds (8 per band, 16 non-words) is unaffected.
+  it("refuses a level when a band was never measured, and says why", () => {
     const r = scorePlacement([...reals("A1", 2, true), ...pseudos(2, false)]);
     expect(r.calibrated).toBe(false); // below MIN_PSEUDO / MIN_PER_BAND
-    // A level is still offered (honest best guess), just flagged uncalibrated.
-    expect(r.level).toBe("A1");
+    expect(r.level).toBeNull();
+    expect(r.caveat).toBe("thin-sample");
+    // The band that WAS asked is still reported honestly — the diagnostic survives.
+    expect(r.highestCleared).toBe("A1");
+  });
+
+  it("a full-scale check with too few non-words is thin, not inconsistent", () => {
+    const r = scorePlacement([...BANDS.flatMap((b) => reals(b, 8, b === "A1")), ...pseudos(2, false)]);
+    expect(r.level).toBe("A1"); // every band measured, so the run below A1 holds
+    expect(r.caveat).toBe("thin-sample"); // too few non-words to trust the correction
+    expect(r.calibrated).toBe(false);
   });
 });
 

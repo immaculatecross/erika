@@ -35,6 +35,12 @@ export interface PlacementAnswer {
 export interface BandScore {
   band: Band;
   presented: number;
+  /** DISTINCT lemma item ids answered in this band — how many different words the band was
+   *  actually measured with. [REVIEW-64 N4] `presented` counts ANSWERS, so four duplicates
+   *  of one word satisfied `MIN_PER_BAND` and yielded `level C2, calibrated true` from six
+   *  distinct words in all. Only this count may gate a claim. An answer with no `itemId` is
+   *  an unidentifiable word and cannot be told apart from a repeat, so it does not count. */
+  distinctItems: number;
   /** Real words in this band the learner marked known. */
   hits: number;
   /** hits / presented, uncorrected. */
@@ -49,12 +55,31 @@ export interface BandScore {
  * not by sample size alone (RETRO-004 §DE-2 — see `scorePlacement`).
  */
 export type PlacementCaveat =
+  /** No non-words were presented at all, so response style was never measured and the
+   *  yes-bias correction has nothing to correct with (REVIEW-64 N3). */
+  | "no-control"
   /** Too many non-words claimed as known: the answers do not separate known from unknown. */
   | "response-style"
   /** A band above the claimed level cleared while a band below it failed — noise, not a level. */
   | "inconsistent"
-  /** Too few items to estimate from. */
+  /** Too few items to estimate from — too few non-words, or a frequency band never measured
+   *  with `MIN_PER_BAND` DISTINCT words (REVIEW-63 N1, REVIEW-64 N4). */
   | "thin-sample";
+
+/**
+ * The caveats that invalidate the INSTRUMENT rather than merely limiting it. The answers
+ * cannot be interpreted at all, so no level is claimed and — at the seam — nothing is
+ * written (`seedPlacement`). The rest (`thin-sample`, `inconsistent`) still measured
+ * something real, so they seed what they measured and the UI states it.
+ *
+ * [REVIEW-64 N3] `no-control` joins `response-style` here because both mean the same thing:
+ * a "yes" on a real word cannot be told from a guess. With no non-words at all the
+ * false-alarm rate is not low, it is *absent* — and defaulting it to 0 made an unmeasured
+ * response style read as a perfect one, which is REVIEW-63 N1's error in a second place.
+ */
+export function invalidatesMeasurement(caveat: PlacementCaveat | null): boolean {
+  return caveat === "response-style" || caveat === "no-control";
+}
 
 export interface PlacementResult {
   /** Non-words marked "known" ÷ non-words presented — the response-style measure. */
@@ -62,14 +87,20 @@ export interface PlacementResult {
   pseudoPresented: number;
   bands: BandScore[];
   /** The level claimed: the top of the CONTIGUOUS run of cleared bands starting at A1,
-   *  or null when A1 itself is not reliably recognized. Never a high band floating above
-   *  failed lower ones (§DE-2). */
+   *  or null when A1 itself is not reliably recognized, when a band below the run was not
+   *  measured with `MIN_PER_BAND` distinct words (REVIEW-63 N1, REVIEW-64 N4), or when
+   *  the non-word control failed or was absent (REVIEW-63 F1, REVIEW-64 N3 —
+   *  `invalidatesMeasurement`). Never a high band floating above failed, or unmeasured,
+   *  lower ones (§DE-2). */
   level: Band | null;
   /** The highest band clearing the threshold whether or not the run below it holds —
    *  DIAGNOSTIC ONLY. Kept because the gap between this and `level` is precisely what
    *  the old scorer mistook for a level. */
   highestCleared: Band | null;
-  /** True when `level` and `highestCleared` agree — no cleared band above a failed one. */
+  /** True when the MEASURED contiguous run reaches `highestCleared` — no cleared band
+   *  floating above a failed or unmeasured one. A band-coherence diagnostic only: it is
+   *  computed before the response-style refusal, so a `response-style` run can report
+   *  `contiguous: true` alongside `level: null`. */
   contiguous: boolean;
   /** Why the estimate is rough, or null when it is trustworthy. */
   caveat: PlacementCaveat | null;
@@ -82,8 +113,22 @@ export interface PlacementResult {
 /** Corrected recognition at or above this counts a band as reliably recognized. */
 export const RECOGNITION_THRESHOLD = 0.5;
 
-/** Below these sample sizes the estimate is reported uncalibrated (still returned,
- *  but flagged so the UI says so — D-13). */
+/** Below these sample sizes the check has not measured enough to place anyone.
+ *
+ *  [REVIEW-63 N1] `MIN_PER_BAND` used to affect only the `calibrated` flag, and a band
+ *  with `presented === 0` was skipped by the level walk as if it were transparent. So a
+ *  crafted 16-answer POST (8 C2 words known, 8 pseudowords rejected) returned
+ *  `level: "C2", calibrated: true, caveat: null` and seeded 238 rules with ZERO evidence
+ *  about A1–C1. Every band must now reach `MIN_PER_BAND` before any level may be claimed:
+ *  an unmeasured band BREAKS the run rather than being walked through. Not reachable from
+ *  the shipped UI (`buildPlacementCheck` always emits 8×6 real + 16 pseudo), but the route
+ *  accepts arbitrary answers and "not reachable today" is how the §DE-2 defects were
+ *  justified.
+ *
+ *  [REVIEW-64 N3/N4] `MIN_PER_BAND` counts DISTINCT words (`BandScore.distinctItems`), and
+ *  `MIN_PSEUDO`'s subject — the non-word control — must at minimum EXIST: `pseudoPresented
+ *  === 0` is `no-control`, not a false-alarm rate of zero. Both were the same hole in a
+ *  different place: something never measured being read as something that passed. */
 export const MIN_PSEUDO = 8;
 export const MIN_PER_BAND = 4;
 
@@ -95,9 +140,18 @@ export const MIN_PER_BAND = 4;
  * returned `calibrated: true` and the UI showed a bare "Placed around C2." with no
  * caveat. The most wrong placements were shown the most confidently. A learner
  * discriminating properly sits near 0; 0.25 (4 of 16 non-words) is already careless,
- * and past it the yes-bias correction is extrapolating from a response style rather
- * than measuring vocabulary. The correction still applies below the threshold — this
- * only decides whether the result may be presented as confident.
+ * and at or past it the yes-bias correction is extrapolating from a response style rather
+ * than measuring vocabulary. The correction still applies below the threshold.
+ *
+ * [REVIEW-63 N2] The comparison is INCLUSIVE (`fa >= MAX_FALSE_ALARM_RATE`). It used to be
+ * exclusive, so exactly 4 of 16 non-words claimed known — the value this comment calls
+ * "already careless" — read as `calibrated: true` with no caveat and seeded 238 rules. The
+ * code and its own prose now agree, and they agree in the safe direction: refuse rather
+ * than over-claim.
+ *
+ * [REVIEW-63 F1] Reaching this threshold no longer only softens the PRESENTATION. It
+ * refuses the level outright (`level: null`) and, at the seam, refuses to write anything
+ * at all — see `seedPlacement`.
  */
 export const MAX_FALSE_ALARM_RATE = 0.25;
 
@@ -112,23 +166,30 @@ function clamp01(x: number): number {
  * who says yes to everything has fa = 1, so every corrected value collapses to 0
  * (they read as a true beginner, not advanced — the whole point of the non-words).
  *
- * The level is the top of the CONTIGUOUS run of cleared bands starting at A1, and the
- * result carries a `caveat` whenever it must not be presented as confident.
+ * The level is the top of the CONTIGUOUS run of MEASURED, cleared bands starting at A1,
+ * and the result carries a `caveat` whenever it must not be presented as confident. When
+ * the non-word control fails (`fa >= MAX_FALSE_ALARM_RATE`) or was never administered at
+ * all (REVIEW-64 N3) no level is returned: there is nothing to hedge, only answers
+ * (REVIEW-63 F1, and `invalidatesMeasurement`).
  */
 export function scorePlacement(answers: PlacementAnswer[]): PlacementResult {
   const pseudo = answers.filter((a) => a.kind === "pseudo");
   const pseudoPresented = pseudo.length;
   const falseAlarms = pseudo.filter((a) => a.known).length;
+  // [REVIEW-64 N3] With no non-words the 0 below is a DEFAULT, not a measurement — an
+  // unmeasured response style would otherwise read as a perfect one, the most flattering
+  // value available. The `no-control` caveat carries that, and refuses the level.
   const fa = pseudoPresented > 0 ? falseAlarms / pseudoPresented : 0;
 
   const bands: BandScore[] = BANDS.map((band) => {
     const inBand = answers.filter((a) => a.kind === "real" && a.band === band);
     const presented = inBand.length;
+    const distinctItems = new Set(inBand.map((a) => a.itemId).filter((id): id is string => typeof id === "string")).size;
     const hits = inBand.filter((a) => a.known).length;
     const hitRate = presented > 0 ? hits / presented : 0;
     // fa ≥ 1 means every non-word was accepted: no signal survives the correction.
     const corrected = presented === 0 || fa >= 1 ? 0 : clamp01((hitRate - fa) / (1 - fa));
-    return { band, presented, hits, hitRate, corrected };
+    return { band, presented, distinctItems, hits, hitRate, corrected };
   });
 
   const clears = (b: BandScore) => b.presented >= 1 && b.corrected >= RECOGNITION_THRESHOLD;
@@ -142,31 +203,64 @@ export function scorePlacement(answers: PlacementAnswer[]): PlacementResult {
   // up 1.00 — one band of sampling noise deciding everything, and the scorer never
   // noticed it was placing a learner who cannot recognize the thousand commonest words
   // at the top of the scale. Requiring the run to hold from A1 means a false pass now
-  // needs EVERY lower band to pass too, which noise does not do; a band that was
-  // genuinely not sampled (presented 0) is skipped rather than breaking the run.
-  let level: Band | null = null;
+  // needs EVERY lower band to pass too, which noise does not do.
+  //
+  // [REVIEW-63 N1] An UNMEASURED band now breaks the run too. It used to be skipped
+  // (`if (b.presented === 0) continue`), on the reasoning that a band nobody sampled
+  // should not count against the learner — but "does not count against" quietly became
+  // "is treated as cleared", and a hand-built 16-answer POST reached a confident C2 with
+  // no evidence at all about A1–C1. A band below the claimed level must be MEASURED and
+  // cleared, not merely not-failed, so a band short of `MIN_PER_BAND` stops the walk.
+  //
+  // [REVIEW-64 N4] Measured in DISTINCT words, not answers: four copies of one word per
+  // band (32 answers over six distinct words) used to return `level C2, calibrated true,
+  // caveat null` and seed 238 rules. Repeating a word is not sampling a band.
+  let measuredLevel: Band | null = null;
   for (const b of bands) {
-    if (b.presented === 0) continue;
+    if (b.distinctItems < MIN_PER_BAND) break;
     if (!clears(b)) break;
-    level = b.band;
+    measuredLevel = b.band;
   }
 
-  // Diagnostic: the old, credulous answer. Where it exceeds `level`, a cleared band is
-  // floating above a failed one — an incoherent result, reported as such.
+  // Diagnostic: the old, credulous answer. Where it exceeds the measured run, a cleared
+  // band is floating above a failed or unmeasured one — incoherent, reported as such.
   let highestCleared: Band | null = null;
   for (const b of bands) if (clears(b)) highestCleared = b.band;
-  const contiguous = level === highestCleared;
+  const contiguous = measuredLevel === highestCleared;
 
-  const countedBands = bands.filter((b) => b.presented > 0);
-  const sampleOk =
-    pseudoPresented >= MIN_PSEUDO &&
-    countedBands.length > 0 &&
-    countedBands.every((b) => b.presented >= MIN_PER_BAND);
+  // [REVIEW-63 N1] Every band on the scale, not just the ones that happened to be
+  // sampled: `countedBands.every(...)` was vacuously true for a submission that skipped
+  // five of the six bands. [REVIEW-64 N4] And in distinct words, as the walk above.
+  const sampleOk = pseudoPresented >= MIN_PSEUDO && bands.every((b) => b.distinctItems >= MIN_PER_BAND);
 
-  // Ordered by how much each undermines the estimate. Response style comes first: if
-  // the non-word control failed there is no measurement to caveat, only answers.
+  // Ordered by how much each undermines the estimate. The two that invalidate the
+  // instrument come first (`invalidatesMeasurement`): if the non-word control failed, or was
+  // never administered, there is no measurement to caveat — only answers.
+  //
+  // [REVIEW-63 N1] `thin-sample` precedes `inconsistent`. When part of the scale was never
+  // measured the run is not contiguous either, and "recognition was uneven" would be a false
+  // explanation — the more common words were not asked, not refused. What is missing is the
+  // measurement, so that is what gets reported.
   const caveat: PlacementCaveat | null =
-    fa > MAX_FALSE_ALARM_RATE ? "response-style" : !contiguous ? "inconsistent" : !sampleOk ? "thin-sample" : null;
+    pseudoPresented === 0
+      ? "no-control"
+      : fa >= MAX_FALSE_ALARM_RATE
+        ? "response-style"
+        : !sampleOk
+          ? "thin-sample"
+          : !contiguous
+            ? "inconsistent"
+            : null;
+
+  // [REVIEW-63 F1] A failed non-word control refuses the LEVEL, not just its confidence.
+  // The scorer's own principle (above): if the control failed there is no measurement to
+  // caveat, only answers — so "Placed around A2, roughly" was still one claim too many.
+  // Measured before this fix: a 3-of-4 careless run (fa 0.625) returned `level: "A2"` and
+  // seeded 65 rules + 38 words under a "rough placement" line. [REVIEW-64 N3] An ABSENT
+  // control is refused on the same reasoning, and for the same numbers: 48 real answers with
+  // zero non-words returned `level C2` and 238 rules.
+  // `contiguous`/`highestCleared` keep reporting what the bands did, for diagnosis.
+  const level = invalidatesMeasurement(caveat) ? null : measuredLevel;
 
   return {
     falseAlarmRate: fa,

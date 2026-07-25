@@ -46,7 +46,7 @@ describe("seedPlacement — recognition-only evidence never mints known (criteri
   it("a recognized real word reaches introduced, NEVER known", () => {
     const db = freshDb();
     const id = someLemmaId(db);
-    const res = seedPlacement(db, { level: null, recognizedItemIds: [id] });
+    const res = seedPlacement(db, { level: null, recognizedItemIds: [id], caveat: null });
     expect(res.seededWords).toBe(1);
     expect(getItem(db, id)!.status).toBe("introduced");
     expect(getItem(db, id)!.status).not.toBe("known");
@@ -55,7 +55,7 @@ describe("seedPlacement — recognition-only evidence never mints known (criteri
 
   it("seeded sub-level grammar rules reach introduced, none reach known", () => {
     const db = freshDb();
-    const res = seedPlacement(db, { level: "B1", recognizedItemIds: [] });
+    const res = seedPlacement(db, { level: "B1", recognizedItemIds: [], caveat: null });
     expect(res.seededRules).toBeGreaterThan(0);
     // Every rule at/below B1 is now introduced; no rule anywhere is known.
     const rules = db.prepare("SELECT id, cefr, status FROM knowledge_items WHERE kind='rule'").all() as {
@@ -101,8 +101,8 @@ describe("seedPlacement — recognition-only evidence never mints known (criteri
   it("re-runs seed afresh under a new run; the visible log stays one row per item", () => {
     const db = freshDb();
     const id = someLemmaId(db);
-    const first = seedPlacement(db, { level: "A2", recognizedItemIds: [id] });
-    const second = seedPlacement(db, { level: "A2", recognizedItemIds: [id] });
+    const first = seedPlacement(db, { level: "A2", recognizedItemIds: [id], caveat: null });
+    const second = seedPlacement(db, { level: "A2", recognizedItemIds: [id], caveat: null });
     expect(second.runId).not.toBe(first.runId);
     expect(second.seededWords).toBe(1); // seeded again, under the new run
 
@@ -119,10 +119,42 @@ describe("seedPlacement — recognition-only evidence never mints known (criteri
     db.close();
   });
 
+  // [REVIEW-64 N2/N3] The gate is on the INPUT, so it is worth pinning at this level too —
+  // one test per invalidating caveat, plus the proof that the limiting ones still seed. The
+  // `caveat` field is required (an optional gate fails open: omit it and the un-gated
+  // behaviour returns silently, and it typechecks), so `tsc` guards the callers and these
+  // guard the rule.
+  it.each(["response-style", "no-control"] as const)(
+    "refuses to write anything at all when the caveat is %s — not even a run row",
+    (caveat) => {
+      const db = freshDb();
+      const id = someLemmaId(db);
+      const res = seedPlacement(db, { level: "C2", recognizedItemIds: [id], caveat });
+      expect(res).toEqual({ runId: null, seededWords: 0, seededRules: 0, supersededItems: 0 });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM evidence WHERE source='placement'").get()).toEqual({ n: 0 });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM placement_runs").get()).toEqual({ n: 0 });
+      expect(getItem(db, id)!.status).toBe("unseen");
+      db.close();
+    },
+  );
+
+  it.each(["thin-sample", "inconsistent"] as const)(
+    "still seeds what it measured when the caveat only LIMITS the estimate (%s)",
+    (caveat) => {
+      const db = freshDb();
+      const id = someLemmaId(db);
+      const res = seedPlacement(db, { level: "A2", recognizedItemIds: [id], caveat });
+      expect(res.runId).not.toBeNull();
+      expect(res.seededWords).toBe(1);
+      expect(res.seededRules).toBeGreaterThan(0);
+      db.close();
+    },
+  );
+
   it("one run never writes the same target twice (per-run dedup)", () => {
     const db = freshDb();
     const id = someLemmaId(db);
-    const res = seedPlacement(db, { level: "A2", recognizedItemIds: [id, id, id] });
+    const res = seedPlacement(db, { level: "A2", recognizedItemIds: [id, id, id], caveat: null });
     expect(res.seededWords).toBe(1);
     expect(itemEvidence(db, id)).toHaveLength(1);
     db.close();
@@ -142,7 +174,7 @@ describe("post-placement composer — the RETRO-003 fix, end to end (criterion 2
     expect(before).toContain("rule:alfabeto-suoni");
 
     // Place the learner at B1.
-    seedPlacement(db, { level: "B1", recognizedItemIds: [] });
+    seedPlacement(db, { level: "B1", recognizedItemIds: [], caveat: null });
 
     // AFTER: the composer still offers grammar (Finding #1 — a placed learner must
     // NOT be handed zero rules), but at the learner's EDGE, not the basics: no A1,
@@ -165,7 +197,7 @@ describe("post-placement composer — the RETRO-003 fix, end to end (criterion 2
     const beforeVocab = compose(db, "2026-07-24", WIDE).items.filter((i) => i.kind === "vocab").map((i) => i.ref);
     expect(beforeVocab).toContain(top);
 
-    seedPlacement(db, { level: "A1", recognizedItemIds: [top] });
+    seedPlacement(db, { level: "A1", recognizedItemIds: [top], caveat: null });
 
     const afterVocab = compose(db, "2026-07-25", WIDE).items.filter((i) => i.kind === "vocab").map((i) => i.ref);
     expect(afterVocab).not.toContain(top); // recognized → introduced → not offered as new
