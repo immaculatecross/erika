@@ -1,7 +1,14 @@
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { tmpDir } from "./helpers";
-import { BANDS, scorePlacement, MAX_FALSE_ALARM_RATE, type Band, type PlacementAnswer } from "@/lib/placement/scoring";
+import {
+  BANDS,
+  scorePlacement,
+  MAX_FALSE_ALARM_RATE,
+  MIN_PER_BAND,
+  type Band,
+  type PlacementAnswer,
+} from "@/lib/placement/scoring";
 import type { Db } from "@/lib/db";
 
 // REVIEW-63 F1/N1/N2 — the placement seam telling the learner something that is not what
@@ -300,6 +307,78 @@ describe("N2 · fa exactly at MAX_FALSE_ALARM_RATE is careless, as the comment s
     const ids = lemmaIds(PER_BAND);
     const r = scorePlacement([...BANDS.map((b) => band(b, 8, ids)).flat(), ...pseudos(3)]); // fa 0.1875
     expect(r.falseAlarmRate).toBeLessThan(MAX_FALSE_ALARM_RATE);
+    expect(r.level).toBe("C2");
+    expect(r.calibrated).toBe(true);
+    expect(r.caveat).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────
+// REVIEW-64 N3/N4 — the same hole as N1, in two more places: something never measured
+// being read as something that passed.
+// ─────────────────────────────────────────────────────────────────────────────────────
+
+describe("N3 · a check with no invented words has not measured response style", () => {
+  it("zero non-words is `no-control`, not a false-alarm rate of zero", () => {
+    const ids = lemmaIds(PER_BAND);
+    // Measured before the fix: level C2, seededWords 48, seededRules 238, caveat thin-sample.
+    // `fa = pseudoPresented > 0 ? … : 0` handed an ABSENT control the most flattering value.
+    const r = scorePlacement(BANDS.map((b) => band(b, 8, ids)).flat());
+    expect(r.pseudoPresented).toBe(0);
+    expect(r.caveat).toBe("no-control");
+    expect(r.level).toBeNull();
+    expect(r.calibrated).toBe(false);
+    expect(r.highestCleared).toBe("C2"); // the diagnostic still says what the answers showed
+  });
+
+  it("and the route writes nothing for it — the control is part of the instrument", async () => {
+    const ids = lemmaIds(PER_BAND);
+    const before = writes();
+    const r = await place(BANDS.map((b) => band(b, 8, ids)).flat());
+    expect(r.caveat).toBe("no-control");
+    expect(r).toMatchObject({ level: null, runId: null, seededWords: 0, seededRules: 0, supersededItems: 0 });
+    expect(writes()).toEqual(before);
+  });
+
+  it("one non-word is a poor control but still a control — thin, not refused", () => {
+    const ids = lemmaIds(PER_BAND);
+    const r = scorePlacement([...BANDS.map((b) => band(b, 8, ids)).flat(), ...pseudos(0, 1)]);
+    expect(r.caveat).toBe("thin-sample"); // below MIN_PSEUDO
+    expect(r.level).toBe("C2"); // a measurement was taken, so it is reported — with the caveat
+    expect(r.calibrated).toBe(false);
+  });
+});
+
+describe("N4 · a band measured by repeating one word is not measured", () => {
+  const dupes = (b: Band, id: string, n = MIN_PER_BAND): PlacementAnswer[] =>
+    Array.from({ length: n }, () => ({ kind: "real" as const, band: b, itemId: id, known: true }));
+
+  it("four copies of one word per band cannot claim a confident C2", () => {
+    const ids = lemmaIds(BANDS.length);
+    // Measured before the fix: level C2, **calibrated TRUE, caveat null**, 238 rules seeded
+    // from six distinct words — the only crafted shape that reached full confidence.
+    const r = scorePlacement([...BANDS.map((b, i) => dupes(b, ids[i])).flat(), ...pseudos(0)]);
+    expect(r.bands.every((b) => b.presented === MIN_PER_BAND)).toBe(true); // answers: enough
+    expect(r.bands.every((b) => b.distinctItems === 1)).toBe(true); // words: one
+    expect(r.level).toBeNull();
+    expect(r.calibrated).toBe(false);
+    expect(r.caveat).toBe("thin-sample");
+  });
+
+  it("and the route seeds no grammar from it", async () => {
+    const ids = lemmaIds(BANDS.length);
+    const r = await place([...BANDS.map((b, i) => dupes(b, ids[i])).flat(), ...pseudos(0)]);
+    expect(r.level).toBeNull();
+    expect(r.seededRules).toBe(0); // was 238
+    expect(r.seededWords).toBe(BANDS.length); // the six distinct words it really did ask
+  });
+
+  it("exactly MIN_PER_BAND distinct words still places — the guard counts, it does not demand more", () => {
+    const ids = lemmaIds(MIN_PER_BAND);
+    const distinct = (b: Band): PlacementAnswer[] =>
+      ids.map((id) => ({ kind: "real" as const, band: b, itemId: id, known: true }));
+    const r = scorePlacement([...BANDS.map(distinct).flat(), ...pseudos(0)]);
+    expect(r.bands.every((b) => b.distinctItems === MIN_PER_BAND)).toBe(true);
     expect(r.level).toBe("C2");
     expect(r.calibrated).toBe(true);
     expect(r.caveat).toBeNull();

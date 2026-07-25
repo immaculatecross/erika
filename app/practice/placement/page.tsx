@@ -11,6 +11,7 @@ import { VocabCheck } from "@/components/placement/vocab-check";
 import { EnrollmentRecorder } from "@/components/placement/enrollment-recorder";
 import type { PlacementCheckItem } from "@/lib/placement/check";
 import type { PlacementAnswer } from "@/lib/placement/scoring";
+import { levelLine, type PlacementResultView } from "@/lib/placement/result-copy";
 
 // Placement onboarding (E-35, D-24). A calm, re-runnable first-run: a rapid yes/no
 // vocabulary check (scored model-free, response-style corrected), then two optional
@@ -25,70 +26,19 @@ import type { PlacementAnswer } from "@/lib/placement/scoring";
 
 type Step = "intro" | "check" | "result";
 
-interface PlacementResult {
-  level: string | null;
-  calibrated: boolean;
-  /** Why the estimate is rough — see lib/placement/scoring PlacementCaveat. */
-  caveat?: "response-style" | "inconsistent" | "thin-sample" | null;
-  seededWords: number;
-  seededRules: number;
-}
-
 const CAPTION = "text-[13px] font-medium uppercase tracking-[0.06em] text-secondary";
 
-// [RETRO-004 §DE-2] The result line used to be "Placed around C2." with the single
-// sentence "This is a rough placement." appended when `!calibrated` — and `calibrated`
-// only checked sample sizes, so a run that FAILED A1 and A2 was shown as a confident C2
-// with no caveat at all. The scorer now refuses to claim a level whose lower bands fail
-// and reports WHY confidence is low; this states both, plainly, and never implies more
-// than was measured. Calm and factual, no alarm and no cheerleading (D-24).
-const CAVEAT_REASON: Record<NonNullable<PlacementResult["caveat"]>, string> = {
-  "response-style": "Several invented words were marked known, so the answers cannot separate the words you know from the ones you do not.",
-  inconsistent: "Recognition was uneven — some less common words were marked known while more common ones were not — so only the run from the most common words up is counted.",
-  // [REVIEW-63 N1] Was "The check was short." — still true, but the caveat now also fires
-  // when a whole frequency level went unasked, which "short" does not describe.
-  "thin-sample": "The check did not ask enough words at every frequency level.",
-};
-
-/** The honest line when no level can be claimed and the answers say why.
- *
- *  [REVIEW-63 F1] The second sentence used to be an unconditional "Nothing has been
- *  assumed about your level — your daily plan is unchanged", while the run that produced
- *  it had just written 39 recognition rows; in 1 of 15 measured seeds the next day's
- *  vocabulary list changed. The writes are now refused for an untrustworthy response style
- *  (`seedPlacement`), so that sentence is true — and this line reads the counts the server
- *  actually returned rather than asserting them, so the two cannot drift apart again. */
-function unplaceableLine(r: PlacementResult): string {
-  const reason = r.caveat ? ` ${CAVEAT_REASON[r.caveat]}` : "";
-  const wrote =
-    r.seededWords > 0
-      ? ` No level has been assumed. The ${r.seededWords} ${r.seededWords === 1 ? "word" : "words"} you marked as known ${r.seededWords === 1 ? "is" : "are"} noted, and nothing else has changed.`
-      : " Nothing has been assumed about your level, and nothing was added to your model — your daily plan is unchanged.";
-  return `The check could not place you.${reason}${wrote} You can take the check again whenever you like.`;
-}
-
-function levelLine(r: PlacementResult): string {
-  // No level AND a reason to distrust the answers: say so, rather than reporting a
-  // beginner who never said they were one. [REVIEW-63 N1] `thin-sample` is included now:
-  // the scorer refuses a level when a band was never measured, and "Placed at the very
-  // start." would be a claim about someone the check never asked. A level-less run with NO
-  // caveat is a real measurement (A1 asked and not recognized, non-words rejected) and
-  // still reads as the very start.
-  if (r.level === null && r.caveat) return unplaceableLine(r);
-
-  const where = r.level ? `around ${r.level}` : "at the very start";
-  const words = r.seededWords > 0 ? ` ${r.seededWords} ${r.seededWords === 1 ? "word" : "words"} you knew are now in your model.` : "";
-  const rules = r.seededRules > 0 ? ` ${r.seededRules} grammar ${r.seededRules === 1 ? "point" : "points"} below it are marked seen.` : "";
-  const rough = r.calibrated ? "" : ` This is a rough placement.${r.caveat ? ` ${CAVEAT_REASON[r.caveat]}` : ""}`;
-  return `Placed ${where}.${words}${rules}${rough}`;
-}
+// [REVIEW-64 F3] The result sentence lives in `lib/placement/result-copy.ts` — pure, exported
+// and unit-tested against real route responses (`tests/placement-copy.test.ts`). It was inline
+// and unexported here, so restoring the exact pre-PR false sentence kept 994/994 tests green.
+// A claim the app makes about the learner deserves the same guard as the writes behind it.
 
 export default function PlacementPage() {
   const reduced = usePrefersReducedMotion();
   const [step, setStep] = useState<Step>("intro");
   const [items, setItems] = useState<PlacementCheckItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<PlacementResult | null>(null);
+  const [result, setResult] = useState<PlacementResultView | null>(null);
   const [sampleRecorded, setSampleRecorded] = useState(false);
   const [enrolled, setEnrolled] = useState(false);
 
@@ -128,10 +78,13 @@ export default function PlacementPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ answers }),
       });
-      const body = (await res.json()) as PlacementResult;
+      const body = (await res.json()) as PlacementResultView;
       setResult(body);
     } catch {
-      setResult({ level: null, calibrated: false, seededWords: 0, seededRules: 0 });
+      // [REVIEW-64 N5] `submitFailed` rather than a bare level-less result: without it the
+      // line fell through to "Placed at the very start. This is a rough placement." — the app
+      // reporting a placement it never received. A transport failure is not a measurement.
+      setResult({ level: null, calibrated: false, seededWords: 0, seededRules: 0, supersededItems: 0, submitFailed: true });
     } finally {
       setLoading(false);
       setStep("result");
