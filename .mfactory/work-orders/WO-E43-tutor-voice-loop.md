@@ -77,3 +77,15 @@ The spike ran against the live API after the outage cleared at 09:44:44 UTC and 
 **STT is not the weak link:** 0.00% WER on all three models, on clean audio *and* on 8 kHz/16 kbps/1.15×-degraded audio. The spike flagged its own limit honestly and you must not overstate it: the test audio was TTS output, which is unnaturally clean, so **relative accuracy on real learner speech is not established**. Your live smoke tests should use a real human take if you can make one.
 
 **The voice is the operator's call, not yours.** The spike deliberately declined to pick it — choosing a voice from a spec sheet is the exact mistake that caused this migration. Samples are in `artifacts/voice-samples/` and have gone to the operator. Build the voice as **configuration with a documented default**, so the answer can land without touching the loop.
+
+---
+
+## Amendment 2 — 2026-07-25, the operator's voice ruling (supersedes Amendment 1's open question)
+
+The operator listened to the five samples and ruled: **`alloy` and `nova`** — *"the first and last are great, and allow in settings to choose male or female."*
+
+Two things follow, and the second one is the more important.
+
+14. **Ship both voices as a Settings choice.** One dial, two options, presented the way the operator asked — a male/female choice — defaulting to one of them (pick either; say which and why in one line). This is the **only** new Settings knob v0.7 adds, and it is affordable because D-26 deletes `realtimeTier` in the same milestone: the count goes down, not up. Do not offer the other voices; a spec sheet full of options is the thing this version exists to remove. Note honestly in the code comment that OpenAI does not label its voices by gender — the mapping is the operator's ear applied to these two specific renditions, which is a better authority than a datasheet, but it is not a vendor guarantee.
+
+15. **Default to plain synthesis, not instructed — the steering channel is opt-in, not free quality.** Both voices the operator chose were the **plain** samples; all three *instructed* renditions were passed over. That is evidence against the assumption Amendment 1 inherited, which was that `instructions` improves Italian delivery. Measurably, instructing `alloy` made it speak **9% faster** — a change, not obviously an improvement. So: **do not send a style instruction by default.** D-23's register dial still governs *what the tutor says* (word choice, formality) through the LLM leg, which is where register has always belonged; it must not be silently re-implemented as TTS prosody styling. If you keep an `instructions` pathway at all, keep it empty by default, and state in the exit report what it does when set. **Do not tune it to taste** — the operator's ear is the oracle here and they have already answered.
