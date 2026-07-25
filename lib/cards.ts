@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "./db";
-import { INCLUDED_FINDING_SCOPE } from "./findings-model";
+import { INCLUDED_FINDING_SCOPE, getIncludedFinding } from "./findings-model";
 import { schedule, FRESH_EASE, type Grade } from "./srs";
 import { recordEvidence } from "./knowledge";
-import { cardBack, deriveFaces, type CardView, type CardBrowserView, type CardFaces } from "./cards-view";
+import { cardBack, deriveFaces, deriveFront, type CardView, type CardBrowserView, type CardFaces } from "./cards-view";
 import type { CsvCard } from "./cards-csv";
 
 export { cardBack, splitBack } from "./cards-view";
@@ -93,13 +93,21 @@ const SELECT_CARD_VIEW = `
     FROM cards c
     JOIN findings f ON f.id = c.finding_id`;
 
-/** The four display faces for a joined card row (E-29), derived from the finding. */
-function facesOf(r: CardFindingRow): CardFaces {
-  return deriveFaces(r.f_quote, r.f_correction, r.f_explanation, r.category);
+/** The four display faces for a joined card row (E-29), or null when the finding
+ *  cannot produce an answerable front (E-45 — see lib/cards-view.ts's invariant). */
+function facesOf(r: CardFindingRow): CardFaces | null {
+  return deriveFaces(r.f_quote, r.f_correction, r.f_explanation);
 }
 
-function toCardViewJoined(r: CardFindingRow): CardView {
-  return { id: r.id, findingId: r.finding_id, category: r.category, ...facesOf(r) };
+function toCardViewJoined(r: CardFindingRow): CardView | null {
+  const faces = facesOf(r);
+  return faces ? { id: r.id, findingId: r.finding_id, category: r.category, ...faces } : null;
+}
+
+/** Drop the nulls a `facesOf` refusal produces — no view ever carries an
+ *  unanswerable front, including for a card minted before E-45. */
+function answerable<T>(views: (T | null)[]): T[] {
+  return views.filter((v): v is T => v !== null);
 }
 
 /** Due, non-suspended cards as correction-forward drill views (E-29), most-overdue first. */
@@ -111,7 +119,7 @@ export function listDueCardViews(db: Db): CardView[] {
         ORDER BY c.due ASC, c.created_at ASC, c.id ASC`,
     )
     .all() as CardFindingRow[];
-  return rows.map(toCardViewJoined);
+  return answerable(rows.map(toCardViewJoined));
 }
 
 /** Every card as a browser view (E-5b) with derived faces plus due/suspended (E-29). */
@@ -119,13 +127,12 @@ export function listCardBrowserViews(db: Db): CardBrowserView[] {
   const rows = db
     .prepare(`${SELECT_CARD_VIEW} ORDER BY c.due ASC, c.created_at ASC, c.id ASC`)
     .all() as CardFindingRow[];
-  return rows.map((r) => ({
-    id: r.id,
-    category: r.category,
-    ...facesOf(r),
-    due: r.due,
-    suspended: !!r.suspended,
-  }));
+  return answerable(
+    rows.map((r) => {
+      const faces = facesOf(r);
+      return faces ? { id: r.id, category: r.category, ...faces, due: r.due, suspended: !!r.suspended } : null;
+    }),
+  );
 }
 
 /** One card's correction-forward drill view by id, or null. */
@@ -143,13 +150,14 @@ export function listCardsCsv(db: Db): CsvCard[] {
   const rows = db
     .prepare(`${SELECT_CARD_VIEW} ORDER BY c.due ASC, c.created_at ASC, c.id ASC`)
     .all() as CardFindingRow[];
-  return rows.map((r) => {
-    const faces = facesOf(r);
-    const back = [faces.correction, ...(faces.why ? [faces.why] : []), `You said: ${faces.error}`].join(
-      "\n\n",
-    );
-    return { front: faces.front, back };
-  });
+  return answerable(
+    rows.map((r) => {
+      const faces = facesOf(r);
+      if (!faces) return null;
+      const back = [faces.correction, ...(faces.why ? [faces.why] : []), `You said: ${faces.error}`].join("\n\n");
+      return { front: faces.front, back };
+    }),
+  );
 }
 
 interface GeneratableFinding {
@@ -162,7 +170,7 @@ interface GeneratableFinding {
   start_ms: number;
 }
 
-// ---- what cannot become a card (E-37) --------------------------------------
+// ---- what cannot become a card (E-37, tightened at E-45) --------------------
 //
 // A card's front is derived by diffing the error against the correction
 // (`deriveFront`), so it needs a localized textual change to cue from. A PRONUNCIATION
@@ -175,12 +183,35 @@ interface GeneratableFinding {
 // finding is as included as it ever was, and it is fully present in the Phrasebook, the
 // Archive and the report. One constant serves BOTH card paths — bulk generation and the
 // deliberate pin — so neither can produce an unanswerable card.
+//
+// [E-45] E-37 fixed the INSTANCE (one category) and not the INVARIANT. The category is
+// only one of the ways a finding fails to yield an answerable cue, and it was not even
+// the common one: every single-word fix and every whole-sentence rewrite failed too,
+// under any category. So cardability is now asked of the finding's SHAPE — the same
+// question `deriveFront` answers — and the category set survives only as the cheap
+// pre-filter that keeps a pronunciation finding out of the deck even in the rare case
+// where its correction happens to be textually localized.
 
 export const UNCARDABLE_CATEGORIES: ReadonlySet<string> = new Set(["pronunciation"]);
 
 /** Whether a finding of this category can become an answerable card. */
 export function isCardable(category: string): boolean {
   return !UNCARDABLE_CATEGORIES.has(category);
+}
+
+/**
+ * [E-45] Whether this finding can become an ANSWERABLE card — the whole test, in one
+ * place, used by bulk generation, the deliberate pin, and the retirement sweep, so no
+ * path can mint or keep a card the learner cannot answer.
+ *
+ * Two clauses, and both are load-bearing:
+ *   - the category is cardable (E-37 — a pronunciation finding goes to the studio);
+ *   - the fields yield a front (`deriveFront` is not null), which also decides the
+ *     Amendment-1 tie-break: a finding whose correction changed no text is a
+ *     pronunciation artifact whatever its stored category says.
+ */
+export function findingIsCardable(f: { category: string; quote: string; correction: string }): boolean {
+  return isCardable(f.category) && deriveFront(f.quote, f.correction) !== null;
 }
 
 /** The SQL form of `isCardable`, built from the same constant. The values are internal
@@ -204,8 +235,14 @@ const CARDABLE_CATEGORY_SQL = `f.category NOT IN (${[...UNCARDABLE_CATEGORIES]
  * [E-37] UNCARDABLE findings are excluded — see `UNCARDABLE_CATEGORIES`. Both this
  * bulk path and the deliberate Phrasebook pin apply the SAME rule, from the same
  * constant, so no path can mint an unanswerable card.
+ *
+ * [E-45] and the shape filter `findingIsCardable` is applied on top, so a finding whose
+ * fields cannot produce an answerable front never becomes a card at all. The sweep runs
+ * first, so cards minted before E-45 whose fronts would degrade are retired in the same
+ * call every caller already makes.
  */
 export function generateCards(db: Db): number {
+  retireUnanswerableCards(db);
   const findings = db
     .prepare(
       `SELECT f.id, f.session_id, f.quote, f.correction, f.explanation, f.category, f.start_ms
@@ -226,6 +263,7 @@ export function generateCards(db: Db): number {
   let created = 0;
   db.transaction(() => {
     for (const f of findings) {
+      if (!findingIsCardable(f)) continue;
       const info = insert.run(
         randomUUID(),
         f.id,
@@ -243,6 +281,31 @@ export function generateCards(db: Db): number {
 }
 
 /**
+ * [E-45] Suspend every card whose finding cannot produce an answerable front.
+ *
+ * The display layer already refuses to render one (`facesOf` returns null), but a row
+ * that is invisible and still *counted* is a wall, not a fix: `countDueCards` feeds the
+ * session's planned-cards target and `lib/compose.ts` reads the same table for reviews,
+ * so an unrenderable due card would make a drills step that can never be completed.
+ * Suspending is the existing, non-destructive way this schema says "not in the queue" —
+ * it is honoured by every reader (`suspended = 0`), it needs no migration, it is
+ * idempotent, and it is reversible if a later milestone learns how to write a front for
+ * these findings. Returns how many rows this call retired.
+ */
+export function retireUnanswerableCards(db: Db): number {
+  const rows = db
+    .prepare(`${SELECT_CARD_VIEW} WHERE c.suspended = 0`)
+    .all() as CardFindingRow[];
+  const doomed = rows.filter((r) => !findingIsCardable({ category: r.category, quote: r.f_quote, correction: r.f_correction }));
+  if (doomed.length === 0) return 0;
+  const suspend = db.prepare("UPDATE cards SET suspended = 1 WHERE id = ?");
+  db.transaction(() => {
+    for (const r of doomed) suspend.run(r.id);
+  })();
+  return doomed.length;
+}
+
+/**
  * The outcome of pinning a finding — three genuinely different answers the route must
  * be able to tell apart, which a bare `Card | null` could not.
  */
@@ -251,6 +314,9 @@ export type PinOutcome =
   | { status: "not_found" }
   /** The finding cannot become an answerable card; it belongs to another surface. */
   | { status: "not_cardable"; category: string };
+
+/** The finding fields a card is built from — the shape both pin and bulk generation read. */
+type PinnableFinding = Pick<GeneratableFinding, "id" | "session_id" | "quote" | "correction" | "explanation" | "category" | "start_ms">;
 
 /**
  * Pin one finding into the deck (E-9): ensure a card exists for it, deliberately
@@ -266,17 +332,35 @@ export type PinOutcome =
  * bare "____ · pronunciation" — a card that cannot be answered. Minting it on request
  * does not make it work; it just means we broke it because the user asked. The pin route
  * sends these to the studio instead, which is the surface that can actually drill them.
+ *
+ * [E-45 criterion 6 — THE E-17 GATE] The finding is now read through
+ * `getIncludedFinding` (lib/findings-model.ts), the canonical read-model every other
+ * finding-reading surface already goes through. This was the last site in the repo
+ * reading the `findings` table raw, which broke CLAUDE.md's own E-17 rule and falsified
+ * findings-model.ts's comment about being the one place that answers the question.
+ *
+ * It is a COMPLIANCE fix, not a behaviour change, and the reasoning is worth stating
+ * because a gate that changed what a user sees would be out of scope here (Amendment 3):
+ * the only surface that offers a pin is the Phrasebook, which lists
+ * `listIncludedFindings` — the SAME scope — so every finding a user can reach was
+ * already inside it, and a finding outside it was already unreachable. The gate turns an
+ * unreachable-by-UI invariant into an enforced one, so a future caller cannot pin a
+ * finding no model ever listened to. `tests/cards.test.ts` pins both halves.
  */
 export function pinFinding(db: Db, findingId: string): PinOutcome {
   return db.transaction((): PinOutcome => {
-    const f = db
-      .prepare(
-        `SELECT id, session_id, quote, correction, explanation, category, start_ms
-           FROM findings WHERE id = ?`,
-      )
-      .get(findingId) as GeneratableFinding | undefined;
-    if (!f) return { status: "not_found" };
-    if (!isCardable(f.category)) return { status: "not_cardable", category: f.category };
+    const included = getIncludedFinding(db, findingId);
+    if (!included) return { status: "not_found" };
+    const f: PinnableFinding = {
+      id: included.id,
+      session_id: included.sessionId,
+      quote: included.quote,
+      correction: included.correction,
+      explanation: included.explanation,
+      category: included.category,
+      start_ms: included.startMs,
+    };
+    if (!findingIsCardable(f)) return { status: "not_cardable", category: f.category };
 
     // A pin overrides a prior delete: drop the tombstone so the card returns.
     db.prepare("DELETE FROM deleted_findings WHERE finding_id = ?").run(findingId);

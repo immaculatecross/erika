@@ -182,9 +182,10 @@ describe("E-37 criterion 4 — pronunciation signal routes to the studio", () =>
 
     // This is what the pin WOULD have handed the learner: an unanswerable prompt,
     // because the pronunciation finding's spelling was never wrong (RETRO-003).
-    expect(deriveFront(PRON_FINDING.quote, PRON_FINDING.correction, "pronunciation")).toBe(
-      `${CLOZE_BLANK} · pronunciation`,
-    );
+    // [E-45] It used to hand back `"${CLOZE_BLANK} · pronunciation"`; it now refuses
+    // outright, so the unanswerable string no longer exists to be handed to anyone.
+    expect(deriveFront(PRON_FINDING.quote, PRON_FINDING.correction)).toBeNull();
+    expect(CLOZE_BLANK).toBe("____");
 
     const refused = pinFinding(db, pronId);
     expect(refused.status).toBe("not_cardable");
