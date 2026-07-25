@@ -27,11 +27,16 @@ interface EmptyStateProps {
   // An optional control rendered beside the action (e.g. the mic recorder next to
   // Upload). Only one element is accented across the pair.
   secondary?: ReactNode;
+  // A quiet caption BELOW the action — for a prerequisite the person must know
+  // before they act, not an extra thing to do. DESIGN's "one sentence and one
+  // action" governs the offer; a footnote that stops someone waiting on a process
+  // they never started is not a second offer.
+  note?: ReactNode;
 }
 
 // Every screen's quiet zero-state renders this: no illustration, one sentence,
 // one action. Content staggers in and degrades to a fade under reduced motion.
-export function EmptyState({ title, line, action, href, onAction, disabled, actionVariant = "primary", secondary }: EmptyStateProps) {
+export function EmptyState({ title, line, action, href, onAction, disabled, actionVariant = "primary", secondary, note }: EmptyStateProps) {
   const reduced = usePrefersReducedMotion();
   const actionClass = actionVariant === "primary" ? PRIMARY_ACTION_CLASS : SECONDARY_ACTION_CLASS;
   return (
@@ -63,6 +68,11 @@ export function EmptyState({ title, line, action, href, onAction, disabled, acti
             </button>
           )}
         </motion.div>
+        {note && (
+          <motion.p variants={staggerItem(reduced)} className="text-[13px] text-secondary">
+            {note}
+          </motion.p>
+        )}
       </motion.div>
     </div>
   );

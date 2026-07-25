@@ -17,15 +17,23 @@ const FIELD =
 export default function SettingsPage() {
   const [form, setForm] = useState<Settings | null>(null);
   const [spent, setSpent] = useState<number | null>(null);
+  const [keyPresent, setKeyPresent] = useState<boolean | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
-      .then(({ spentThisMonth, ...s }: Settings & { spentThisMonth: number }) => {
-        setForm(s);
-        setSpent(spentThisMonth);
-      })
+      .then(
+        ({
+          spentThisMonth,
+          analysisKeyPresent,
+          ...s
+        }: Settings & { spentThisMonth: number; analysisKeyPresent: boolean }) => {
+          setForm(s);
+          setSpent(spentThisMonth);
+          setKeyPresent(analysisKeyPresent);
+        },
+      )
       .catch(() => setStatus({ kind: "error", message: "Could not load settings." }));
   }, []);
 
@@ -52,12 +60,23 @@ export default function SettingsPage() {
   }
 
   if (!form) {
-    return <div className="p-8 text-[15px] text-secondary">Loading settings…</div>;
+    return (
+      <div className="mx-auto max-w-xl p-8">
+        <h1 className="mb-6 text-[34px] font-bold tracking-tight">Settings</h1>
+        <WhatErikaNeeds keyPresent={keyPresent} />
+        <p className="text-[15px] text-secondary">
+          {status.kind === "error" ? status.message : "Loading settings…"}
+        </p>
+      </div>
+    );
   }
 
   return (
     <div className="mx-auto max-w-xl p-8">
       <h1 className="mb-6 text-[34px] font-bold tracking-tight">Settings</h1>
+      <WhatErikaNeeds keyPresent={keyPresent} />
+
+
       <div className="flex flex-col gap-5 rounded-card bg-card p-6 shadow-card">
         <label className="flex flex-col gap-1.5">
           <span className={LABEL}>Target language</span>
@@ -240,5 +259,84 @@ export default function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * [E-42 criterion 7] WHAT ERIKA NEEDS, AND WHAT IT COSTS — stated once, in prose,
+ * where a person meets it before anything runs.
+ *
+ * Deliberately OUTSIDE the loading guard and outside the settings form. This is the
+ * single most important thing on the page for someone who has never used Erika, and
+ * making it wait on a fetch — or vanish when that fetch fails — would have recreated
+ * the defect it exists to fix: before this, the only place a new user learned an API
+ * key was required was a leaked internal error string on the tutor screen
+ * (RETRO-004 §1). It renders from static prose, always. Only the one dynamic line —
+ * whether a key is currently set — waits for the server, and its absence degrades to
+ * silence rather than to a wrong claim.
+ */
+function WhatErikaNeeds({ keyPresent }: { keyPresent: boolean | null }) {
+  return (
+        <section
+          data-analysis-disclosure
+          className="mb-6 flex flex-col gap-3 rounded-card bg-card p-6 shadow-card"
+        >
+          <h2 className="text-[22px] font-semibold tracking-tight">What Erika needs</h2>
+          <p className="text-[15px] leading-[1.47] text-secondary">
+            Erika listens to your recordings with OpenAI&rsquo;s audio models, so she needs an{" "}
+            <strong className="font-medium text-ink">OpenAI API key</strong>. Put it in a file called{" "}
+            <code className="rounded bg-black/[0.06] px-1.5 py-0.5 font-mono text-[13px] text-ink dark:bg-white/[0.08]">
+              .env.local
+            </code>{" "}
+            in the project folder, as{" "}
+            <code className="rounded bg-black/[0.06] px-1.5 py-0.5 font-mono text-[13px] text-ink dark:bg-white/[0.08]">
+              OPENAI_API_KEY=sk-…
+            </code>
+            , then restart. Without one your recordings are still saved and their speech still
+            extracted — but nothing is analyzed, and that stays true until you add one.
+          </p>
+          {keyPresent !== null && (
+            <p
+              data-key-status
+              className={`text-[15px] ${keyPresent ? "text-secondary" : "text-medium"}`}
+              role="status"
+            >
+              {keyPresent
+                ? "A key is set — analysis will run."
+                : "No key is set right now, so analysis will not run."}
+            </p>
+          )}
+          <p className="text-[15px] leading-[1.47] text-secondary">
+            <strong className="font-medium text-ink">
+              Recordings are analyzed automatically when they finish uploading.
+            </strong>{" "}
+            There is nothing to start: you record or drop in a file, and Erika does the rest. A ten-minute
+            take costs roughly twenty cents of API usage; a full day&rsquo;s audio is a couple of dollars,
+            because silence never reaches a model and only the parts that sound off are listened to closely.
+          </p>
+          {/* [Full review] The one manual prerequisite left. This milestone removed every
+              button from the capture path, so the SECOND PROCESS is now the only thing a
+              newcomer must do by hand — and a learner who records and waits, seeing
+              nothing, has been asked a question the product never answered. That exact
+              failure is what made the v0.6 cold-start gate FAIL. It is stated here, where
+              a newcomer meets it, rather than discovered 20 s in when a job goes stale. */}
+          <p className="text-[15px] leading-[1.47] text-secondary" data-worker-prerequisite>
+            <strong className="font-medium text-ink">Erika works in two processes.</strong> The page
+            you are reading serves the app; the listening and the analysis happen in a second one.
+            Leave{" "}
+            <code className="rounded bg-black/[0.06] px-1.5 py-0.5 font-mono text-[13px] text-ink dark:bg-white/[0.08]">
+              npm run worker
+            </code>{" "}
+            running in another terminal. Without it your recordings are still saved, but nothing moves
+            — which looks exactly like nothing happening.
+          </p>
+          <p className="text-[15px] leading-[1.47] text-secondary">
+            The <strong className="font-medium text-ink">monthly budget</strong> below is a hard cap on
+            that spending, not a warning. When a month reaches it, analysis stops — your recordings are
+            kept, their speech is kept, and whatever Erika already heard is kept. Each held recording says
+            so and resumes on its own when there is room again, either because you raised the cap or
+            because the month rolled over. You never have to upload anything twice.
+          </p>
+        </section>
   );
 }

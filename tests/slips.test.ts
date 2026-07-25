@@ -145,7 +145,7 @@ function seed(
   state: AnalysisState = "done",
 ): void {
   createSession(db, { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
-  db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(`${day} 09:00:00`, id);
+  db.prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(`${day} 09:00:00`, id);
   upsertSegment(db, { sessionId: id, idx: 0, startMs: 0, endMs: HOUR, contentHash: `${id}-base` });
   persistSegmentFindings(db, { sessionId: id, contentHash: `${id}-base`, flagged: false, deepDone: false, findings: [] });
   corrections.forEach(([correction, category], i) => {

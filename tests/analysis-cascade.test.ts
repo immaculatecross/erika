@@ -329,8 +329,16 @@ describe("spend is recorded when a call resolves, not after parsing (E-16 defect
     // The mini triage (which parsed fine) AND *both* unparseable deep calls — the
     // first attempt and E-16b's single repair retry. Both resolved, both charged.
     expect(rows.map((r) => r.model)).toEqual(["gpt-audio-1.5", "gpt-audio-1.5", "gpt-audio-mini"]);
-    // 60 s of deep audio at the E-28-recalibrated $0.03/min = $0.03 — the real charge, not zero.
-    expect(rows[0].cost_usd).toBeCloseTo(0.03, 9);
+    // The real charge, not zero — hand-computed from the PUBLISHED per-token prices
+    // in docs/research/spike-1/spike-3, never from `callCost` itself:
+    //   audio: 1 min × 700 audio-tokens/min × $32/1M          = $0.02240
+    //   text:  2,600 prompt tok × $2.50/1M + 2,000 out × $10/1M = $0.02650
+    // (700/min is above spike-6's MEASURED 628/min and its 665/min spread maximum.)
+    // [E-42 criterion 13] The text half used to be priced at $0, so a deep call was
+    // modelled at $0.03 and the ~2,600-token prompt it really sends was free.
+    const expectedDeep = 700 * (32 / 1_000_000) + 2600 * (2.5 / 1_000_000) + 2000 * (10 / 1_000_000);
+    expect(rows[0].cost_usd).toBeCloseTo(expectedDeep, 9);
+    expect(expectedDeep).toBeGreaterThan(0.03); // the old, text-free figure
     db.close();
   });
 

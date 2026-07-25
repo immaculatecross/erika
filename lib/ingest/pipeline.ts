@@ -1,5 +1,6 @@
 import { stat } from "node:fs/promises";
 import type { Db } from "../db";
+import { enqueueAfterIngest } from "../analysis/auto";
 import { getSession } from "../sessions";
 import {
   ensureSegmentsDir,
@@ -200,7 +201,14 @@ export async function processJob(
       if (checkpoint(db, jobId, "done", opts.stopAfter, "rendering")) return getJob(db, jobId)!;
     }
 
-    patchJob(db, jobId, { state: "done", stage: "done", progress: 1, error: null });
+    // Ingest is done — so analysis starts, here, with no client in the room (E-42
+    // criterion 3). Both writes go in ONE transaction: a session can never be
+    // observed `done` without its automatic run queued, so a crash in between
+    // cannot strand a recording the way closing the tab used to.
+    db.transaction(() => {
+      patchJob(db, jobId, { state: "done", stage: "done", progress: 1, error: null });
+      enqueueAfterIngest(db, job.sessionId);
+    })();
   } catch (err) {
     patchJob(db, jobId, { state: "failed", error: (err as Error).message || "Ingest failed." });
   }

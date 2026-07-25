@@ -15,6 +15,7 @@ import {
 import { grammarLessonPrompt, vocabLessonPrompt, lessonRegister } from "@/lib/lessons/item-lessons";
 import { deepPrompt, recastRegisterInstruction } from "@/lib/analysis/prompts";
 import { buildTutorPersona } from "@/lib/tutor/persona";
+import { MISTAKE_CLASS_LINES } from "@/lib/mistakes";
 import type { SyllabusRule } from "@/lib/syllabus/types";
 
 // E-33 criterion 1: the register dial (D-23) reaches EVERY generation surface —
@@ -48,13 +49,34 @@ describe("the register instruction itself", () => {
     expect(REGISTERS).toEqual(["colloquiale", "standard", "colto", "letterario"]);
   });
 
-  it("names the register and pins to style, distinctly per register", () => {
+  it("names the register and states ONE coherent rule, distinctly per register", () => {
     const texts = REGISTERS.map((r) => registerInstruction(r));
     for (const r of REGISTERS) expect(registerInstruction(r)).toContain(`"${r}"`);
     // All four are distinct instructions (a real dial, not a constant).
     expect(new Set(texts).size).toBe(REGISTERS.length);
-    // It is a STYLE steer, not a correctness one.
-    expect(registerInstruction("colto")).toMatch(/style only, never what is correct/i);
+
+    // [E-42 criterion 12] This assertion used to demand the words "style only, never
+    // what is correct" — and it PASSED while the composed deep prompt contradicted
+    // itself, because `lib/mistakes.ts` class B, injected a few lines away, told the
+    // model a plain register mismatch IS a mistake. A real test asserting the wrong
+    // contract (mfactory D-14). The resolved rule, stated once in lib/register.ts:
+    // the dial sets the TARGET a slip is judged against, and never overrides
+    // grammatical correctness.
+    const colto = registerInstruction("colto");
+    expect(colto).toMatch(/never overrides what is grammatically correct/i);
+    expect(colto).toMatch(/counts as a word-choice mistake/i);
+    // And it must no longer make the claim the rest of the prompt disproves.
+    expect(colto).not.toMatch(/style only, never what is correct/i);
+  });
+
+  it("does not contradict the shared definition of a mistake it is composed with", () => {
+    // The two halves land in the SAME prompt (lib/analysis/prompts.ts). Both must
+    // agree that a register slip is a real, word-choice-class mistake judged against
+    // the chosen register — which is what made the old wording indefensible.
+    const classB = MISTAKE_CLASS_LINES.join("\n");
+    expect(classB).toMatch(/Register: a word or turn of phrase plainly outside the register/);
+    expect(classB).toMatch(/VOCABULARY AND WORD CHOICE/);
+    expect(registerInstruction("colto")).toMatch(/word-choice mistake/i);
   });
 
   it("coerces an unknown value to the default", () => {

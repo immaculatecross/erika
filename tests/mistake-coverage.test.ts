@@ -160,9 +160,21 @@ describe("normalizeCategory — a recognisable label lands, an unrecognisable on
   });
 
   it("returns null — never a guess — for anything it does not recognise", () => {
-    for (const raw of ["", "vibes", "register", "usage", "fluency", "42", null, undefined, {}]) {
+    for (const raw of ["", "vibes", "usage", "fluency", "42", null, undefined, {}]) {
       expect(normalizeCategory(raw)).toBeNull();
     }
+  });
+
+  // [E-42 criterion 14] `register` moved from the refused list to the accepted one,
+  // and this test moved with it. It was the ONE label the prompt actively invited —
+  // `lib/mistakes.ts` class B names a register slip as a mistake and
+  // ENRICHED_NOTES_INSTRUCTION puts the word "register" in front of the model — while
+  // the parser rejected it, and the cost of rejection was not one lost finding but
+  // the WHOLE segment. A class the model is asked to produce and the schema silently
+  // discards is exactly the defect PR #66 existed to remove.
+  it("accepts `register`, the one label the prompt invites, as the word-choice class", () => {
+    expect(normalizeCategory("register")).toBe("vocabulary");
+    expect(normalizeCategory("Register")).toBe("vocabulary");
   });
 
   it("one synonym no longer discards the OTHER findings in the same reply", () => {
@@ -182,14 +194,28 @@ describe("normalizeCategory — a recognisable label lands, an unrecognisable on
     expect(parsed.findings[1].correction).toBe("in realtà sono stanco");
   });
 
-  it("an unreadable category is still a truthful whole-reply parse error", () => {
+  it("an unreadable category costs its own finding, never the whole reply [spike-6]", () => {
     const reply = JSON.stringify({
       findings: [
         { quote: "a", correction: "b", category: "grammar", explanation: "e", severity: "high" },
         { quote: "c", correction: "d", category: "vibes", explanation: "e", severity: "high" },
       ],
     });
-    expect(() => parseDeepResponse(reply)).toThrow(ModelParseError);
+    // [spike-6, live] This used to assert `toThrow(ModelParseError)` — the whole reply
+    // rejected over one unreadable word. Measured against the real API that was not
+    // protecting us from garbage, it was destroying good work: every OTHER finding in
+    // the segment went with it, and the segment was then re-billed to lose them again.
+    // The label is still never guessed at; only the blast radius changed.
+    const parsed = parseDeepResponse(reply);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].quote).toBe("a");
+
+    // …and a reply in which NOTHING could be read is still a truthful parse error,
+    // because returning [] would report a clean bill of health on unreadable audio.
+    const allBad = JSON.stringify({
+      findings: [{ quote: "c", correction: "d", category: "vibes", explanation: "e", severity: "high" }],
+    });
+    expect(() => parseDeepResponse(allBad)).toThrow(ModelParseError);
   });
 });
 

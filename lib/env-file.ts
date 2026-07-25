@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { ENV_LOCAL, REQUIRED_KEY } from "./analysis-key";
 
 // The worker's environment loader (E-16b criterion 1).
 //
@@ -24,8 +25,11 @@ import path from "node:path";
 // the timeline — makes ZERO model calls, so a keyless run is the shipped default's
 // most important run, not an edge case.)
 
-/** The file the app and the worker both take their secrets from (never committed). */
-export const ENV_LOCAL = ".env.local";
+// The key's name, its refusal message and the predicate that recognises it live in
+// lib/analysis-key.ts — client-safe, so the UI can render a permanent condition as
+// one — and are re-exported here so every existing importer of this module is
+// unchanged. This file keeps the half that genuinely needs the filesystem.
+export { ENV_LOCAL, REQUIRED_KEY, analysisUnavailableMessage, isMissingKeyMessage } from "./analysis-key";
 
 /**
  * Parse dotenv-style text into key/value pairs. Deliberately small: `KEY=value`
@@ -83,6 +87,15 @@ export function loadEnvLocal(
   cwd: string = process.cwd(),
   env: Record<string, string | undefined> = process.env,
 ): string[] {
+  // [E-42 criterion 11] An explicit opt-out, honoured here. A cold-start test must
+  // CONSTRUCT its cold start rather than inherit the host's: `tests/coldstart-
+  // keyless-worker.test.ts` used to spawn the worker with the repo root as its cwd
+  // and merely delete OPENAI_API_KEY from the child env — which this function then
+  // put straight back from `.env.local`, so on a configured machine the "keyless"
+  // worker ran WITH a key and made a live, billed model call. The test's real fix is
+  // an isolated working directory; this flag is the belt to that pair of braces, and
+  // it is deliberately opt-IN so nothing in normal use can silently lose its secrets.
+  if ((env.ERIKA_NO_ENV_FILE ?? "") === "1") return [];
   let text: string;
   try {
     text = readFileSync(path.join(cwd, ENV_LOCAL), "utf8");
@@ -98,8 +111,6 @@ export function loadEnvLocal(
   return applied;
 }
 
-/** The variable the analysis cascade cannot run without (lib/analysis/audio-model). */
-export const REQUIRED_KEY = "OPENAI_API_KEY";
 
 /** Is a usable analysis key present? Blank counts as absent. */
 export function hasAnalysisKey(env: Record<string, string | undefined> = process.env): boolean {
@@ -130,15 +141,4 @@ export function startupKeyNotice(
     `[worker] Recordings will be segmented and their timeline built. To analyze them, put the key in`,
     `[worker] ${ENV_LOCAL} at the repo root (see .env.example) and restart the worker.`,
   ].join("\n");
-}
-
-/**
- * The message an analysis job carries when it is refused for want of a key. Stored on
- * the job and rendered verbatim by the session page ("Analysis failed — …"), so it is
- * written for the person reading it: what is wrong, that it is permanent until they
- * act, and the exact fix. Never "unavailable right now" — nothing about this server
- * changes on its own, and promising transience makes people retry forever (§DE-3).
- */
-export function analysisUnavailableMessage(): string {
-  return `no ${REQUIRED_KEY} is set, so analysis cannot run. Add it to ${ENV_LOCAL} at the repo root (see .env.example), restart the worker, and analyze again. Your recording, its segments and its timeline are already saved.`;
 }

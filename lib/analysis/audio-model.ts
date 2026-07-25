@@ -117,42 +117,24 @@ export interface AudioModelClient {
   deepListen(model: ModelId, input: DeepInput, opts?: CallOpts): Promise<DeepResult>;
 }
 
-/** Thrown when a model/endpoint is unavailable or unauthorized (a real blocker). */
-export class ModelUnavailableError extends Error {}
-/**
- * A 429 / rate-limit response (E-27 criterion 5). Internal to this module: the
- * client retries it a bounded number of times with jittered backoff honoring any
- * `Retry-After`, and only if the retries are exhausted does it surface — as a
- * `ModelUnavailableError`, so the cascade tries the D-3 fallback and, having
- * received no completion, reserves and charges nothing. `retryAfterMs` is the
- * server's requested wait, when it sent one.
- */
-export class ModelRateLimitError extends Error {
-  retryAfterMs?: number;
-  constructor(message: string, retryAfterMs?: number) {
-    super(message);
-    this.retryAfterMs = retryAfterMs;
-  }
-}
-/**
- * Thrown when a model response cannot be parsed into the expected shape.
- *
- * `shape` is a structural, content-free description of what came back
- * (`describeResponseShape`) — persisted with the segment so the failure
- * distribution becomes visible without storing the reply itself.
- */
-export class ModelParseError extends Error {
-  shape?: string;
-}
-/**
- * The reply stopped because it hit the token limit (E-16b criterion 4). Almost
- * certainly the operator's actual "Model response was not a JSON object": a
- * deep-listen answer cut off mid-array is not a parse *disagreement*, it is a
- * truncation, and calling it the former sent every reader looking in the wrong
- * place. A subclass of ModelParseError so it inherits the same handling — the
- * call resolved, so it was billed, and one repair retry is still worth trying.
- */
-export class ModelTruncatedError extends ModelParseError {}
+// The failure vocabulary lives in ./model-errors and the pure reply parsers in
+// ./parse-response (E-42 — the per-finding parser rework pushed this file past the
+// 500-line hook). Both are re-exported here so every existing importer of this
+// module keeps working unchanged.
+export {
+  ModelUnavailableError,
+  ModelRateLimitError,
+  ModelParseError,
+  ModelTruncatedError,
+} from "./model-errors";
+export {
+  parseTriageResponse,
+  parseDeepResponse,
+  parseProduced,
+} from "./parse-response";
+import { ModelParseError, ModelRateLimitError, ModelTruncatedError, ModelUnavailableError } from "./model-errors";
+import { parseDeepResponse, parseTriageResponse } from "./parse-response";
+
 
 /**
  * A content-free description of a bad reply: what stopped it, how long it was, and
@@ -167,121 +149,6 @@ export function describeResponseShape(raw: string, finishReason: string | null):
     `brace=${raw.includes("{") ? (raw.trimEnd().endsWith("}") ? "closed" : "unclosed") : "none"}`,
   ];
   return parts.join(" ");
-}
-
-// ---- pure parsers (tested directly) -------------------------------------
-
-/**
- * Extract the JSON object from a model response. These audio models do not
- * support a JSON response_format, so we instruct JSON in the prompt and tolerate
- * a stray markdown fence or surrounding prose: parse as-is, else the first
- * balanced `{…}` slice. Anything else is a truthful parse error.
- */
-function asObject(raw: string): Record<string, unknown> {
-  const candidates = [raw.trim()];
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start !== -1 && end > start) candidates.push(raw.slice(start, end + 1));
-  for (const c of candidates) {
-    try {
-      const parsed = JSON.parse(c);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      // try the next candidate
-    }
-  }
-  throw new ModelParseError("Model response was not a JSON object.");
-}
-
-/** Parse a triage response. A missing/non-boolean `flagged` is a truthful error. */
-export function parseTriageResponse(raw: string): TriageResult {
-  const obj = asObject(raw);
-  if (typeof obj.flagged !== "boolean") {
-    throw new ModelParseError("Triage response missing a boolean `flagged`.");
-  }
-  return { flagged: obj.flagged, reason: typeof obj.reason === "string" ? obj.reason : undefined };
-}
-
-/**
- * Parse a deep-listen response into validated findings. Any malformed or partial
- * finding rejects the WHOLE response with a truthful error — the cascade must
- * never persist half a segment's garbage (criterion 2).
- */
-export function parseDeepResponse(raw: string): DeepResult {
-  const obj = asObject(raw);
-  if (!Array.isArray(obj.findings)) {
-    throw new ModelParseError("Deep response missing a `findings` array.");
-  }
-  const findings = obj.findings.map((item, i) => {
-    if (typeof item !== "object" || item === null) {
-      throw new ModelParseError(`Finding ${i} is not an object.`);
-    }
-    const f = item as Record<string, unknown>;
-    for (const key of ["quote", "correction", "explanation"] as const) {
-      if (typeof f[key] !== "string" || (f[key] as string).trim() === "") {
-        throw new ModelParseError(`Finding ${i} has an invalid \`${key}\`.`);
-      }
-    }
-    // A recognisable near-miss ("word choice", "Grammar", "pronounciation") is
-    // coerced to the stored vocabulary rather than costing the whole segment its
-    // findings (E-39); an unrecognisable label is still a truthful parse error.
-    const category = normalizeCategory(f.category);
-    if (category === null) throw new ModelParseError(`Finding ${i} has an invalid \`category\`.`);
-    if (!isSeverity(f.severity)) throw new ModelParseError(`Finding ${i} has an invalid \`severity\`.`);
-    const relStartMs = numberOrUndefined(f.relStartMs);
-    const relEndMs = numberOrUndefined(f.relEndMs);
-    // Optional everywhere (D-13): a missing, empty, or non-string recurrenceId is
-    // simply absent — it can never fail the finding, the segment, or the run.
-    const recurrenceId =
-      typeof f.recurrenceId === "string" && f.recurrenceId.trim() !== ""
-        ? f.recurrenceId.trim()
-        : undefined;
-    // The enriched channel is optional and defensively sanitized (E-28): a
-    // malformed or over-generous `notes` object keeps only the three known string
-    // fields, and reduces to null otherwise — it never fails the finding.
-    const notes = sanitizeNotes(f.notes);
-    return {
-      quote: (f.quote as string).trim(),
-      correction: (f.correction as string).trim(),
-      category,
-      explanation: (f.explanation as string).trim(),
-      severity: f.severity,
-      startMs: 0,
-      endMs: 0,
-      relStartMs,
-      relEndMs,
-      recurrenceId,
-      notes,
-    };
-  });
-  return { findings, produced: parseProduced(obj.produced) };
-}
-
-/**
- * Extract the optional `produced` lemma list (E-28) defensively: a missing,
- * non-array, or partly-malformed value yields the valid entries only, never an
- * error. Each entry needs a non-empty `lemma` and a `pos` string; morph-it
- * validation (drop of an unattested pair) happens downstream, not here — this
- * layer only shapes the reply. A garbage `produced` can never fail the segment or
- * the run (E-16 d4 / D-13), exactly like `notes`.
- */
-export function parseProduced(raw: unknown): ProducedLemma[] {
-  if (!Array.isArray(raw)) return [];
-  const out: ProducedLemma[] = [];
-  for (const item of raw) {
-    if (typeof item !== "object" || item === null) continue;
-    const r = item as Record<string, unknown>;
-    const lemma = typeof r.lemma === "string" ? r.lemma.trim() : "";
-    const pos = typeof r.pos === "string" ? r.pos.trim() : "";
-    if (lemma !== "" && pos !== "") out.push({ lemma, pos });
-  }
-  return out;
-}
-
-function numberOrUndefined(v: unknown): number | undefined {
-  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
 }
 
 // ---- the real OpenAI client ---------------------------------------------

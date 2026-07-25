@@ -30,6 +30,16 @@ export interface RecorderError {
 export interface RecordedTake {
   blob: Blob;
   extension: AudioFormat;
+  /**
+   * Wall-clock instant the take STARTED (epoch ms) — when the learner began
+   * speaking, which is the authoritative source for `sessions.captured_at`
+   * (E-42 criterion 5). Taken with `Date.now()` at `start()`, deliberately NOT from
+   * the `performance.now()` clock the elapsed timer uses: that one is monotonic but
+   * has no calendar, and a calendar is exactly what this value is for.
+   */
+  startedAt: number;
+  /** How long the take ran, in ms — what the keep/discard confirmation states. */
+  durationMs: number;
 }
 
 export interface Recorder {
@@ -76,6 +86,7 @@ export function useRecorder(): Recorder {
   const rafRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef<number>(0);
+  const startedAtEpochRef = useRef<number>(0);
 
   const cleanup = useCallback(() => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
@@ -158,6 +169,7 @@ export function useRecorder(): Recorder {
     recorder.start(TIMESLICE_MS);
 
     startedAtRef.current = performance.now();
+    startedAtEpochRef.current = Date.now();
     setElapsedMs(0);
     timerRef.current = setInterval(() => {
       setElapsedMs(performance.now() - startedAtRef.current);
@@ -178,7 +190,8 @@ export function useRecorder(): Recorder {
         // The live container has no duration ffprobe can read, so decode it and
         // re-encode to WAV, whose header states an exact, probeable length.
         const wav = recorded.size > 0 ? await toWav(recorded).catch(() => null) : null;
-        const { take, lost } = takeOutcome(wav);
+        const durationMs = Math.max(0, performance.now() - startedAtRef.current);
+        const { take, lost } = takeOutcome(wav, startedAtEpochRef.current, durationMs);
         cleanup();
         setStatus("idle");
         setElapsedMs(0);

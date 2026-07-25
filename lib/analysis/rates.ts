@@ -15,25 +15,155 @@ export const DEEP_MODELS = ["gpt-audio-1.5", "gpt-audio"] as const;
 export type ModelId = typeof MINI_MODEL | (typeof DEEP_MODELS)[number];
 
 export interface ModelRate {
-  /** USD charged per minute of audio sent to this model. */
-  usdPerAudioMinute: number;
+  /** USD per audio-INPUT token — the published per-token price. */
+  usdPerAudioInputToken: number;
+  /** USD per TEXT prompt token. Was priced at $0; see the note below. */
+  usdPerPromptToken: number;
+  /** USD per TEXT completion token. Was priced at $0; see the note below. */
+  usdPerCompletionToken: number;
+  /**
+   * Modelled TEXT PROMPT tokens this model is sent per call — a FLOOR over the real
+   * prompt, pinned by `tests/rates-text-floor.test.ts` against the actual prompt
+   * builders plus the hard-capped speaker profile. Grow the prompt and that test
+   * goes red rather than the cap going quietly wrong.
+   */
+  promptTokens: number;
+  /**
+   * Modelled TEXT COMPLETION tokens per call. Below the ceiling the code actually
+   * enforces (`DEEP_MAX_OUTPUT_TOKENS` / `TRIAGE_MAX_OUTPUT_TOKENS`) and above the
+   * replies we expect, so it over-books without pricing every call at a worst case
+   * that almost never occurs.
+   */
+  completionTokens: number;
 }
 
-// Per-minute audio prices (D-10, recalibrated by E-28 toward D-20's figures).
+/**
+ * Assumed audio tokens per minute of audio, the bridge between the published
+ * per-token audio price and the per-minute figure the estimator and the ledger use.
+ *
+ * **MEASURED, not inferred** (`docs/research/spike-6-tutor-listening.md` §5.4): real
+ * `usage` across 10 clips of 3.45–33.80 s gives **10.47 audio-input tokens/second =
+ * 628 per audio-minute**, spread **505–665**. That is the first figure in this repo
+ * taken from a live account rather than from secondary sources, and it discharges
+ * part of the standing reconciliation this file has always owed.
+ *
+ * This books **700** — above the measured MAXIMUM of the spread, not merely above
+ * its mean — because over-booking is the only safe direction here (see the asymmetry
+ * note below) and because a floor that clears the average still under-prices every
+ * call in the upper half of the distribution.
+ */
+export const AUDIO_TOKENS_PER_MINUTE = 700;
+
+// ⚠️ THE ERROR DIRECTIONS ARE NOT SYMMETRIC — read before editing a number down.
+// These rates drive the pre-call estimate and the reserved lease, which is what the
+// hard monthly cap is enforced against. So:
 //
-// D-20 (the richness dial) recalibrated the deep model against real pricing: it
-// truly costs ~$0.02/audio-minute audio-in, ~$0.03/audio-minute ALL-IN with the
-// text output it returns — roughly HALF the $0.06 the founding era ledgered. So
-// `gpt-audio-1.5` drops 0.06 → 0.03 and the `gpt-audio` fallback 0.10 → 0.05
-// (same ~½ move). The mini triages short, time-compressed audio and stays an
-// order of magnitude cheaper than the deep leg it gates. These remain the single
-// price knob and an explicit approximation — a real-API smoke run against actual
-// `usage` is OWED once a key exists (no live key at E-28; mirrors E-4's smoke).
+//   * OVER-estimating a rate costs the user a slightly EARLY refusal — the cap bites
+//     a little sooner than it strictly had to. Annoying; harmless.
+//   * UNDER-estimating a rate makes the cap a LIE — the modelled budget believes it
+//     has headroom the invoice will not honour, so real spend can exceed the cap the
+//     user set. Under-pricing is the ONE direction that can overshoot.
+//
+// [E-42 criterion 13] TEXT WAS PRICED AT $0, AND THAT MATTERS MORE NOW THAN EVER.
+// Until this milestone a call's cost was `audioMinutes × usdPerAudioMinute` and
+// nothing else — an audio-input floor with no allowance for the prompt going up or
+// the JSON coming back. On the most-used money path that was never harmless, and
+// E-39 made it worse: the deep prompt grew from ~1,900 to 7,392 characters
+// (≈1,848 tokens) when it absorbed `lib/mistakes.ts`, and every one of those tokens
+// is re-sent on EVERY deep call. On a day dump with ~70 deep calls that is ~129k
+// prompt tokens the model was billing us for and the ledger recorded as free. And
+// this milestone makes analysis AUTOMATIC — nobody presses anything — so the error
+// now compounds on every recording without a human ever deciding to spend.
+//
+// So the table is rebuilt on the PUBLISHED PER-TOKEN PRICES rather than on a single
+// conflated per-minute figure that silently carried "some text allowance":
+//
+//   gpt-audio-1.5   audio in $32/1M · text $2.50/1M in · $10/1M out
+//   gpt-audio       audio in $32/1M · text $2.50/1M in · $10/1M out
+//   gpt-audio-mini  audio in $10/1M · text $0.60/1M in · $2.40/1M out
+//
+// CROSS-CHECKED AGAINST THIS REPO'S OWN RESEARCH BEFORE BEING WRITTEN, because twice
+// now a constant here has contradicted a figure `docs/research/` already recorded
+// correctly with citations: `docs/research/spike-1-speaker-throughput.md` §pricing
+// and `docs/research/spike-3-extraction-tutor.md` §table both carry exactly these
+// rows, and both put audio input at ~600 tokens/minute.
+//
+// What this changes in practice: the fixed per-call text cost is now charged even to
+// a very short segment (previously such a segment was billed almost nothing however
+// large the prompt), while a long segment's per-minute figure drops toward its true
+// audio-input price. Both moves make the model match the invoice's shape.
+//
+// ⚠️ AND THE PART THAT IS EASY TO STATE WRONGLY. Against the OLD per-minute-only
+// table the new total is NOT uniformly higher — it is higher for short calls and
+// lower for long ones, crossing over at:
+//
+//   gpt-audio-1.5   ~3.49 audio-minutes   (old $0.030/min vs new $0.0224/min + $0.0265/call)
+//   gpt-audio       ~0.96 audio-minutes   (old $0.050/min vs new $0.0224/min + $0.0265/call)
+//   gpt-audio-mini  never — its per-minute rate ROSE, so it is higher at every length
+//
+// The property that matters is not "higher than before" but "at or above MEASURED
+// reality", which is a different claim and the only one worth defending. It holds at
+// every duration and is enforced, not asserted: `tests/rates-text-floor.test.ts`
+// checks each model against spike-6's measured 5.15 s turn and 10-minute segment and
+// sweeps nine durations from 1 s to 30 min. This repo has been bitten specifically by
+// prose asserting a money property no test enforced — so the prose defers to the test.
+//
+// The all-in figures sit above D-20's modelled $0.22 per 10-min capture and $1.77 per
+// 12-h dump, deliberately: D-20's numbers were computed before the prompt quadrupled.
+// The standing usage→invoice reconciliation ([RETRO-002 T1]) is still what should
+// eventually replace every estimate here with a measurement; the cap guards the
+// MODELLED budget, not the invoice.
 export const RATES: Record<ModelId, ModelRate> = {
-  "gpt-audio-mini": { usdPerAudioMinute: 0.006 },
-  "gpt-audio-1.5": { usdPerAudioMinute: 0.03 },
-  "gpt-audio": { usdPerAudioMinute: 0.05 },
+  "gpt-audio-mini": {
+    usdPerAudioInputToken: 10 / 1_000_000,
+    usdPerPromptToken: 0.6 / 1_000_000,
+    usdPerCompletionToken: 2.4 / 1_000_000,
+    // `triagePrompt` is 578 chars (~145 tokens) plus the profile block, which is
+    // hard-capped at PROFILE_MAX_CHARS (1200 chars, ~300 tokens). 600 clears both.
+    promptTokens: 600,
+    // Triage answers one boolean and a short reason; TRIAGE_MAX_OUTPUT_TOKENS caps
+    // it at 400, so booking the whole ceiling costs a fraction of a cent and is a
+    // genuine upper bound rather than a guess.
+    completionTokens: 400,
+  },
+  "gpt-audio-1.5": {
+    usdPerAudioInputToken: 32 / 1_000_000,
+    usdPerPromptToken: 2.5 / 1_000_000,
+    usdPerCompletionToken: 10 / 1_000_000,
+    // `deepPrompt` is 7,392 chars (~1,848 tokens) plus the ≤1,200-char profile block
+    // and the recurrence instruction. 2,600 clears the worst case with headroom.
+    promptTokens: 2600,
+    // DEEP_MAX_OUTPUT_TOKENS is 4,000, deliberately far above a real reply so the
+    // truncation repair stays rare. Booking the full ceiling would roughly double a
+    // day dump's modelled cost against replies that never approach it, so this books
+    // an over-estimate of the observed band instead — but the band is now MEASURED,
+    // not guessed: spike-6's live 10-minute analysis figure ($0.0219/audio-min)
+    // implies ~1,240 output tokens for a real segment. 1,200 sat just BELOW that, so
+    // the output leg alone was under-priced; 2,000 clears it by ~60% and is still
+    // half the enforced ceiling.
+    completionTokens: 2000,
+  },
+  "gpt-audio": {
+    usdPerAudioInputToken: 32 / 1_000_000,
+    usdPerPromptToken: 2.5 / 1_000_000,
+    usdPerCompletionToken: 10 / 1_000_000,
+    promptTokens: 2600,
+    completionTokens: 2000,
+  },
 };
+
+/** USD per minute of audio sent to `model` — audio input only, derived from the
+ *  published per-token price. The per-call TEXT cost is added by `callCost`. */
+export function usdPerAudioMinute(model: ModelId): number {
+  return AUDIO_TOKENS_PER_MINUTE * RATES[model].usdPerAudioInputToken;
+}
+
+/** USD of TEXT a single call to `model` costs — prompt in, JSON out. Fixed per
+ *  call, because the prompt is re-sent in full every time (criterion 13). */
+export function textCallOverhead(model: ModelId): number {
+  const r = RATES[model];
+  return r.promptTokens * r.usdPerPromptToken + r.completionTokens * r.usdPerCompletionToken;
+}
 
 /**
  * Assumed fraction of triaged segments the mini flags for deep-listening, used
@@ -65,9 +195,17 @@ export function deepFullMaxMinutes(raw: string | undefined = process.env.DEEP_FU
   return Number.isFinite(n) && n >= 0 ? n : 30;
 }
 
-/** USD to send `durationMs` of audio to `model`, per the rates table. */
+/**
+ * USD for ONE call to `model` carrying `durationMs` of audio: the audio input, plus
+ * the fixed text cost of the prompt going up and the JSON coming back.
+ *
+ * The text term is per CALL, not per minute, because that is how it is billed — the
+ * same 2,600-token deep prompt is sent whether the clip is four seconds or four
+ * minutes. Modelling it per minute (which pricing it at $0 effectively did) made
+ * short segments look free, and short segments are exactly what VAD produces.
+ */
 export function callCost(model: ModelId, durationMs: number): number {
-  return (durationMs / 60_000) * RATES[model].usdPerAudioMinute;
+  return (durationMs / 60_000) * usdPerAudioMinute(model) + textCallOverhead(model);
 }
 
 // ---- text model (E-6 Micro-lessons) -------------------------------------

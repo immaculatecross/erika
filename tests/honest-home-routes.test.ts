@@ -47,7 +47,7 @@ beforeAll(async () => {
 
   for (const id of ["analysed", "raw"] as const) {
     createSession(db, { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
-    db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(`${WEEK} 09:00:00`, id);
+    db.prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(`${WEEK} 09:00:00`, id);
     db.prepare("UPDATE ingest_jobs SET state = 'done' WHERE session_id = ?").run(id);
     upsertSegment(db, { sessionId: id, idx: 0, startMs: 0, endMs: HOUR, contentHash: `${id}-h0` });
   }
@@ -78,15 +78,21 @@ describe("GET /api/sessions — yield on every row (criterion 2)", () => {
       id: string;
       analysed: boolean;
       segmentCount: number;
-      sessionYield: { analysedSpeechMs: number; findingsCount: number; dominantCategory: string } | null;
+      sessionYield: {
+        findingsCount: number;
+        dominantCategory: string;
+        segmentCount: number;
+        analysedSegmentCount: number;
+      } | null;
     }[];
     const analysed = rows.find((r) => r.id === "analysed")!;
     const raw = rows.find((r) => r.id === "raw")!;
     expect(analysed.analysed).toBe(true);
     expect(analysed.sessionYield).toEqual({
-      analysedSpeechMs: HOUR,
       findingsCount: 3,
       dominantCategory: "grammar",
+      segmentCount: 1,
+      analysedSegmentCount: 1,
     });
     expect(raw.analysed).toBe(false);
     expect(raw.sessionYield).toBeNull();

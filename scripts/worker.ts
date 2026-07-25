@@ -12,6 +12,7 @@ import {
   reclaimStuckAnalysisJobs,
   runAnalysisJob,
 } from "../lib/analysis/cascade";
+import { resumeHaltedAnalysis, resumeKeylessRefusals, sweepPendingAnalysis } from "../lib/analysis/auto";
 import { sweepStaleReservations } from "../lib/analysis/budget";
 import { openAiAudioModel } from "../lib/analysis/audio-model";
 import { resolveEmbedder, type SpeakerEmbedder } from "../lib/speaker";
@@ -74,6 +75,17 @@ async function runAnalysis(db: ReturnType<typeof getDb>, id: string): Promise<vo
 async function tick(db: ReturnType<typeof getDb>, embedder: SpeakerEmbedder): Promise<boolean> {
   for (const id of reclaimStuckJobs(db)) await runOne(db, id, embedder); // crash recovery first
   for (const id of reclaimStuckAnalysisJobs(db)) await runAnalysis(db, id);
+  // Analysis starts itself (E-42 criterion 3). `processJob` queues the run on its
+  // own done-transition; this sweep is the INVARIANT behind that instance — any
+  // ingested session with speech and no run at all gets one, whichever path
+  // completed it, including rows that predate this milestone.
+  for (const id of sweepPendingAnalysis(db)) console.error(`[worker] auto-analysis queued for ${id}`);
+  // And a run the cap halted resumes once there is headroom, without the learner
+  // re-uploading anything (criterion 8). Returns nothing at all while still capped.
+  for (const id of resumeHaltedAnalysis(db)) console.error(`[worker] resuming halted analysis ${id}`);
+  // And a run refused for want of a key resumes once a key exists — the learner did
+  // what the UI told them to do, so the wall must move with the reason for it.
+  for (const id of resumeKeylessRefusals(db)) console.error(`[worker] key found — retrying analysis ${id}`);
   const next = claimNextJob(db);
   if (next) {
     await runOne(db, next, embedder);

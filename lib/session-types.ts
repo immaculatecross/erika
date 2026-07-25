@@ -32,7 +32,16 @@ export interface Session {
   format: string;
   sizeBytes: number;
   durationSeconds: number;
+  /**
+   * When the ROW was made — i.e. when the upload finished. NOT when the learner
+   * spoke, and never to be shown as such: Erika's capture is day-scale and async
+   * (D-9), so a take recorded at 08:10 and uploaded at 21:30 differs by thirteen
+   * hours. Kept because "when did this land" is a real question (E-42, v28).
+   */
   createdAt: string;
+  /** When the learner SPOKE (E-42, v28) — the only field any "when you recorded"
+   *  claim may read. See lib/capture-time.ts for how it is resolved and why. */
+  capturedAt: string;
   jobState: IngestState;
   /** The manual "this recording isn't me — don't learn from it" flag (E-36, D-22).
    *  An excluded session mints NO produced-lemma positive evidence regardless of the

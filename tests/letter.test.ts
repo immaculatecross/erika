@@ -45,7 +45,7 @@ function f(over: Partial<LetterFinding> = {}): LetterFinding {
 }
 
 function sess(over: Partial<LetterSession> = {}): LetterSession {
-  return { id: "s", createdAt: `${CURRENT_WEEK} 09:00:00`, speechMs: HOUR, findings: [], ...over };
+  return { id: "s", capturedAt: `${CURRENT_WEEK} 09:00:00`, speechMs: HOUR, findings: [], ...over };
 }
 
 describe("isoWeekStart — Monday-anchored ISO weeks (criterion 1)", () => {
@@ -96,8 +96,8 @@ describe("composeWeek — bounds, headline figures, focus-next (criteria 1 & 4)"
 });
 
 describe("composeWeek — trend vs the prior week (criterion 2)", () => {
-  const prior = sess({ id: "p", createdAt: `${PRIOR_WEEK} 09:00:00`, speechMs: HOUR, findings: [f(), f(), f(), f()] }); // 4/h
-  const current = sess({ id: "c", createdAt: `${CURRENT_WEEK} 09:00:00`, speechMs: HOUR, findings: [f()] }); // 1/h
+  const prior = sess({ id: "p", capturedAt: `${PRIOR_WEEK} 09:00:00`, speechMs: HOUR, findings: [f(), f(), f(), f()] }); // 4/h
+  const current = sess({ id: "c", capturedAt: `${CURRENT_WEEK} 09:00:00`, speechMs: HOUR, findings: [f()] }); // 1/h
 
   it("reads a falling rate as improving and carries both weeks' rates", () => {
     const letter = composeWeek([prior, current], CURRENT_WEEK);
@@ -108,7 +108,7 @@ describe("composeWeek — trend vs the prior week (criterion 2)", () => {
   });
 
   it("reads a rising rate as worsening — and says so truthfully (criterion 4)", () => {
-    const worse = sess({ id: "c", createdAt: `${CURRENT_WEEK} 09:00:00`, speechMs: HOUR, findings: [f(), f(), f(), f(), f(), f()] }); // 6/h
+    const worse = sess({ id: "c", capturedAt: `${CURRENT_WEEK} 09:00:00`, speechMs: HOUR, findings: [f(), f(), f(), f(), f(), f()] }); // 6/h
     const letter = composeWeek([prior, worse], CURRENT_WEEK);
     expect(letter.trend.direction).toBe("worsening"); // 4/h → 6/h, not sugar-coated
     expect(letter.ratePerHour).toBe(6);
@@ -152,8 +152,8 @@ describe("selectRecasts — deterministic best-recasts pick (criterion 3)", () =
 
 describe("computeLetter — latest week and the empty case", () => {
   it("chooses the most recent week that has findings", () => {
-    const older = sess({ id: "p", createdAt: `${PRIOR_WEEK} 09:00:00`, findings: [f()] });
-    const newer = sess({ id: "c", createdAt: `${CURRENT_WEEK} 09:00:00`, findings: [f()] });
+    const older = sess({ id: "p", capturedAt: `${PRIOR_WEEK} 09:00:00`, findings: [f()] });
+    const newer = sess({ id: "c", capturedAt: `${CURRENT_WEEK} 09:00:00`, findings: [f()] });
     expect(computeLetter([older, newer])?.weekStart).toBe(CURRENT_WEEK);
   });
 
@@ -174,9 +174,9 @@ describe("buildLetter — only analyzed sessions are read (criterion 1 data path
     for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
   });
 
-  function seed(db: Db, id: string, createdAt: string, cats: Category[], analyzed: boolean) {
+  function seed(db: Db, id: string, capturedAt: string, cats: Category[], analyzed: boolean) {
     createSession(db, { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
-    db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(createdAt, id); // pin the week
+    db.prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(capturedAt, id); // pin the week
     upsertSegment(db, { sessionId: id, idx: 0, startMs: 0, endMs: HOUR, contentHash: `${id}-h0` });
     // An un-analysed session has speech but no witness and so no findings — the
     // only shape the cascade can actually produce (see the same note in focus.test).

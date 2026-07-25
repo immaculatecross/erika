@@ -1,6 +1,7 @@
 import { removeSessionDir } from "@/lib/audio-storage";
+import { resolveCapturedAt } from "@/lib/capture-time";
 import { getDb } from "@/lib/db";
-import { FfprobeError, probeDurationSeconds } from "@/lib/ffprobe";
+import { FfprobeError, probeCreationTime, probeDurationSeconds } from "@/lib/ffprobe";
 import {
   createSession,
   isSupportedFormat,
@@ -44,6 +45,18 @@ export interface FinalizeInput {
   sourceFile: string;
   /** Exact byte count already written to `sourceFile`. */
   sizeBytes: number;
+  /**
+   * The client's declared capture instant — the mic recorder's take-START (E-42
+   * criterion 5). Authoritative when present: nothing downstream knows better than
+   * the browser that was recording. Absent on the file-picker path.
+   */
+  capturedAt?: string | null;
+  /**
+   * A weaker capture hint — the picked file's modification time. Ranked below the
+   * container's own embedded `creation_time`, and never later than the upload
+   * instant. See lib/capture-time.ts.
+   */
+  capturedAtHint?: string | null;
 }
 
 /**
@@ -87,11 +100,23 @@ export async function finalizeStagedUpload(input: FinalizeInput): Promise<Sessio
     );
   }
 
+  // When the learner SPOKE (E-42 criterion 5). Resolved HERE, in the one gate both
+  // transports pass through, so the mic path and the file path can never disagree
+  // about how a capture time is decided. The embedded probe runs only after the
+  // file has proved decodable, and it never throws — a recording without a usable
+  // capture time is still a recording, it just falls back to the upload instant.
+  const capturedAt = resolveCapturedAt({
+    declared: input.capturedAt,
+    embedded: await probeCreationTime(sourceFile),
+    hint: input.capturedAtHint,
+  });
+
   return createSession(getDb(), {
     id,
     originalFilename: filename,
     format,
     sizeBytes,
     durationSeconds,
+    capturedAt,
   });
 }

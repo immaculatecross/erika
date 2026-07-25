@@ -46,9 +46,9 @@ describe("sessions data layer", () => {
   it("lists sessions newest-first (criterion 4)", () => {
     const db = freshDb();
     createSession(db, { id: "a", ...base });
-    db.prepare("UPDATE sessions SET created_at = '2020-01-01 00:00:00' WHERE id = 'a'").run();
+    db.prepare("UPDATE sessions SET captured_at = '2020-01-01 00:00:00' WHERE id = 'a'").run();
     createSession(db, { id: "b", ...base });
-    db.prepare("UPDATE sessions SET created_at = '2030-01-01 00:00:00' WHERE id = 'b'").run();
+    db.prepare("UPDATE sessions SET captured_at = '2030-01-01 00:00:00' WHERE id = 'b'").run();
     expect(listSessions(db).map((s) => s.id)).toEqual(["b", "a"]);
     db.close();
   });

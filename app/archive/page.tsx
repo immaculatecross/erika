@@ -152,7 +152,7 @@ function Group({ group, reduced }: { group: ArchiveGroup; reduced: boolean }) {
   return (
     <section data-group data-session-id={group.sessionId}>
       <div className="mb-3 flex items-baseline justify-between gap-4">
-        <h2 className="tabular text-[15px] font-semibold text-ink">{formatCreatedAt(group.sessionCreatedAt)}</h2>
+        <h2 className="tabular text-[15px] font-semibold text-ink">{formatCreatedAt(group.sessionCapturedAt)}</h2>
         <span className="min-w-0 truncate text-[13px] text-secondary">{group.sessionFilename}</span>
       </div>
       <motion.ul

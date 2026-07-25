@@ -1,33 +1,51 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { EmptyState } from "@/components/empty-state";
 import { Recorder } from "@/components/recorder";
 import { SessionRow } from "@/components/session-row";
+import { WorkerAbsentNotice } from "@/components/worker-absent-notice";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { uploadAudio } from "@/lib/upload-audio";
+import { useSessions } from "@/lib/use-sessions";
 import { SUPPORTED_FORMATS } from "@/lib/session-types";
-import type { SessionListItem } from "@/lib/sessions-list-view";
+import { isInFlight, sessionPhase } from "@/lib/sessions-list-view";
+import { formatCreatedAt } from "@/lib/format";
 
 const ACCEPT = SUPPORTED_FORMATS.map((f) => `.${f}`).join(",");
 
 type Upload = { kind: "idle" } | { kind: "busy"; name: string } | { kind: "error"; message: string };
 
+// The home: your recordings, and what Erika is doing with them.
+//
+// [E-42 criterion 4] IT FOLLOWS THE SESSION. This page used to `load()` on mount and
+// once after an upload, and never again — so the only way to see that ingest had
+// finished was to reload by hand. That was survivable while analysis needed a button
+// press; with analysis automatic it would have meant the entire pipeline running to
+// completion behind a screen frozen on "Not analyzed yet". `useSessions` follows the
+// list until everything settles and then stops (lib/use-sessions.ts).
+//
+// [criterion 1] Choosing a file IS the confirmation: the picker opens, you choose,
+// and upload → ingest → analysis run with nothing further to press. The mic path's
+// one confirmation lives in <Recorder/>.
+//
+// [criterion 7] There is no money on this screen. Not an estimate, not a running
+// total, not a budget. What analysis costs, that it happens automatically, and what
+// the monthly cap does are stated once, in prose, in Settings — where a person can
+// read them before any of it starts rather than as a number beside a button.
+
 export default function SessionsPage() {
   const reduced = usePrefersReducedMotion();
-  const [sessions, setSessions] = useState<SessionListItem[] | null>(null);
+  const { sessions, polling, pollCount, refresh } = useSessions();
   const [upload, setUpload] = useState<Upload>({ kind: "idle" });
+  // The ids that existed BEFORE the upload, so the new row can be identified by set
+  // difference rather than by guessing. `created_at` is second-granular — the very
+  // reason migration v27 needed its own `seq` — so two uploads inside one second tie,
+  // and "the newest row" silently identified the wrong one.
+  const [added, setAdded] = useState<{ name: string; knownIds: string[] } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  async function load() {
-    const res = await fetch("/api/sessions");
-    setSessions(res.ok ? await res.json() : []);
-  }
-  useEffect(() => {
-    void load();
-  }, []);
 
   function pick() {
     inputRef.current?.click();
@@ -38,16 +56,47 @@ export default function SessionsPage() {
     e.target.value = ""; // allow re-picking the same file
     if (!file) return;
     setUpload({ kind: "busy", name: file.name });
-    const result = await uploadAudio(file.name, file);
+    const result = await uploadAudio(file.name, file, {
+      // A weaker capture hint than a mic take's start instant, and ranked below the
+      // container's own embedded creation time — but far better than the upload
+      // instant for the case this milestone exists to fix: a day dump recorded this
+      // morning and dropped in tonight (E-42 criterion 5, lib/capture-time.ts).
+      capturedAtHint: Number.isFinite(file.lastModified)
+        ? new Date(file.lastModified).toISOString()
+        : undefined,
+    });
     if (result.ok) {
       setUpload({ kind: "idle" });
-      await load();
+      setAdded({ name: file.name, knownIds: (sessions ?? []).map((s) => s.id) });
+      refresh(); // pick the new session up and follow it
     } else {
       setUpload({ kind: "error", message: result.message });
     }
   }
 
   const busy = upload.kind === "busy";
+  // [Full review] ACKNOWLEDGE THE UPLOAD WHERE THE EYE ALREADY IS. Dropping in a
+  // 12-hour dump — the headline case in PRODUCT.md — used to say nothing at all: the
+  // flow has no button left to reassure anyone, and because the list is ordered by
+  // CAPTURE time (product call 2), a file recorded days ago lands far below the fold.
+  //
+  // The row just added is the one that was not there before — an exact identity, not
+  // a guess at "the newest". When it is not the top row, the acknowledgement says
+  // where it went rather than leaving the learner to hunt for it.
+  const justAdded = (() => {
+    if (!added || !sessions?.length) return null;
+    const known = new Set(added.knownIds);
+    const index = sessions.findIndex((s) => !known.has(s.id));
+    if (index === -1) return null;
+    return {
+      name: added.name,
+      where: index === 0 ? null : formatCreatedAt(sessions[index].capturedAt),
+    };
+  })();
+  // One notice for the whole screen, not one per row: the work happens in a second
+  // process, and a learner who has never started it needs the command once. This is
+  // the single most common cold-start dead end this app has (RETRO-004 §DE-1).
+  const workerAbsent = (sessions ?? []).some((s) => isInFlight(sessionPhase(s)) && s.workerAbsent);
 
   return (
     <>
@@ -66,12 +115,13 @@ export default function SessionsPage() {
         <div className="flex flex-col">
           <EmptyState
             title="Sessions"
-            line="No sessions yet. Record a take or upload a day's audio to begin."
+            line="Record a take or drop in a day's audio. Erika listens to it and finds your mistakes — you don't have to start anything."
             action={busy ? `Uploading ${upload.name}…` : "Upload audio"}
             onAction={pick}
             disabled={busy}
             actionVariant="secondary"
-            secondary={<Recorder onRecorded={load} disabled={busy} variant="primary" />}
+            secondary={<Recorder onRecorded={refresh} disabled={busy} variant="primary" />}
+            note={<WorkerPrerequisite />}
           />
           {upload.kind === "error" && (
             <p className="pb-8 text-center text-[13px] text-severe" role="alert">
@@ -80,12 +130,17 @@ export default function SessionsPage() {
           )}
         </div>
       ) : (
-        <div className="mx-auto max-w-3xl p-8">
+        <div
+          className="mx-auto max-w-3xl p-8"
+          data-sessions
+          data-polling={polling}
+          data-poll-count={pollCount}
+        >
           <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-[34px] font-bold tracking-tight">Sessions</h1>
             <div className="flex flex-wrap items-center gap-3">
-              {/* [polish] Record leads (primary/accent); Upload is the secondary action. */}
-              <Recorder onRecorded={load} disabled={busy} variant="primary" />
+              {/* Record leads (primary/accent); Upload is the secondary action. */}
+              <Recorder onRecorded={refresh} disabled={busy} variant="primary" />
               <button
                 type="button"
                 onClick={pick}
@@ -101,6 +156,12 @@ export default function SessionsPage() {
               {upload.message}
             </p>
           )}
+          {justAdded && <UploadAck name={justAdded.name} where={justAdded.where} />}
+          {workerAbsent && (
+            <div className="mb-4">
+              <WorkerAbsentNotice />
+            </div>
+          )}
           <motion.ul
             variants={staggerContainer(reduced)}
             initial="initial"
@@ -109,12 +170,44 @@ export default function SessionsPage() {
           >
             {sessions.map((s) => (
               <motion.li key={s.id} variants={staggerItem(reduced)}>
-                <SessionRow item={s} onStarted={() => void load()} />
+                <SessionRow item={s} />
               </motion.li>
             ))}
           </motion.ul>
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * The one manual prerequisite left, stated before anyone waits on it.
+ *
+ * [Full review] This milestone removed every button from the capture path, which
+ * makes the second process the ONLY thing a newcomer must do by hand — and a learner
+ * who records and then watches nothing happen has been asked a question the product
+ * never answered. That is precisely what made the v0.6 cold-start gate fail: the
+ * app's own remedy was a loop. The worker-absent notice still exists, but it is a
+ * diagnosis after 20 s of silence; this is the instruction before the silence.
+ */
+function WorkerPrerequisite() {
+  return (
+    <span data-worker-prerequisite>
+      Erika listens in a second process — leave{" "}
+      <code className="rounded bg-black/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-ink dark:bg-white/[0.08]">
+        npm run worker
+      </code>{" "}
+      running in another terminal.
+    </span>
+  );
+}
+
+/** A quiet line confirming the upload landed, and where it went if not to the top. */
+function UploadAck({ name, where }: { name: string; where: string | null }) {
+  return (
+    <p className="mb-4 text-[13px] text-secondary" role="status" data-upload-ack>
+      <span className="text-ink">{name}</span> added — Erika is working on it
+      {where ? `. It's dated ${where}, so it sits further down the list.` : "."}
+    </p>
   );
 }

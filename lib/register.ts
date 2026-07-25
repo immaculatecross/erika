@@ -41,12 +41,27 @@ const DESCRIPTION: Record<Register, string> = {
 
 /**
  * The register instruction injected into every TEXT generation prompt (analysis
- * recasts, lesson generation, the tutor persona). A single sentence naming the
- * register and pinning it to STYLE, not correctness — the model is told the target
- * register and told that examples/corrections must be natural in it.
+ * recasts, lesson generation, the tutor persona).
+ *
+ * [E-42 criterion 12] THE ONE STATEMENT ABOUT WHAT THE DIAL DOES. Three places used
+ * to say two different things: this function said the dial "never [changes] what is
+ * correct"; `lib/mistakes.ts` class B says a plain register mismatch IS a mistake;
+ * and `lib/analysis/prompts.ts` restated the first claim in a comment. A composed
+ * prompt that contradicts itself is worse than either half alone, because the model
+ * resolves the contradiction however it likes and we never find out which way.
+ *
+ * The resolution, stated ONCE here and referenced everywhere else: **the dial sets
+ * the target register a slip is judged against; it never overrides grammatical
+ * correctness.** That is D-23's "style only, never correctness" read precisely — the
+ * dial does not make a wrong form right or a right form wrong, it decides which of
+ * several correct ways to say something belongs here. PRODUCT.md leads with catching
+ * "phrasing a native would never choose", so a word plainly outside the chosen
+ * register is a real finding; it is a WORD-CHOICE finding, filed under `vocabulary`
+ * (lib/analysis/findings.ts), and therefore cardable exactly like any other
+ * vocabulary finding — no new category, no separate drill path (criterion 14).
  */
 export function registerInstruction(register: Register): string {
-  return `Write in the "${register}" register of Italian: ${DESCRIPTION[register]}. This sets the style only, never what is correct — every correction, example, and answer must be accurate AND natural in this register.`;
+  return `Write in the "${register}" register of Italian: ${DESCRIPTION[register]}. This register is the target: every correction, example, and answer must be accurate AND natural in it, and a word or turn of phrase plainly outside it counts as a word-choice mistake. It never overrides what is grammatically correct — it decides which of several correct ways to say something belongs here.`;
 }
 
 /**

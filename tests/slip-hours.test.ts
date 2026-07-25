@@ -48,9 +48,9 @@ describe("slipHourDistribution — 24 LOCAL buckets, never NaN", () => {
     // The same three fixtures as the UTC version: 08:00Z/08:59:59Z in winter are
     // 09:xx CET, and 21:10Z in June is 23:10 CEST.
     const d = slipHourDistribution([
-      { sessionCreatedAt: "2026-01-01 08:00:00", startMs: 0 },
-      { sessionCreatedAt: "2026-01-01 08:59:59", startMs: 0 },
-      { sessionCreatedAt: "2026-06-02 21:10:00", startMs: 0 },
+      { sessionCapturedAt: "2026-01-01 08:00:00", startMs: 0 },
+      { sessionCapturedAt: "2026-01-01 08:59:59", startMs: 0 },
+      { sessionCapturedAt: "2026-06-02 21:10:00", startMs: 0 },
     ]);
     expect(d.buckets[9]).toBe(2);
     expect(d.buckets[23]).toBe(1);
@@ -62,7 +62,7 @@ describe("slipHourDistribution — 24 LOCAL buckets, never NaN", () => {
 
   it("adds the recording offset before reading the hour — an hour boundary", () => {
     // 08:30Z + 45 min of speech = 09:15Z, which is 10:15 CET → hour 10, not 9.
-    const d = slipHourDistribution([{ sessionCreatedAt: "2026-01-01 08:30:00", startMs: 45 * 60_000 }]);
+    const d = slipHourDistribution([{ sessionCapturedAt: "2026-01-01 08:30:00", startMs: 45 * 60_000 }]);
     expect(d.buckets[10]).toBe(1);
     expect(d.buckets[9]).toBe(0);
   });
@@ -70,15 +70,15 @@ describe("slipHourDistribution — 24 LOCAL buckets, never NaN", () => {
   it("crosses LOCAL midnight correctly via epoch math (the boundary note)", () => {
     // 22:50Z is 23:50 CET; + 20 min → 00:10 the next LOCAL day → hour 0. This is the
     // point of the local basis: the day that rolls over is the learner's, not Greenwich's.
-    const d = slipHourDistribution([{ sessionCreatedAt: "2026-01-01 22:50:00", startMs: 20 * 60_000 }]);
+    const d = slipHourDistribution([{ sessionCapturedAt: "2026-01-01 22:50:00", startMs: 20 * 60_000 }]);
     expect(d.buckets[0]).toBe(1);
     expect(d.buckets[23]).toBe(0);
   });
 
   it("skips an unparseable timestamp rather than corrupting a bucket", () => {
     const d = slipHourDistribution([
-      { sessionCreatedAt: "not-a-date", startMs: 0 },
-      { sessionCreatedAt: "2026-01-01 03:00:00", startMs: 0 }, // 04:00 CET
+      { sessionCapturedAt: "not-a-date", startMs: 0 },
+      { sessionCapturedAt: "2026-01-01 03:00:00", startMs: 0 }, // 04:00 CET
     ]);
     expect(d.total).toBe(1);
     expect(d.buckets[4]).toBe(1);
@@ -90,8 +90,8 @@ describe("slipHourDistribution — the DST answer, asserted (E-38 / RETRO-003)",
   it("SPRING FORWARD: the skipped hour simply gets nothing, and nothing is lost", () => {
     // Europe/Rome 2026-03-29: 01:00Z flips CET→CEST, so local 02:00 never happens.
     const d = slipHourDistribution([
-      { sessionCreatedAt: "2026-03-29 00:30:00", startMs: 0 }, // 01:30 CET
-      { sessionCreatedAt: "2026-03-29 01:30:00", startMs: 0 }, // 03:30 CEST
+      { sessionCapturedAt: "2026-03-29 00:30:00", startMs: 0 }, // 01:30 CET
+      { sessionCapturedAt: "2026-03-29 01:30:00", startMs: 0 }, // 03:30 CEST
     ]);
     expect(d.buckets[1]).toBe(1);
     expect(d.buckets[2]).toBe(0); // the hour that did not exist for the learner
@@ -102,8 +102,8 @@ describe("slipHourDistribution — the DST answer, asserted (E-38 / RETRO-003)",
   it("FALL BACK: the repeated hour is ONE bucket twice as wide — never double-counted", () => {
     // Europe/Rome 2026-10-25: 01:00Z flips CEST→CET, so local 02:00 happens twice.
     const d = slipHourDistribution([
-      { sessionCreatedAt: "2026-10-25 00:30:00", startMs: 0 }, // 02:30 CEST (first pass)
-      { sessionCreatedAt: "2026-10-25 01:30:00", startMs: 0 }, // 02:30 CET  (second pass)
+      { sessionCapturedAt: "2026-10-25 00:30:00", startMs: 0 }, // 02:30 CEST (first pass)
+      { sessionCapturedAt: "2026-10-25 01:30:00", startMs: 0 }, // 02:30 CET  (second pass)
     ]);
     expect(d.buckets[2]).toBe(2); // both land in hour 2, once each
     expect(d.total).toBe(2); // Σ conserved: nothing counted twice, nothing dropped
@@ -112,7 +112,7 @@ describe("slipHourDistribution — the DST answer, asserted (E-38 / RETRO-003)",
   it("conserves Σ(buckets) across a whole DST date (both transitions)", () => {
     for (const date of ["2026-03-29", "2026-10-25"]) {
       const findings = Array.from({ length: 24 }, (_, h) => ({
-        sessionCreatedAt: `${date} ${String(h).padStart(2, "0")}:00:00`,
+        sessionCapturedAt: `${date} ${String(h).padStart(2, "0")}:00:00`,
         startMs: 0,
       }));
       const d = slipHourDistribution(findings);
@@ -137,7 +137,7 @@ describe("buildFocusPayload — buckets the included findings (data path)", () =
   it("distributes a session's findings by its LOCAL capture hour", () => {
     const db = freshDb();
     createSession(db, { id: "s1", originalFilename: "s.wav", format: "wav", sizeBytes: 1, durationSeconds: 3600 });
-    db.prepare("UPDATE sessions SET created_at = '2026-01-01 14:00:00' WHERE id = 's1'").run();
+    db.prepare("UPDATE sessions SET captured_at = '2026-01-01 14:00:00' WHERE id = 's1'").run();
     upsertSegment(db, { sessionId: "s1", idx: 0, startMs: 0, endMs: 3_600_000, contentHash: "s1-h" });
     persistSegmentFindings(db, {
       sessionId: "s1",

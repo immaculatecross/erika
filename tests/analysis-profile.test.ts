@@ -40,7 +40,7 @@ function primedInput(): ProfileInput {
     focus: computeFocus([
       {
         id: "s1",
-        createdAt: "2026-07-01 10:00:00",
+        capturedAt: "2026-07-01 10:00:00",
         speechMs: 1_800_000, // half an hour
         findings: findings.map(({ category, severity }) => ({ category, severity })),
       },

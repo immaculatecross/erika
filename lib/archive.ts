@@ -24,7 +24,7 @@ export interface ArchiveEntry {
   findingId: string;
   sessionId: string;
   /** The owning session's capture date (SQLite UTC) — the day/session key. */
-  sessionCreatedAt: string;
+  sessionCapturedAt: string;
   /** The owning session's original filename — the group header label. */
   sessionFilename: string;
   /** What you said. */
@@ -42,7 +42,7 @@ export interface ArchiveEntry {
 export interface ArchiveSource {
   id: string;
   sessionId: string;
-  sessionCreatedAt: string;
+  sessionCapturedAt: string;
   sessionFilename: string;
   quote: string;
   correction: string;
@@ -66,7 +66,7 @@ export interface ArchiveFilter {
 /** One session's moments under a shared header — the legible chronological group. */
 export interface ArchiveGroup {
   sessionId: string;
-  sessionCreatedAt: string;
+  sessionCapturedAt: string;
   sessionFilename: string;
   entries: ArchiveEntry[];
 }
@@ -75,7 +75,7 @@ function toEntry(s: ArchiveSource): ArchiveEntry {
   return {
     findingId: s.id,
     sessionId: s.sessionId,
-    sessionCreatedAt: s.sessionCreatedAt,
+    sessionCapturedAt: s.sessionCapturedAt,
     sessionFilename: s.sessionFilename,
     quote: s.quote,
     correction: s.correction,
@@ -95,8 +95,8 @@ function toEntry(s: ArchiveSource): ArchiveEntry {
  */
 export function buildEntries(sources: readonly ArchiveSource[]): ArchiveEntry[] {
   return sources.map(toEntry).sort((a, b) => {
-    if (a.sessionCreatedAt !== b.sessionCreatedAt) {
-      return a.sessionCreatedAt < b.sessionCreatedAt ? 1 : -1; // newer session first
+    if (a.sessionCapturedAt !== b.sessionCapturedAt) {
+      return a.sessionCapturedAt < b.sessionCapturedAt ? 1 : -1; // newer session first
     }
     if (a.sessionId !== b.sessionId) return a.sessionId < b.sessionId ? 1 : -1;
     if (a.startMs !== b.startMs) return a.startMs - b.startMs; // earlier moment first
@@ -140,7 +140,7 @@ export function groupBySession(entries: readonly ArchiveEntry[]): ArchiveGroup[]
     } else {
       groups.push({
         sessionId: e.sessionId,
-        sessionCreatedAt: e.sessionCreatedAt,
+        sessionCapturedAt: e.sessionCapturedAt,
         sessionFilename: e.sessionFilename,
         entries: [e],
       });

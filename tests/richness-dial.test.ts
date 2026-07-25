@@ -21,7 +21,7 @@ import {
   reserveSpend,
   finalizeReservation,
 } from "@/lib/analysis/budget";
-import { RATES, DEEP_MODELS, deepFullMaxMinutes, assumedFlagRate } from "@/lib/analysis/rates";
+import { DEEP_MODELS, deepFullMaxMinutes, assumedFlagRate, textCallOverhead, usdPerAudioMinute } from "@/lib/analysis/rates";
 import { getItem } from "@/lib/knowledge";
 import type { AudioModelClient, DeepResult } from "@/lib/analysis/audio-model";
 import { DEEP_MAX_OUTPUT_TOKENS, TRIAGE_MAX_OUTPUT_TOKENS } from "@/lib/analysis/audio-model";
@@ -227,8 +227,14 @@ describe("production lemma evidence, validated (criterion 3)", () => {
 // ---- criterion 4: recalibrated rates; estimate matches the billed set -----
 
 describe("recalibrated rates and a truthful full-deep estimate (criterion 4)", () => {
-  it("the deep rate is recalibrated to ~half the founding figure", () => {
-    expect(RATES["gpt-audio-1.5"].usdPerAudioMinute).toBeCloseTo(0.03, 9); // was 0.06
+  it("the deep audio rate follows the published per-token price, and text is never free", () => {
+    // [E-42 criterion 13] The per-minute figure is now derived from the PUBLISHED
+    // audio-input price ($32/1M, ~600 audio tokens/min — docs/research/spike-1 and
+    // spike-3) rather than being one conflated number that silently carried "some
+    // text allowance". It sits at or above the researched audio-in cost, and the
+    // prompt and completion the call really sends are priced separately, per call.
+    expect(usdPerAudioMinute("gpt-audio-1.5")).toBeGreaterThanOrEqual(600 * (32 / 1_000_000));
+    expect(textCallOverhead("gpt-audio-1.5")).toBeGreaterThan(0);
     expect(assumedFlagRate(undefined)).toBeCloseTo(0.5, 9); // loosened companion (D-20)
   });
 

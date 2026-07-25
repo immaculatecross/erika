@@ -1,4 +1,10 @@
 import * as tus from "tus-js-client";
+import {
+  CAPTURED_AT_HEADER,
+  CAPTURED_AT_HINT_HEADER,
+  CAPTURED_AT_HINT_KEY,
+  CAPTURED_AT_KEY,
+} from "./capture-time";
 
 // The one client-side path to ingestion (E-2's fixed contract, E-24's upgrade).
 // Both the file picker and the mic recorder funnel through uploadAudio, so the
@@ -19,14 +25,38 @@ const REJECTION_STATUSES = new Set([400, 413, 415, 422]);
 
 const GENERIC_FAILURE = "Upload failed.";
 
-export async function uploadAudio(filename: string, body: BodyInit): Promise<UploadResult> {
+/**
+ * What the client knows about when the audio was CAPTURED (E-42 criterion 5).
+ * Both transports carry these under the same two names, so the server's finalize
+ * gate sees identical inputs whichever one delivered the bytes.
+ */
+export interface CaptureMeta {
+  /** ISO-8601 instant the mic take STARTED — the authoritative source. */
+  capturedAt?: string;
+  /** ISO-8601 modification time of a picked file — a weaker hint. */
+  capturedAtHint?: string;
+}
+
+export async function uploadAudio(
+  filename: string,
+  body: BodyInit,
+  capture: CaptureMeta = {},
+): Promise<UploadResult> {
   if (tus.isSupported) {
-    const viaTus = await uploadViaTus(filename, body as Blob);
+    const viaTus = await uploadViaTus(filename, body as Blob, capture);
     // A resolved result (success, or a definitive file rejection) is final; a
     // null means the tus transport failed and the streamed fallback should try.
     if (viaTus) return viaTus;
   }
-  return uploadStreamed(filename, body);
+  return uploadStreamed(filename, body, capture);
+}
+
+/** Drop absent values so a transport never sends an empty capture claim. */
+function definedEntries(record: Record<string, string | undefined>): Record<string, string> {
+  return Object.fromEntries(Object.entries(record).filter(([, v]) => v !== undefined)) as Record<
+    string,
+    string
+  >;
 }
 
 /**
@@ -34,13 +64,21 @@ export async function uploadAudio(filename: string, body: BodyInit): Promise<Upl
  * succeeds or the server definitively rejects the file; resolves to null when
  * the tus transport itself failed, so the caller falls back to the streamed POST.
  */
-function uploadViaTus(filename: string, body: Blob): Promise<UploadResult | null> {
+function uploadViaTus(
+  filename: string,
+  body: Blob,
+  capture: CaptureMeta,
+): Promise<UploadResult | null> {
   return new Promise((resolve) => {
     const upload = new tus.Upload(body, {
       endpoint: "/api/upload",
       retryDelays: [0, 1000, 3000, 5000],
       removeFingerprintOnSuccess: true,
-      metadata: { filename },
+      metadata: definedEntries({
+        filename,
+        [CAPTURED_AT_KEY]: capture.capturedAt,
+        [CAPTURED_AT_HINT_KEY]: capture.capturedAtHint,
+      }),
       onError(error) {
         const status = tusErrorStatus(error);
         if (status !== null && REJECTION_STATUSES.has(status)) {
@@ -64,11 +102,19 @@ function uploadViaTus(filename: string, body: Blob): Promise<UploadResult | null
 }
 
 /** The original streamed upload, kept as the automatic fallback. */
-async function uploadStreamed(filename: string, body: BodyInit): Promise<UploadResult> {
+async function uploadStreamed(
+  filename: string,
+  body: BodyInit,
+  capture: CaptureMeta,
+): Promise<UploadResult> {
   try {
     const res = await fetch("/api/sessions", {
       method: "POST",
-      headers: { "x-filename": encodeURIComponent(filename) },
+      headers: definedEntries({
+        "x-filename": encodeURIComponent(filename),
+        [CAPTURED_AT_HEADER]: capture.capturedAt,
+        [CAPTURED_AT_HINT_HEADER]: capture.capturedAtHint,
+      }),
       body,
     });
     if (!res.ok) {

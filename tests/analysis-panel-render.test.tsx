@@ -47,9 +47,13 @@ describe("AnalysisPanel — the worker-absent notice is a signal, not decoration
     // state idle + no segments yet = `NotIngestedYet`, the most common path in the
     // app: this is exactly where it used to fire on every healthy upload.
     const html = await render(view({ state: "idle", segmentCount: 0 }));
-    expect(html).toContain('data-analysis-blocked="no-segments"'); // the panel did render
+    expect(html).toContain("data-analysis-idle"); // the panel did render
     expect(showsNotice(html)).toBe(false);
     expect(html).not.toContain("npm run worker");
+    // [E-42 criterion 2] And it offers no control at all — the placeholder here used
+    // to be a disabled `data-analyze` button, which was still an Analyze button.
+    expect(html).not.toMatch(/<button/);
+    expect(html).not.toContain("data-analyze");
   });
 
   it("does NOT render it on a job that is queued or processing normally", async () => {

@@ -37,7 +37,7 @@ afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 function seed(id: string, day: string, correction: string) {
   const db = getDb();
   createSession(db, { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
-  db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(`${day} 09:00:00`, id);
+  db.prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(`${day} 09:00:00`, id);
   upsertSegment(db, { sessionId: id, idx: 0, startMs: HOUR, endMs: 2 * HOUR, contentHash: `${id}-h` });
   persistSegmentFindings(db, {
     sessionId: id,

@@ -44,7 +44,7 @@ let seq = 0;
 function seedAnalyzed(createdAt: string, cats: Category[]): string {
   const id = randomUUID();
   createSession(db(), { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
-  db().prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(createdAt, id);
+  db().prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(createdAt, id);
   const hash = `${id}-h0`;
   upsertSegment(db(), { sessionId: id, idx: 0, startMs: 0, endMs: HOUR, contentHash: hash });
   persistSegmentFindings(db(), {
