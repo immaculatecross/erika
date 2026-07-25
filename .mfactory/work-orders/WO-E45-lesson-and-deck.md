@@ -71,3 +71,13 @@ Operator, on approving the v0.7 plan: *"aim for a really complete, usable, intui
 **What is not yours to move**, because it is settled and re-litigating it wastes the run: the binding decisions — `DESIGN.md` in full, D-18 (correction-forward, error-once), D-19 (the knowledge model and the `known` gate), D-22 (speaker filtering local and recall-first), D-23 (register), D-24 (the calm habit layer and its ban list), E-17 (one findings truth), the money spine (reserve-before-call, the hard cap, spend recorded when a call resolves), and the rule that a shipped migration is never edited. Also not yours: **another milestone's scope.** A product call that belongs to a later milestone is a note in your exit report, not a diff — the dispatcher will route it.
 
 **And subtraction still wins ties.** D-26 exists because this product acquired too many concepts, not too few. When two designs are close, ship the one with fewer things on screen.
+
+---
+
+## Amendment 2 — 2026-07-25 · D-27 and D-28
+
+**D-27 — the lesson's content comes from the syllabus first.** Criterion 1's "a rule, or about ten words, or a small mix" is now drawn primarily from E-26's lexicon and grammar syllabus at the learner's knowledge edge, with findings and slips **woven in when present**. A learner with no recordings still gets a complete lesson; that is the primary path and must be tested on an empty database. See WO-E44 Amendment 1.
+
+**D-28 — where STT is and is not allowed.** Criterion 2's voice-answered drills are explicitly **permitted** to use speech-to-text, because a drill has a **known correct answer** and is therefore scripted assessment (D-21's standing allowance), not free-spoken error detection. What you must not do is let that STT path leak into anything that judges the learner's *spontaneous* speech — D-3 and D-28 forbid it, and the tutor's listening leg is not yours to touch.
+
+This makes criterion 2's honesty requirement sharper, not softer: **a learner whose correct spoken answer is mis-transcribed must have a way to be right.** Design that deliberately — it is the single most corrosive failure a language app can have, and it lands hardest on exactly this product's user, an advanced speaker with an accent. Say in the PR body what you chose and what happens on the third consecutive mishearing.

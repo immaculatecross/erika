@@ -66,3 +66,14 @@ Operator, on approving the v0.7 plan: *"aim for a really complete, usable, intui
 **What is not yours to move**, because it is settled and re-litigating it wastes the run: the binding decisions — `DESIGN.md` in full, D-18 (correction-forward, error-once), D-19 (the knowledge model and the `known` gate), D-22 (speaker filtering local and recall-first), D-23 (register), D-24 (the calm habit layer and its ban list), E-17 (one findings truth), the money spine (reserve-before-call, the hard cap, spend recorded when a call resolves), and the rule that a shipped migration is never edited. Also not yours: **another milestone's scope.** A product call that belongs to a later milestone is a note in your exit report, not a diff — the dispatcher will route it.
 
 **And subtraction still wins ties.** D-26 exists because this product acquired too many concepts, not too few. When two designs are close, ship the one with fewer things on screen.
+
+---
+
+## Amendment 1 — 2026-07-25 · D-27: the syllabus is the backbone, recordings are the overlay
+
+The operator, clarifying what "one session a day, like Duolingo" means: *"you should really mostly integrate the vocabulary and grammar and stuff that is in the knowledge base that we worked on, and only integrate the findings from the recordings if there are any. But the backbone should be your lessons, like Duolingo."*
+
+This **inverts** D-17's original ordering, and criterion 9 above is amended accordingly. Read D-27.
+
+10. **A day with nothing recorded is a complete day.** The daily session draws its lesson from E-26's 30,786-lemma lexicon and 266-rule syllabus at the learner's knowledge edge; slips and unspent findings are **woven in when they exist**, not the source the session is built from. FSRS-due reviews stay first — spaced repetition is not negotiable. **Acceptance, and this is the test that matters: a learner who has never recorded anything, or who last recorded ten days ago, opens the app and gets a full, non-degraded session** — not an empty state, not a prompt to go record something, not a shortened day. Test it on a database with zero sessions and zero findings, and drive it in a browser. This is now the *primary* path, not the fallback; a session that silently gets thinner as the recordings dry up fails this criterion.
+11. **The differentiator must still be visible.** What makes the session *the learner's* is which rules and which frequency bands they are shown at all, their placement level, their due reviews, their slips woven in, and their tutor's targets. Do not let "the syllabus is the backbone" flatten into a generic course: state in the PR body what, on a recording-less day, is still specific to this learner. If the honest answer is "nothing", say so — that is a finding worth having.

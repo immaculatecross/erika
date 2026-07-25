@@ -105,3 +105,19 @@ Operator, on approving the v0.7 plan: *"aim for a really complete, usable, intui
 **What is not yours to move**, because it is settled and re-litigating it wastes the run: the binding decisions — `DESIGN.md` in full, D-18 (correction-forward, error-once), D-19 (the knowledge model and the `known` gate), D-22 (speaker filtering local and recall-first), D-23 (register), D-24 (the calm habit layer and its ban list), E-17 (one findings truth), the money spine (reserve-before-call, the hard cap, spend recorded when a call resolves), and the rule that a shipped migration is never edited. Also not yours: **another milestone's scope.** A product call that belongs to a later milestone is a note in your exit report, not a diff — the dispatcher will route it.
 
 **And subtraction still wins ties.** D-26 exists because this product acquired too many concepts, not too few. When two designs are close, ship the one with fewer things on screen.
+
+---
+
+## Amendment 3 — 2026-07-25 · **D-28 corrects this work order's architecture. Read D-28 before anything else.**
+
+The operator: *"for listening in recording, and trying to understand mistakes, I think realtime might be good."* They are right, and the original objective above contained a real flaw.
+
+**A pure STT → LLM → TTS loop would have made the tutor detect mistakes from a transcript** — exactly what **D-3** forbids, because *"a transcript erases exactly the signal an advanced learner needs — pronunciation, hesitation, the almost-right word."* The tutor's entire job is catching errors an advanced speaker still makes. It cannot be the one surface in this product that listens through text. Everything in the criteria above that assumes Whisper/`gpt-4o-transcribe` hears the learner's free speech is **superseded**.
+
+16. **The listening leg is native audio.** The tutor hears the learner with an audio-native model, as the analysis path does. STT survives in this milestone only for a **scripted, known-answer drill response** (D-21's existing allowance) and for E-45's voice-answered exercises — never for free-spoken error detection.
+17. **The speaking leg is TTS**, unchanged from Amendment 2: `alloy` and `nova`, plain synthesis, operator-chosen. This was always the only broken half.
+18. **Choose the transport by measuring, not by preferring.** Two candidates, and `docs/research/spike-6-tutor-listening.md` exists to decide between them — read it first:
+    - **(A)** Realtime API, audio in / **text out**, keeping its turn detection and listening quality, with the reply synthesized through TTS.
+    - **(B)** A turn-based loop whose listening leg is the `gpt-audio` family this repo already trusts for error detection, dropping WebRTC entirely.
+    Judge on: does the tutor still catch pronunciation and hesitation errors, and what is per-turn latency. **Default to (A) where they are close**, on the strength of the operator's direct experience. If (A) wins, the WebRTC and ephemeral-secret machinery survives **on merit**, and this milestone's "What this deletes" section shrinks accordingly — say so plainly rather than deleting things to hit a number.
+19. **These survive either choice, and are not negotiable.** The **stale-lease overbill** is fixed or deleted (`RESERVATION_STALE_MS` 15 min < `maxTutorSessionMinutes()` 30 min ⇒ a legal 21-minute call bills 1.9×, with server-elapsed resetting and disabling both the duration ceiling and the under-report floor). The **TTS rate** is repriced from per-character to per-audio-output-token (Amendment 1, criterion 12). The **minimum duration** stands (criterion 6). The persona, the guardrails and `log_evidence` stand (criteria 3–4). The recording still lands as a normal session for deep analysis (criterion 5).
