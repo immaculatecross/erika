@@ -61,3 +61,19 @@ Gates: `lint` · `typecheck` · `test` · `build` green, plus tripwires. **Branc
 ## Exit report
 
 Append here and **write it before returning**. Include: criterion-by-criterion status; the "What this deletes" list with line counts; the live-API results (or an honest statement that the API was unavailable) and the exact dollars spent; the rate cross-check against `spike-5` and `rates.ts` with every correction made; the mutation proofs; the proof of which server answered; and the exact shape of the `tutor_conversations` contract WO-E44 will consume.
+
+---
+
+## Amendment 1 — 2026-07-25, from the live voice spike (`docs/research/spike-5-voice-loop.md`)
+
+The spike ran against the live API after the outage cleared at 09:44:44 UTC and spent $0.003. Everything here is **measured**, not documented. Three of its findings change this work order.
+
+11. **Streaming TTS is mandatory, not an optimization.** A blocking turn measured **p50 4.63 s** (STT 1.03 / LLM 1.04 / TTS 2.42) — worse than the acceptable band, and worse than the Realtime tutor it replaces. Streaming SSE measured **TTFB 0.844 s → ≈2.9 s perceived**. Build the loop streaming-first; a blocking implementation fails this milestone even if every test passes. Say in the exit report what the learner actually experiences between finishing a sentence and hearing a reply, measured on the built app.
+12. **The TTS rate is wrong in the unsafe direction, and this is the second independent finding of it.** `lib/analysis/rates.ts` bills `usdPerCharacter`, but `gpt-4o-mini-tts` bills per **audio-output token**; the per-character shape is correct only for `tts-1` and was carried over wrongly. Measured under-pricing: **1.23×–1.76×, voice-dependent** (speaking rate varies 1.42× across voices, so a per-character model cannot be right for a token-billed endpoint). `docs/research/spike-3` flagged this on 2026-07-23 and it was not acted on. Criterion 9 is therefore not satisfied by a small correction: change the **shape** of the price, not just its value, and pin it as a floor.
+13. **Two live contract facts to build against, not around.** `verbose_json` on `gpt-4o-transcribe` is a hard **400**, not a graceful downgrade — timestamps are `whisper-1`-only, so if the loop needs word timings, that dictates the model. And `gpt-4o-mini-tts-2025-12-15` is a pinnable snapshot; prefer pinning over a floating alias for a path that bills.
+
+**Cost, for the record:** a 10-minute conversation measures **≈$0.10–0.11**, against ~4.5× that for `gpt-realtime-2.1-mini` and ~14× for the flagship. TTS is ~76% of it. The migration is a large cost reduction as well as a quality one — say so honestly in the PR body rather than overclaiming either.
+
+**STT is not the weak link:** 0.00% WER on all three models, on clean audio *and* on 8 kHz/16 kbps/1.15×-degraded audio. The spike flagged its own limit honestly and you must not overstate it: the test audio was TTS output, which is unnaturally clean, so **relative accuracy on real learner speech is not established**. Your live smoke tests should use a real human take if you can make one.
+
+**The voice is the operator's call, not yours.** The spike deliberately declined to pick it — choosing a voice from a spec sheet is the exact mistake that caused this migration. Samples are in `artifacts/voice-samples/` and have gone to the operator. Build the voice as **configuration with a documented default**, so the answer can land without touching the loop.
