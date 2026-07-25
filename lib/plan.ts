@@ -1,41 +1,26 @@
 import type { Db } from "./db";
-import type { Category } from "./analysis/findings";
 import { countDueCards } from "./cards";
-import { buildFocusModel } from "./focus";
-import { listIncludedFindings } from "./findings-model";
 import { collectLetterSessions, latestWeekWithFindings } from "./letter";
-import { derivePatterns, type Pattern } from "./lessons/patterns";
-import { getLessonByPattern } from "./lessons/lessons";
-import { lessonEstimateUsd } from "./lessons/estimate";
 
 // The daily plan (E-18 criterion 1): what /practice prescribes today. Read-only
-// composition over models that already exist — the due queue (E-5), the Focus
-// map's severity-weighted "work on next" ranking (E-7, reused whole, never
-// reimplemented), the lesson patterns (E-6) and the letter's week (E-12). No
-// model calls, no gamification, no new tables.
+// composition over models that already exist — the due queue (E-5) and the
+// letter's week (E-12). No model calls, no gamification, no new tables.
+//
+// [E-45] The per-CATEGORY pattern lesson is gone from here with the format it
+// prescribed. It priced a lesson ("$0.004 to generate") that the learner then had
+// to choose to buy, from a screen listing several kinds of lesson — the "pile of
+// optional errands" D-26 exists to remove. The day's lesson is now chosen by the
+// composer at the learner's knowledge edge (D-27) and is free to open, so there is
+// nothing here to prescribe and nothing to price.
 //
 // The letter-viewed marker lives in the existing `settings` key/value table
 // (v1) under a key of its own — no migration. It only ever advances: opening
 // this week's letter marks it read; opening an older archived week does not
 // un-read the current one.
 
-/** The one lesson the ranking prescribes, ready to state its price (criterion 5). */
-export interface PlanLesson {
-  key: string;
-  category: Category;
-  /** How many findings the pattern holds. */
-  count: number;
-  /** True when the lesson is generated and cached — opening it is free. */
-  ready: boolean;
-  /** Worst-case generation cost, stated before any call; null when `ready`. */
-  estimateUsd: number | null;
-}
-
 /** The whole payload /api/plan serves and the Practice screen renders. */
 export interface Plan {
   dueCount: number;
-  /** The pattern Focus's ranking puts first, or null when none qualifies yet. */
-  lesson: PlanLesson | null;
   /** The latest ISO week with a letter, "YYYY-MM-DD", or null before any findings. */
   letterWeek: string | null;
   /** True when that letter exists and has not been opened yet. */
@@ -65,39 +50,12 @@ export function markLetterViewed(db: Db, weekStart: string): void {
   ).run(LETTER_VIEWED_KEY, weekStart);
 }
 
-/**
- * The lesson the plan prescribes: walk Focus's severity-weighted ranking (the
- * SAME ranking the Focus screen shows — `computeFocus` via `buildFocusModel`,
- * never a second scoring) and take the first category that qualifies as a
- * pattern. A ranked category without ≥3 findings is skipped, not padded.
- */
-function prescribeLesson(db: Db): PlanLesson | null {
-  const patterns = new Map<Category, Pattern>(
-    derivePatterns(listIncludedFindings(db)).map((p) => [p.category, p]),
-  );
-  for (const metric of buildFocusModel(db).ranking) {
-    if (metric.count === 0) continue;
-    const pattern = patterns.get(metric.category);
-    if (!pattern) continue;
-    const ready = getLessonByPattern(db, pattern.key) !== null;
-    return {
-      key: pattern.key,
-      category: pattern.category,
-      count: pattern.count,
-      ready,
-      estimateUsd: ready ? null : lessonEstimateUsd(db, pattern),
-    };
-  }
-  return null;
-}
-
 /** Compose today's plan — one read, no writes. */
 export function buildPlan(db: Db): Plan {
   const letterWeek = latestWeekWithFindings(collectLetterSessions(db));
   const viewed = getViewedLetterWeek(db);
   return {
     dueCount: countDueCards(db),
-    lesson: prescribeLesson(db),
     letterWeek,
     letterUnread: letterWeek !== null && (viewed === null || viewed < letterWeek),
   };
