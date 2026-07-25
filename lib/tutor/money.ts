@@ -209,8 +209,13 @@ export function touchTutorLease(db: Db, tutorId: string, model: RealtimeModelId,
   if (!row.newest) return false; // no open lease — nothing to keep alive
   const newestMs = new Date(`${row.newest.replace(" ", "T")}Z`).getTime();
   if (Number.isFinite(newestMs) && now.getTime() - newestMs < LEASE_KEEPALIVE_MS) return false;
+  // ⚠️ `reserved_at` MUST be set explicitly — the column has no DEFAULT (v15 added it
+  // as a bare `TEXT`), and a NULL here is invisible to the `MAX(reserved_at)` the sweep
+  // groups on, so the keep-alive would insert a row and change nothing. Caught by the
+  // test below rather than in review, which is the whole argument for writing it.
   db.prepare(
-    "INSERT INTO spend_ledger (id, month, model, content_hash, cost_usd, state) VALUES (?, ?, ?, ?, 0, 'pending')",
+    "INSERT INTO spend_ledger (id, month, model, content_hash, cost_usd, state, reserved_at) " +
+      "VALUES (?, ?, ?, ?, 0, 'pending', datetime('now'))",
   ).run(randomUUID(), monthKey(now), model, hash);
   return true;
 }

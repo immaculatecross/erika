@@ -14,8 +14,10 @@ import {
 } from "@/lib/analysis/budget";
 import { REALTIME_FLAGSHIP } from "@/lib/analysis/rates";
 import {
+  ensureTutorLeaseCovers,
   finalizeTutorLease,
   maxTutorSessionMinutes,
+  touchTutorLease,
   tutorContentHash,
   tutorLeaseOpenedAtMs,
   tutorReservedUsd,
@@ -141,6 +143,114 @@ describe("a live tutor lease survives the sweep whole", () => {
     expect(billed).toBeLessThanOrEqual(reserved + 1e-9);
     // The honest single charge, not 1.9× of it.
     expect(monthToDateSpend(db)).toBeLessThanOrEqual(reserved + 1e-9);
+    db.close();
+  });
+});
+
+describe("a live lease that is NOT extending is still unreachable by the sweep", () => {
+  // 🚩 THE HOLE THE FIX ABOVE LEFT, AND THE COMMENT THAT ASSERTED IT WAS CLOSED.
+  //
+  // `budget.ts` claimed "a live call reserves again on each minute it outlasts, so the
+  // sweep cannot touch a live session at any TTL." The premise is false:
+  // `ensureTutorLeaseCovers` inserts NOTHING while the call is still inside what was
+  // reserved at OPEN. So for the first `defaultTutorMinutes()` minutes a lease has
+  // exactly ONE row, and the claim held only because that default (10) happens to be
+  // smaller than RESERVATION_STALE_MS (15). Nothing related those two numbers.
+  //
+  // It stopped being theoretical twice over: the operator raised the minimum
+  // conversation to TEN MINUTES, so talking past the reservation is now the norm, and
+  // `TUTOR_SESSION_MINUTES` is an env knob anyone may raise.
+  //
+  // The fixture is the honest one — a single OPEN row and no extensions — which is
+  // exactly what the existing `liveTwentyOneMinuteLease` helper cannot express, since
+  // it writes a row every minute and so can never be stale.
+
+  /** A live call that reserved `reservedMinutes` at open and is now `ageMinutes` in,
+   *  having never needed an extension. One row, as the real code produces. */
+  function liveUnextendedLease(db: Db, tutorId: string, ageMinutes: number): number {
+    const cost = 1.6;
+    reserveAt(db, tutorContentHash(tutorId), cost, ageMinutes);
+    return cost;
+  }
+
+  it("the fixture can express the failure: without a keep-alive it IS swept mid-call", () => {
+    // Ground truth first — if this does not fail, the guard below proves nothing.
+    const db = freshDb();
+    const reserved = liveUnextendedLease(db, "live", RESERVATION_STALE_MS / 60_000 + 1);
+    expect(sweepStaleReservations(db)).toBe(1);
+    expect(monthToDateSpend(db)).toBeCloseTo(reserved, 9);
+    // …and the live call is now cut off: nothing is reserved, so the next heartbeat
+    // must buy coverage again or the learner is refused mid-sentence.
+    expect(tutorReservedUsd(db, "live")).toBe(0);
+    db.close();
+  });
+
+  it("a heartbeat keeps an unextended live lease out of the sweep's reach", () => {
+    const db = freshDb();
+    liveUnextendedLease(db, "live", RESERVATION_STALE_MS / 60_000 + 1);
+    // The heartbeat the browser fires every 20 s. It needs no money — the call is
+    // still inside what was reserved — and must nonetheless mark the lease alive.
+    const covered = ensureTutorLeaseCovers(db, "live", REALTIME_FLAGSHIP, 1, 100);
+    expect(covered).toBe(true);
+    expect(sweepStaleReservations(db)).toBe(0);
+    expect(tutorReservedUsd(db, "live")).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("holds at ANY ttl, which is the property the old comment only claimed", () => {
+    // The generalisation: liveness is now an observed fact, so no relationship between
+    // RESERVATION_STALE_MS and TUTOR_SESSION_MINUTES has to hold for the guard to work.
+    for (const ttlMinutes of [1, 5, 15, 30, 60]) {
+      const db = freshDb();
+      liveUnextendedLease(db, "live", 90);
+      ensureTutorLeaseCovers(db, "live", REALTIME_FLAGSHIP, 1, 100);
+      expect(sweepStaleReservations(db, ttlMinutes * 60_000), `ttl=${ttlMinutes}m`).toBe(0);
+      db.close();
+    }
+  });
+
+  it("the keep-alive costs nothing and never moves the lease's OPEN instant", () => {
+    // The three properties that make a $0 row safe. Moving MIN(reserved_at) forward is
+    // precisely how the original defect disabled the [T2b] ceiling and [T2c] floor, so
+    // a keep-alive that did it would re-create the bug it exists to prevent.
+    const db = freshDb();
+    const reserved = liveUnextendedLease(db, "live", 20);
+    const openedBefore = tutorLeaseOpenedAtMs(db, "live");
+    expect(touchTutorLease(db, "live", REALTIME_FLAGSHIP)).toBe(true);
+    expect(tutorReservedUsd(db, "live")).toBeCloseTo(reserved, 9);
+    expect(tutorLeaseOpenedAtMs(db, "live")).toBe(openedBefore);
+    expect((Date.now() - (openedBefore as number)) / 60_000).toBeGreaterThan(19);
+    db.close();
+  });
+
+  it("does not spam rows: a fresh lease needs no keep-alive yet", () => {
+    const db = freshDb();
+    liveUnextendedLease(db, "live", 1); // reserved a minute ago
+    expect(touchTutorLease(db, "live", REALTIME_FLAGSHIP)).toBe(false);
+    const rows = db
+      .prepare("SELECT COUNT(*) AS n FROM spend_ledger WHERE content_hash = ?")
+      .get(tutorContentHash("live")) as { n: number };
+    expect(rows.n).toBe(1);
+    db.close();
+  });
+
+  it("keeps nothing alive when there is no open lease", () => {
+    // A finalized or never-opened session must not acquire a phantom pending row —
+    // that would make a closed lease look live and block its own sweep forever.
+    const db = freshDb();
+    expect(touchTutorLease(db, "gone", REALTIME_FLAGSHIP)).toBe(false);
+    expect(tutorReservedUsd(db, "gone")).toBe(0);
+    db.close();
+  });
+
+  it("still lets a genuinely abandoned lease go stale and commit", () => {
+    // The opposite failure: if the keep-alive made leases immortal, an abandoned call's
+    // spend would never reach the ledger. Silence must still resolve.
+    const db = freshDb();
+    const reserved = liveUnextendedLease(db, "dead", 90);
+    // no heartbeat at all — the browser is gone
+    expect(sweepStaleReservations(db)).toBe(1);
+    expect(monthToDateSpend(db)).toBeCloseTo(reserved, 9);
     db.close();
   });
 });
