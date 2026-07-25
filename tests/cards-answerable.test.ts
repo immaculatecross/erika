@@ -3,6 +3,7 @@ import {
   CLOZE_BLANK,
   MAX_TARGET_WORDS,
   MIN_CONTEXT_WORDS,
+  MIN_SOLO_CONTEXT_CHARS,
   deriveFaces,
   deriveFront,
   frontIsAnswerable,
@@ -189,9 +190,13 @@ describe("TOTALITY — over every generated finding shape, the output is null or
           expect(front.split(/\s+/).filter((w) => w === CLOZE_BLANK)).toHaveLength(1);
           // 3. Never a bare category word — asserted against the whole vocabulary.
           for (const c of CATEGORIES) expect(front.toLowerCase()).not.toContain(c);
-          // 4. Enough correct context, from the fixture's own count.
-          const contextWords = ctx.before.length + ctx.after.length;
-          expect(contextWords).toBeGreaterThanOrEqual(MIN_CONTEXT_WORDS);
+          // 4. Enough correct context — computed from the FIXTURE's own words, not
+          //    from anything deriveFront returned, so this is a specification and
+          //    not a restatement of the implementation's answer.
+          const ctxWords = [...ctx.before, ...ctx.after];
+          const solo =
+            ctxWords.length === 1 && t.right.length === 1 && ctxWords[0].length >= MIN_SOLO_CONTEXT_CHARS;
+          expect(ctxWords.length >= MIN_CONTEXT_WORDS || solo).toBe(true);
           // 5. The hidden span is bounded, from the fixture's own count.
           expect(t.right.length).toBeGreaterThanOrEqual(1);
           expect(t.right.length).toBeLessThanOrEqual(MAX_TARGET_WORDS);

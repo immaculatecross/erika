@@ -54,7 +54,9 @@ function seed(id: string, n: number) {
       flagged: true,
       deepDone: true,
       findings: [
-        { quote: `q${i}`, correction: `c${i}`, category: "grammar", explanation: `e${i}`, severity: "high", startMs: i * 1000, endMs: i * 1000 + 500 },
+        // A realistic, cardable shape (D-13): a localized fix with correct context
+        // around it, so these route tests exercise a deck that actually has cards.
+        { quote: `ieri ho andato al bar ${i}`, correction: `ieri sono andato al bar ${i}`, category: "grammar", explanation: `e${i}`, severity: "high", startMs: i * 1000, endMs: i * 1000 + 500 },
       ],
     });
   }
@@ -89,8 +91,8 @@ describe("GET /api/cards?due=1", () => {
     ]);
     // D-18: the error is never the stimulus — the front never carries the raw quote.
     for (const c of body.cards) {
-      expect(c.error).toMatch(/^q\d$/); // the user's utterance rides on `error`
-      expect(c.correction).toMatch(/^c\d$/); // the correct form is the target
+      expect(c.error).toMatch(/^ieri ho andato al bar \d$/); // the user's utterance rides on `error`
+      expect(c.correction).toMatch(/^ieri sono andato al bar \d$/); // the correct form is the target
       expect(c.front).not.toContain(c.error); // …but never appears on the front
     }
   });
@@ -187,7 +189,7 @@ describe("GET /api/cards/export", () => {
       flagged: true,
       deepDone: true,
       findings: [
-        { quote: 'he said, "hi"\nthere', correction: "c", category: "grammar", explanation: "e", severity: "high", startMs: 0, endMs: 1 },
+        { quote: 'he said, "hi"\nthere', correction: 'he says, "hi"\nthere', category: "grammar", explanation: "e", severity: "high", startMs: 0, endMs: 1 },
       ],
     });
     await generatePOST();

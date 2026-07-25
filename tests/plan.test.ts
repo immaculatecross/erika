@@ -46,8 +46,8 @@ function seed(db: Db, id: string, findings: { category: Category; severity: Seve
     flagged: true,
     deepDone: true,
     findings: findings.map((f, i) => ({
-      quote: `q${i}`,
-      correction: `c${i}`,
+      quote: `ieri ho andato al posto ${i}`,
+      correction: `ieri sono andato al posto ${i}`,
       category: f.category,
       explanation: "why",
       severity: f.severity,

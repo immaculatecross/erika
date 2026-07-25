@@ -33,6 +33,22 @@ export async function POST(_request: Request, { params }: Ctx) {
     return NextResponse.json({ error: "Finding not found." }, { status: 404 });
   }
   if (outcome.status === "not_cardable") {
+    // [E-45] A refusal must say something TRUE. Since E-45 a finding can also be
+    // uncardable because its correction has no localized change to cue from — a
+    // whole-sentence rewrite, a single-word fix, a register slip — and telling that
+    // learner "this one is about how it sounds" would simply be false. The class is
+    // decided once, in `uncardableReason` (lib/cards.ts), which is also where the
+    // Amendment 1 tie-break lives: a blurred final vowel labelled `grammar` resolves
+    // to the pronunciation class and is sent to the studio exactly like one labelled
+    // `pronunciation`, so one finding no longer gets two different answers.
+    if (outcome.reason === "no_answerable_front") {
+      return NextResponse.json({
+        inDeck: false,
+        routedTo: null,
+        message:
+          "This one is a whole rewrite rather than a single fix, so there is no card that could be asked fairly — it stays in your phrasebook.",
+      });
+    }
     // Only promise the studio when a drill actually resolves there. A correction too
     // long for the short-audio path has no drill, and handing back a path that renders
     // "That drill is no longer available" would be a worse answer than a plain one.

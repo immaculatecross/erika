@@ -40,9 +40,9 @@
 //      included as it ever was, fully present in the Phrasebook, the Archive and
 //      the report; it simply is not this format.
 //   3. Every non-null front is built ONLY from tokens of the CORRECTION, so the
-//      learner's error can never appear in a stimulus (D-18), and it carries at
-//      least MIN_CONTEXT_WORDS words of correct Italian around exactly one blank
-//      standing for at most MAX_TARGET_WORDS words.
+//      learner's error can never appear in a stimulus (D-18), and it carries enough
+//      correct Italian context (`contextIsEnough`) around exactly one blank standing
+//      for at most MAX_TARGET_WORDS words.
 //
 // `frontIsAnswerable` states (3) as a checkable predicate so the property test can
 // assert it over synthetic findings rather than over the strings this file happens
@@ -58,13 +58,37 @@ export const CLOZE_BLANK = "____";
 
 /**
  * How many words of CORRECT target-language context a front must keep around the
- * blank. Two is the floor because one is demonstrably not enough: a register slip
- * ("Non voglio" → "Non desidero") leaves the single word "Non", and `Non ____` is
- * a prompt with a thousand answers — the same unanswerable card in a politer
- * costume. Two content-bearing words is the smallest cue that constrains the gap
- * to a grammatical slot ("vado ____ centro", "____ andato al cinema").
+ * blank. Two content-bearing words is the smallest cue that reliably constrains
+ * the gap to a grammatical slot ("vado ____ centro", "____ andato al cinema").
  */
 export const MIN_CONTEXT_WORDS = 2;
+
+/**
+ * The exception, and the reason it is an exception rather than a lower floor.
+ *
+ * A great many real Italian corrections leave exactly ONE word of context, and
+ * they split cleanly into two groups that a bare count cannot tell apart:
+ *
+ *   "una problema" → "un problema"   ⇒  "____ problema"   — answerable
+ *   "Non voglio"   → "Non desidero"  ⇒  "Non ____"        — not answerable
+ *
+ * The difference is not how many words survive but WHAT survives. "problema" is a
+ * content word, so the blank is a determiner slot and the learner is retrieving a
+ * form. "Non" is a negation particle: it constrains nothing, and the blank is the
+ * whole of the meaning — which is the register slip the work order names, and the
+ * same unanswerable card in a politer costume.
+ *
+ * So a lone context word is accepted only when it is long enough to be a content
+ * word, and only when the blank hides a SINGLE word. Five characters is the cut:
+ * Italian's function words (non, il, lo, la, un, di, da, in, con, su, per, che,
+ * ci, ne, se, e, o, ma) are all shorter, and its content words overwhelmingly are
+ * not. It is a heuristic, and it is allowed to be one because the flashcard is
+ * SELF-GRADED: the bar for a card front is "can you retrieve the target", not "is
+ * your answer provably unique" — the learner flips, sees "un problema", and knows
+ * whether they had it. An auto-graded drill would need a stricter rule, and the
+ * drills in lib/lessons do use one.
+ */
+export const MIN_SOLO_CONTEXT_CHARS = 5;
 
 /**
  * The widest span a blank may hide. Beyond four words the learner is being asked
@@ -183,13 +207,22 @@ export function frontIsAnswerable(front: string, correction: string): boolean {
   if (blanks.length !== 1) return false;
 
   const context = tokens.filter((t) => t !== CLOZE_BLANK);
-  if (context.filter(isWord).length < MIN_CONTEXT_WORDS) return false;
-
   const fromCorrection = new Set(tokenize(correction).map(normToken));
   if (!context.every((t) => fromCorrection.has(normToken(t)))) return false;
 
   const hidden = tokenize(correction).length - context.length;
-  return hidden >= 1 && hidden <= MAX_TARGET_WORDS;
+  if (hidden < 1 || hidden > MAX_TARGET_WORDS) return false;
+
+  return contextIsEnough(context, hidden);
+}
+
+/** The context rule, in one place so `deriveFront` and `frontIsAnswerable` cannot
+ *  drift apart (this repo has shipped two defects from "one rule, two dialects"). */
+function contextIsEnough(context: string[], hiddenWords: number): boolean {
+  const words = context.filter(isWord);
+  if (words.length >= MIN_CONTEXT_WORDS) return true;
+  if (words.length !== 1 || hiddenWords !== 1) return false;
+  return normToken(words[0]).length >= MIN_SOLO_CONTEXT_CHARS;
 }
 
 /**
@@ -203,23 +236,22 @@ export function frontIsAnswerable(front: string, correction: string): boolean {
  * produce an answerable cue. The four ways that happens are the four ways a card
  * used to become unanswerable, and each is now a refusal rather than a degradation:
  *
- *   (a) nothing textual was corrected (a pronunciation artifact, whatever the
- *       stored category says — see `isPronunciationArtifact`);
- *   (b) the correction is a pure deletion, so there is no target to retrieve;
- *   (c) the changed span is wider than MAX_TARGET_WORDS — a whole-sentence rewrite,
+ *   (a) the correction is a pure deletion, so there is no target to retrieve — this
+ *       also subsumes the case where NOTHING was corrected, i.e. a pronunciation
+ *       artifact (see `isPronunciationArtifact`, which decides that finding's CLASS
+ *       for routing; there is deliberately no second guard here, because a branch
+ *       that cannot change the answer is a branch no test can hold);
+ *   (b) the changed span is wider than MAX_TARGET_WORDS — a whole-sentence rewrite,
  *       the normal shape of `phrasing` and `idiom`;
- *   (d) fewer than MIN_CONTEXT_WORDS words of correct context survive around the
- *       gap — a single-word fix ("gatto" → "gatta") has none at all, and a register
- *       slip ("Non voglio" → "Non desidero") has one.
+ *   (c) too little correct context survives around the gap (`contextIsEnough`) — a
+ *       single-word fix ("gatto" → "gatta") has none at all, and a register slip
+ *       ("Non voglio" → "Non desidero") has only a negation particle.
  *
  * NOTE the signature: `category` is deliberately NOT a parameter. A function that
  * is never handed a category cannot emit one, which is the whole of the proof that
  * no front is ever a bare category word.
  */
 export function deriveFront(quote: string, correction: string): string | null {
-  // (a) No text changed — the sound was the error, not the spelling.
-  if (isPronunciationArtifact(quote, correction)) return null;
-
   const q = tokenize(quote);
   const c = tokenize(correction);
   const qn = q.map(normToken);
@@ -240,12 +272,12 @@ export function deriveFront(quote: string, correction: string): string | null {
   const after = suffix > 0 ? c.slice(c.length - suffix) : [];
   const targetLen = c.length - prefix - suffix;
 
-  // (b) Nothing to retrieve: the correction only removed words.
+  // (a) Nothing to retrieve: the correction removed words, or changed none at all.
   if (targetLen <= 0) return null;
-  // (c) The gap is a sentence, not a slot.
+  // (b) The gap is a sentence, not a slot.
   if (targetLen > MAX_TARGET_WORDS) return null;
-  // (d) Not enough correct context to constrain the answer.
-  if ([...before, ...after].filter(isWord).length < MIN_CONTEXT_WORDS) return null;
+  // (c) Not enough correct context to constrain the answer.
+  if (!contextIsEnough([...before, ...after], targetLen)) return null;
 
   return [...before, CLOZE_BLANK, ...after].join(" ");
 }
