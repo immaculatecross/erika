@@ -9,11 +9,9 @@ import { ConversationProgress } from "@/components/tutor/conversation-progress";
 import { toUploadableWav } from "@/lib/recording";
 import { uploadAudio } from "@/lib/upload-audio";
 import { landConversationTake } from "@/lib/tutor/take";
-import { closingLine } from "@/lib/tutor/closing-line";
+import { closingLine, costLine } from "@/lib/tutor/closing-line";
 import { TUTOR_OPENING } from "@/lib/tutor/persona";
 import { startFailureMessage } from "@/lib/tutor/failure-message";
-import { ReplyChunker } from "@/lib/tutor/reply-stream";
-import { SpeechQueue } from "@/lib/tutor/speech-queue";
 import {
   connectTutor,
   exchangeSdpOverHttp,
@@ -22,15 +20,22 @@ import {
   type TutorConnection,
 } from "@/lib/tutor/realtime-client";
 
-// The Learn-tab spoken tutor (E-34, rebuilt at E-43 for D-28).
+// The Learn-tab spoken tutor (E-34, rebuilt at E-43).
 //
-// HOW A TURN WORKS NOW. The learner speaks; the Realtime session hears them NATIVELY
-// (D-3: a transcript erases pronunciation, hesitation and the almost-right word — and
-// spike-6 measured `whisper-1` silently repairing this repo's own planted errors); the
-// reply comes back as TEXT on the data channel; each finished sentence is spoken
-// through TTS in the voice the operator chose. Server VAD ends a turn on silence, so
-// the learner presses NOTHING between turns — one button to begin, one to stop, and
-// that is the whole interaction.
+// HOW A TURN WORKS. The learner speaks; the Realtime session hears them NATIVELY (D-3:
+// a transcript erases pronunciation, hesitation and the almost-right word — and spike-6
+// measured `whisper-1` silently repairing this repo's own planted errors); the reply
+// comes back as AUDIO on the same connection and plays. Server VAD ends a turn on
+// silence, so the learner presses NOTHING between turns — one button to begin, one to
+// stop, and that is the whole interaction.
+//
+// THE REPLY USED TO BE TEXT SPOKEN THROUGH TTS, and this page held the machinery for
+// it: a sentence chunker, a pipelined synthesis queue, a per-clip fetch and an ordered
+// player. The operator drove that and rejected it — "the lag is too high" — so all of
+// it is gone and the model speaks on the connection that is already open. What is left
+// here is an `<audio>` element and the track that fills it; the three latency sources
+// (waiting for a sentence boundary, a second network round trip, buffering the clip)
+// were exactly the three files deleted.
 //
 // D-24 and DESIGN hold: a quiet field of dots breathing with the voice, no avatar, no
 // waveform, tabular numbers, no countdown and no guilt copy if the learner leaves
@@ -56,6 +61,7 @@ export default function TutorPage() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [speaking, setSpeaking] = useState(false);
   const [closing, setClosing] = useState<string | null>(null);
+  const [cost, setCost] = useState<string | null>(null);
 
   const conn = useRef<TutorConnection | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -65,8 +71,6 @@ export default function TutorPage() {
   const startedAt = useRef<number>(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
-  const chunker = useRef(new ReplyChunker());
-  const voice = useRef<SpeechQueue | null>(null);
   const audioEl = useRef<HTMLAudioElement | null>(null);
 
   const refresh = useCallback(() => {
@@ -83,13 +87,14 @@ export default function TutorPage() {
     if (heartbeat.current) clearInterval(heartbeat.current);
     timer.current = null;
     heartbeat.current = null;
-    voice.current?.stop();
-    voice.current = null;
+    if (audioEl.current) {
+      audioEl.current.pause();
+      audioEl.current.srcObject = null;
+    }
     conn.current?.stop();
     conn.current = null;
     stream.current?.getTracks().forEach((t) => t.stop());
     stream.current = null;
-    chunker.current.reset();
     setSpeaking(false);
   }, []);
 
@@ -103,50 +108,26 @@ export default function TutorPage() {
     }).catch(() => {});
   }
 
-  /** The speaking leg: one fetch per sentence, pipelined, played in order. */
-  function makeVoice(id: string): SpeechQueue {
-    return new SpeechQueue({
-      fetchAudio: async (text, seq, signal) => {
-        const res = await fetch("/api/tutor/speak", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tutorId: id, seq, text }),
-          signal,
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body?.error?.message ?? "Erika could not speak just now.");
-        }
-        return res.blob();
-      },
-      play: (clip, signal) =>
-        new Promise<void>((resolve) => {
-          const el = audioEl.current ?? new Audio();
-          audioEl.current = el;
-          const url = URL.createObjectURL(clip);
-          const done = () => {
-            URL.revokeObjectURL(url);
-            signal.removeEventListener("abort", onAbort);
-            resolve();
-          };
-          const onAbort = () => {
-            el.pause();
-            done();
-          };
-          signal.addEventListener("abort", onAbort, { once: true });
-          el.onended = done;
-          el.onerror = done;
-          el.src = url;
-          void el.play().catch(done);
-        }),
-      onSpeakingChange: setSpeaking,
-      onError: (m) => setMessage(m),
+  /** Attach the tutor's voice track and play it. One element, reused across turns —
+   *  the model streams every reply down the same track, so there is nothing to queue,
+   *  order or buffer. */
+  function attachRemoteAudio(remote: MediaStreamLike) {
+    const el = audioEl.current ?? new Audio();
+    audioEl.current = el;
+    el.autoplay = true;
+    el.srcObject = remote as unknown as MediaStream;
+    void el.play().catch(() => {
+      // Autoplay is only ever blocked before a user gesture, and reaching here always
+      // follows the learner pressing "Start talking" — but a silent tutor is the worst
+      // failure this surface has, so say it rather than swallow it.
+      setMessage("Your browser blocked the audio. Allow sound for this site and start again.");
     });
   }
 
   async function start() {
     setMessage(null);
     setClosing(null);
+    setCost(null);
     setPhase("connecting");
     try {
       const res = await fetch("/api/tutor/session", { method: "POST" });
@@ -174,10 +155,6 @@ export default function TutorPage() {
       rec.start(1000);
       recorder.current = rec;
 
-      const queue = makeVoice(body.tutorId);
-      voice.current = queue;
-      chunker.current.reset();
-
       conn.current = await connectTutor({
         clientSecret: body.clientSecret,
         model: body.model,
@@ -185,18 +162,15 @@ export default function TutorPage() {
         getMicStream: async () => mic as unknown as MediaStreamLike,
         createPeerConnection: () => new RTCPeerConnection() as unknown as PeerConnectionLike,
         exchangeSdp: exchangeSdpOverHttp,
+        onRemoteAudio: attachRemoteAudio,
         handlers: {
           onLogEvidence: logEvidence,
-          onTextDelta: (delta) => {
-            for (const sentence of chunker.current.push(delta)) queue.speak(sentence);
-          },
-          onTurnComplete: () => {
-            const rest = chunker.current.flush();
-            if (rest) queue.speak(rest);
-            chunker.current.reset();
-          },
-          // Barge-in: the learner talking cancels Erika's voice at once.
-          onSpeechStarted: () => queue.stop(),
+          // The turn line, and nothing more. Barge-in itself is the server's
+          // (`interrupt_response`), so talking over Erika cancels her reply upstream
+          // and this only has to say so.
+          onSpeakingStarted: () => setSpeaking(true),
+          onTurnComplete: () => setSpeaking(false),
+          onSpeechStarted: () => setSpeaking(false),
         },
       });
 
@@ -237,7 +211,7 @@ export default function TutorPage() {
     // there is no reason to keep firing them once the user has ended the call.
     if (heartbeat.current) clearInterval(heartbeat.current);
     heartbeat.current = null;
-    voice.current?.stop();
+    audioEl.current?.pause();
 
     // Stop recording and assemble the take.
     const rec = recorder.current;
@@ -274,6 +248,8 @@ export default function TutorPage() {
       // Factual, once. What it says depends on what actually happened to the take —
       // never a cheerful line over a recording that was refused.
       setClosing(closingLine(closed?.metMinimum === true, landed));
+      // The committed actual, never the reservation (lib/tutor/closing-line.ts).
+      setCost(costLine(closed?.committedUsd));
     }
 
     cleanup();
@@ -363,6 +339,16 @@ export default function TutorPage() {
         {closing && !live && (
           <p className="max-w-sm text-center text-[13px] text-secondary" role="status" data-tutor-closing>
             {closing}
+          </p>
+        )}
+
+        {/* What that conversation actually cost — the committed ledger figure, after
+            the fact, never an estimate before it (D-26 removed pre-run estimates from
+            the flow; this is the app telling the truth about what it charged, which
+            D-26 demands in the same breath). Tabular numerals, no chart, no colour. */}
+        {cost && !live && (
+          <p className="tabular max-w-sm text-center text-[13px] text-secondary" data-tutor-cost>
+            {cost}
           </p>
         )}
 

@@ -6,10 +6,11 @@ import { listSlips } from "../slips";
 import { compose } from "../compose";
 import { parseItemId } from "../knowledge/items";
 import { localDay } from "../local-day";
-import { tutorRealtimeModel, type RealtimeModelId } from "../analysis/rates";
+import { realtimeModelForTier, type RealtimeModelId } from "../analysis/rates";
 import { maxTutorSessionSeconds } from "./money";
 import { buildTutorPersona } from "./persona";
 import { TUTOR_EVIDENCE_MODES } from "./log-evidence";
+import { coerceTutorVoice, type RealtimeVoice } from "./voices";
 
 // The Realtime session config builder (E-34). Server-only DB glue: it collects the
 // learner context through the CANONICAL readers only — `collectSpeakerProfile`
@@ -50,27 +51,39 @@ export const TUTOR_TURN_DETECTION = {
 /**
  * The OpenAI Realtime session object (the mint body + the browser's session.update).
  *
- * [E-43 / D-28] `output_modalities: ["text"]` IS THE WHOLE ARCHITECTURE OF THIS
- * MILESTONE. The tutor keeps listening natively — a transcript erases pronunciation,
- * hesitation and the almost-right word (D-3), and spike-6 §2.2 measured `whisper-1`
- * silently repairing this repo's own planted errors — but takes its REPLY as text and
- * speaks it through TTS, because the voice was the only broken half.
+ * [E-43, Amendment 5] `output_modalities: ["audio"]` — THE MODEL SPEAKS ON THE
+ * CONNECTION THAT IS ALREADY OPEN. Both legs are now native: the tutor hears the
+ * learner natively (D-3/D-28 — a transcript erases pronunciation, hesitation and the
+ * almost-right word, and spike-6 §2.2 measured `whisper-1` silently repairing this
+ * repo's own planted errors) AND answers natively.
  *
- * The field is confirmed live two independent ways (spike-6 §0): echoed back by
- * `session.updated` over the session WebSocket, and accepted by this product's own
- * `POST /v1/realtime/client_secrets` mint (HTTP 200). `["audio"]` is the default when
- * unset — which is why it must also reach the wire; see MINT_SESSION_WIRE_FIELDS.
+ * This milestone first built the reply as TEXT synthesized through TTS, which is what
+ * D-28 ruled on the evidence available then. The operator drove it and rejected it:
+ * *"the TTS/STT infra is really bad, the lag is too high."* The three latency sources —
+ * waiting for a sentence boundary, a second network round trip, buffering the clip —
+ * were the three files this revision deletes. `docs/research/spike-7-realtime-voices.md`
+ * §4.2 measured the difference on a production-shaped turn: **1.168 s median to first
+ * audio** against 4.5–5.0 s, at **2.34× the cost**. The operator weighed that and chose
+ * latency.
  *
- * There is deliberately NO `audio.output.voice`: no audio output is generated, the
- * voice now comes from lib/voice/, and leaving a dead voice field here is exactly the
- * kind of stale concept D-26 exists to remove.
+ * `["audio"]` is the API's default when the field is unset, so — unlike `["text"]` —
+ * omitting it would be harmless here. It is sent explicitly anyway: this product has
+ * now shipped BOTH values, and a session object that states its own output modality is
+ * the difference between a decision and an accident. See MINT_SESSION_WIRE_FIELDS.
+ *
+ * `audio.output.voice` is back with it, and it is a learner-settable choice now rather
+ * than the single pinned `marin` the operator's original complaint was formed against
+ * (lib/tutor/voices.ts).
  */
 export interface RealtimeSessionConfig {
   type: "realtime";
   model: RealtimeModelId;
   instructions: string;
-  output_modalities: ["text"];
-  audio: { input: { turn_detection: typeof TUTOR_TURN_DETECTION } };
+  output_modalities: ["audio"];
+  audio: {
+    input: { turn_detection: typeof TUTOR_TURN_DETECTION };
+    output: { voice: RealtimeVoice };
+  };
   tools: RealtimeTool[];
   tool_choice: "auto";
   /** [T2b — money] The server-chosen ceiling on this session's length, in seconds — an
@@ -176,17 +189,17 @@ export function collectActiveSlipTargets(db: Db): string[] {
 }
 
 /**
- * Build the full Realtime session config for a tutor call: the tier's model, the
+ * Build the full Realtime session config for a tutor call: the listening model, the
  * persona built from the profile (E-19) + active slips (E-20) + today's targets
- * (E-31) + the register dial (E-33/D-23), the output voice, and the `log_evidence`
- * tool. Pure read + composition — no key, no model call.
+ * (E-31) + the register dial (E-33/D-23), the learner's chosen output voice, and the
+ * `log_evidence` tool. Pure read + composition — no key, no model call.
  */
 export function buildTutorSessionConfig(db: Db, day: string = localDay()): {
   config: RealtimeSessionConfig;
   targets: TutorTarget[];
 } {
   const settings = readSettings(db);
-  const model = tutorRealtimeModel();
+  const model = realtimeModelForTier(settings.realtimeTier);
   const profile = collectSpeakerProfile(db);
   const slipTargets = collectActiveSlipTargets(db);
   const targets = collectTutorTargets(db, day);
@@ -206,8 +219,11 @@ export function buildTutorSessionConfig(db: Db, day: string = localDay()): {
       type: "realtime",
       model,
       instructions,
-      output_modalities: ["text"],
-      audio: { input: { turn_detection: TUTOR_TURN_DETECTION } },
+      output_modalities: ["audio"],
+      audio: {
+        input: { turn_detection: TUTOR_TURN_DETECTION },
+        output: { voice: coerceTutorVoice(settings.tutorVoice) },
+      },
       tools: [logEvidenceTool()],
       tool_choice: "auto",
       maxSessionSeconds: maxTutorSessionSeconds(),
@@ -217,3 +233,4 @@ export function buildTutorSessionConfig(db: Db, day: string = localDay()): {
 }
 
 export type { RealtimeModelId } from "../analysis/rates";
+export type { RealtimeVoice } from "./voices";

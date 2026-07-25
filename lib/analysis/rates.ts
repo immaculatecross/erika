@@ -256,7 +256,15 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-// ---- TTS model (E-21 contrastive playback; E-43 the tutor's voice) -------
+// ---- TTS model (E-21 contrastive playback, E-33/E-37 phrase renders) ------
+//
+// ⚠️ STILL BILLED, AND THE REPRICING BELOW STAYS. The tutor's voice left this model
+// when the operator sent the speaking leg back to Realtime audio-out, but TTS is not
+// dead: `lib/render/engine.ts` (E-21 contrastive renditions) and
+// `lib/render/phrase.ts` (E-33 canon lines, E-37's pronunciation reference) both price
+// every call through `ttsCallCost`, which IS the reservation and the cap check for
+// them. Deleting this table because one consumer went away would have re-opened the
+// exact under-pricing three separate spikes ordered fixed.
 //
 // 🚩 THE UNIT WAS WRONG, IN THE UNSAFE DIRECTION, AND THIS IS THE THIRD
 // INDEPENDENT FINDING OF IT. `spike-3` (2026-07-23), `spike-5` §5.3 (2026-07-25)
@@ -282,9 +290,9 @@ export function estimateTokens(text: string): number {
 //     `usage` object, so duration is the only honest basis — and it is free to
 //     obtain, because the mp3 stream is constant-bitrate (see TTS_MP3_BYTES_PER_SECOND).
 //
-// Under D-28 the tutor SPEAKS through this model on every turn, so TTS goes from a
-// rounding error (E-21 rendered short corrections once and cached them forever) to
-// ~26% of a conversation's cost. A 1.5× under-count stops being rounding there.
+// The tutor no longer speaks through this model, so TTS is back to what it was before
+// E-43: short strings, rendered once and cached forever. That lowers the STAKES of an
+// under-count; it does not make one acceptable, and the fix is already correct.
 
 export const TTS_MODEL = "gpt-4o-mini-tts" as const;
 /** The pinnable snapshot behind the floating alias. spike-5 §1: prefer pinning on a
@@ -390,19 +398,24 @@ export const ASK_MAX_OUTPUT_TOKENS = 700;
 
 // ---- realtime tutor (E-34, rebuilt for E-43) -----------------------------
 //
-// The spoken tutor listens over the **Realtime** API and, since D-28, takes its
-// reply as TEXT and speaks it through the TTS model above. Its price table and cost
-// model live in ./rates-realtime.ts purely so both files stay under the 500-line
-// hook; every name is re-exported here, so lib/analysis/rates.ts remains the ONE
-// import surface for prices (D-10) and no caller needs to know about the split.
+// The spoken tutor both listens AND speaks over the **Realtime** API — audio in,
+// audio out, one connection. Its price table and cost model live in
+// ./rates-realtime.ts purely so both files stay under the 500-line hook; every name is
+// re-exported here, so lib/analysis/rates.ts remains the ONE import surface for prices
+// (D-10) and no caller needs to know about the split.
 //
 // Realtime spend records into the SAME spend_ledger under the SAME monthly cap as
 // everything else.
 export {
   REALTIME_FLAGSHIP,
   REALTIME_MINI,
+  REALTIME_TIERS,
+  DEFAULT_REALTIME_TIER,
+  isRealtimeTier,
+  realtimeModelForTier,
   REALTIME_RATES,
   REALTIME_AUDIO_TOKENS_PER_MINUTE,
+  REALTIME_AUDIO_OUTPUT_TOKENS_PER_MINUTE,
   REALTIME_TEXT_OUTPUT_TOKENS_PER_MINUTE,
   REALTIME_FRESH_TEXT_TOKENS_PER_MINUTE,
   REALTIME_TURNS_PER_MINUTE,
@@ -414,7 +427,7 @@ export {
   realtimeSessionCost,
   tutorRealtimeModel,
 } from "./rates-realtime";
-export type { RealtimeModelId, RealtimeModelRate, RealtimeCostBreakdown } from "./rates-realtime";
+export type { RealtimeModelId, RealtimeModelRate, RealtimeCostBreakdown, RealtimeTier } from "./rates-realtime";
 
 // ---- pronunciation assessment (E-37) --------------------------------------
 //

@@ -5,7 +5,8 @@ import Link from "next/link";
 import { type Settings } from "@/lib/settings";
 import { ACTIVE_NEW_ITEM_KNOBS, PENDING_NEW_ITEM_KNOBS } from "@/lib/settings-knobs";
 import { REGISTERS, type Register } from "@/lib/register";
-import { TUTOR_VOICE_CHOICES, TUTOR_VOICE_LABELS, type TutorVoiceChoice } from "@/lib/voice/voices";
+import { REALTIME_VOICES, voiceLabel, type RealtimeVoice } from "@/lib/tutor/voices";
+import { REALTIME_TIERS, type RealtimeTier } from "@/lib/analysis/rates";
 import { formatUsd } from "@/lib/format";
 
 type Status = { kind: "idle" | "saving" | "saved" } | { kind: "error"; message: string };
@@ -96,30 +97,62 @@ export default function SettingsPage() {
           />
         </label>
 
-        {/* The tutor's voice (E-43, D-28). This REPLACES the realtime tier switch,
-            which offered a model spike-6 measured as unfit for the tutor's core job —
-            so the knob count goes DOWN by one inscrutable choice and up by one a
-            learner can actually judge with their own ears (D-26). */}
+        {/* The tutor's voice (E-43, Amendment 5). This REPLACES the realtime tier
+            switch, which offered a model spike-6 measured as unfit for the tutor's core
+            job — so the knob count is unchanged, and the one that remains is the one a
+            learner can judge with their own ears (D-26). Ten wrapping pills rather than
+            a ten-position segmented control: a segmented control is for a mode switch,
+            and ten names in a row is unreadable at phone width. */}
         <div className="flex flex-col gap-1.5" data-tutor-voice>
           <span className={LABEL}>Erika&rsquo;s voice</span>
-          <div className="inline-flex gap-1 rounded-control border border-hairline p-1">
-            {TUTOR_VOICE_CHOICES.map((choice) => (
+          <div className="flex flex-wrap gap-1 rounded-control border border-hairline p-1">
+            {REALTIME_VOICES.map((choice) => (
               <button
                 key={choice}
                 type="button"
                 data-voice={choice}
                 data-selected={form.tutorVoice === choice ? "true" : "false"}
-                onClick={() => set("tutorVoice", choice as TutorVoiceChoice)}
-                className={`flex-1 rounded-[9px] px-3 py-1.5 text-[15px] transition-colors ${
+                onClick={() => set("tutorVoice", choice as RealtimeVoice)}
+                className={`rounded-[9px] px-3 py-1.5 text-[15px] transition-colors ${
                   form.tutorVoice === choice ? "bg-accent text-accent-ink" : "text-secondary"
                 }`}
               >
-                {TUTOR_VOICE_LABELS[choice]}
+                {voiceLabel(choice)}
               </button>
             ))}
           </div>
           <span className="text-[13px] text-secondary">
-            Two voices, chosen by ear for Italian. Takes effect on your next conversation.
+            Ten voices. Try one for a conversation and change it if it does not suit you — it takes
+            effect on your next conversation.
+          </span>
+        </div>
+
+        {/* Which Realtime tier the tutor runs on. Restored by operator ruling once the
+            flagship price was visible — they want to try mini themselves rather than
+            have it decided for them. The note is one true sentence, not a lecture and
+            not scare copy: spike-6 measured mini inventing corrections, and that is
+            what the person choosing needs to weigh against the price. */}
+        <div className="flex flex-col gap-1.5" data-realtime-tier>
+          <span className={LABEL}>Conversation model</span>
+          <div className="inline-flex gap-1 rounded-control border border-hairline p-1">
+            {REALTIME_TIERS.map((tier) => (
+              <button
+                key={tier}
+                type="button"
+                data-tier={tier}
+                data-selected={form.realtimeTier === tier ? "true" : "false"}
+                onClick={() => set("realtimeTier", tier as RealtimeTier)}
+                className={`flex-1 rounded-[9px] px-3 py-1.5 text-[15px] capitalize transition-colors ${
+                  form.realtimeTier === tier ? "bg-accent text-accent-ink" : "text-secondary"
+                }`}
+              >
+                {tier}
+              </button>
+            ))}
+          </div>
+          <span className="text-[13px] text-secondary">
+            Mini costs about a third as much per conversation. In our testing it sometimes missed a
+            mistake, and twice corrected something that was already right.
           </span>
         </div>
 

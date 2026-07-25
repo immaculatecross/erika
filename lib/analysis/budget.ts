@@ -168,12 +168,14 @@ export const TUTOR_LEASE_PREFIX = "tutor:";
  * The content-hash prefixes whose abandoned leases COMMIT on sweep instead of
  * releasing — "the provider almost certainly ran, so the money must not vanish".
  *
- *   * `tutor:`     — a live spoken session ([T2a], E-34): releasing an abandoned
- *     lease to $0 understated real spend.
- *   * `tutor-tts:` — one tutor reply synthesized through TTS (E-43). Reserved
+ *   * `tutor:` — a live spoken session ([T2a], E-34): releasing an abandoned lease to
+ *     $0 understated real spend.
+ *   * `pa:`    — one Azure pronunciation assessment (E-37). The reservation is taken
  *     IMMEDIATELY before the HTTP request, so a pending row that outlives its TTL
- *     means the process died with the request already on the wire.
- *   * `pa:`        — one Azure pronunciation assessment (E-37), same reasoning.
+ *     means the process died with the learner's audio already on the wire. Azure
+ *     charged for it. Recording spend even on a crash is the never-waivable half of
+ *     the money contract, and over-recording a reserved amount is the only error
+ *     direction the cap tolerates (it can refuse a later call; it can never unspend).
  *
  * Every OTHER stale reservation still releases: a crashed bounded model call in the
  * cascade was never charged.
@@ -185,7 +187,7 @@ export const TUTOR_LEASE_PREFIX = "tutor:";
  * 1012/1012, because the sweep never consulted it. Two dialects of one rule produced
  * two defects in v0.6; a generated one cannot disagree with itself.
  */
-export const ASSUMED_RUN_PREFIXES = [TUTOR_LEASE_PREFIX, "tutor-tts:", "pa:"] as const;
+export const ASSUMED_RUN_PREFIXES = [TUTOR_LEASE_PREFIX, "pa:"] as const;
 
 export function isAssumedRunLeaseHash(contentHash: string): boolean {
   return ASSUMED_RUN_PREFIXES.some((p) => contentHash.startsWith(p));
@@ -193,7 +195,7 @@ export function isAssumedRunLeaseHash(contentHash: string): boolean {
 
 /** A pending reservation whose `content_hash` groups a tutor session's lease. */
 export function isTutorLeaseHash(contentHash: string): boolean {
-  return contentHash.startsWith(TUTOR_LEASE_PREFIX) && !contentHash.startsWith("tutor-tts:");
+  return contentHash.startsWith(TUTOR_LEASE_PREFIX);
 }
 
 /** The SQL predicate form of `isAssumedRunLeaseHash`, generated from the one list so
@@ -212,8 +214,8 @@ export const ASSUMED_RUN_SQL = `(${ASSUMED_RUN_PREFIXES.map(
  * number of pending rows swept.
  *
  * [T2 — money, never-waivable] A stale ASSUMED-RUN lease — a tutor session
- * (`tutor:<id>`, E-34), a tutor TTS reply (`tutor-tts:…`, E-43) or an Azure
- * pronunciation assessment (`pa:<attemptId>`, E-37) — COMMITS instead of releasing:
+ * (`tutor:<id>`, E-34) or an Azure pronunciation assessment (`pa:<attemptId>`,
+ * E-37) — COMMITS instead of releasing:
  * work assumed to have reached the provider must not vanish from the ledger just
  * because the process died before it could finalize (releasing to $0 understated real
  * spend). All OTHER stale reservations release (delete) as before — a crashed bounded

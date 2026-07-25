@@ -1,11 +1,12 @@
 import type { Db } from "./db";
 import { REGISTERS, DEFAULT_REGISTER, isRegister, type Register } from "./register";
+import { DEFAULT_TUTOR_VOICE, isRealtimeVoice, REALTIME_VOICES, type RealtimeVoice } from "./tutor/voices";
 import {
-  DEFAULT_TUTOR_VOICE,
-  isTutorVoiceChoice,
-  TUTOR_VOICE_CHOICES,
-  type TutorVoiceChoice,
-} from "./voice/voices";
+  DEFAULT_REALTIME_TIER,
+  isRealtimeTier,
+  REALTIME_TIERS,
+  type RealtimeTier,
+} from "./analysis/rates-realtime";
 
 // The persisted preferences. [RETRO-002 P5] The vestigial `modelTier` (no behavior
 // ever hung off it) was removed at E-34.
@@ -20,7 +21,10 @@ import {
 //
 // A database that stored `realtimeTier` still reads fine: `readSettings` selects the
 // keys it knows and ignores the rest, so a removed key is inert, not fatal
-// (tests/settings.test.ts pins this).
+// (tests/settings.test.ts pins this). The same holds for a `tutorVoice` holding the
+// short-lived `female`/`male` values this branch carried before the operator sent the
+// speaking leg back to Realtime audio-out: an unrecognized voice reads as the default
+// rather than throwing (`coerceTutorVoice`).
 
 export interface Settings {
   targetLanguage: string;
@@ -36,10 +40,15 @@ export interface Settings {
   // style, and the E-34 tutor persona (lib/register.ts). Style only, never
   // correctness.
   register: Register;
-  // The tutor's voice (E-43, D-28's speaking leg): the operator chose `alloy` and
-  // `nova` by ear and asked for the choice to be presented as male / female. The
-  // provider-scoped voice ids live in lib/voice/voices.ts, never here.
-  tutorVoice: TutorVoiceChoice;
+  // The tutor's voice (E-43, Amendment 5): one of the ten voices the Realtime API
+  // accepts. The list and the default live in lib/tutor/voices.ts, never here.
+  tutorVoice: RealtimeVoice;
+  // Which Realtime tier the tutor runs on (E-34, deleted at E-43, restored by operator
+  // ruling once the flagship price was visible: "worth putting that in the settings
+  // that I can try"). Default flagship. spike-6 measured mini hallucinating
+  // corrections, so the Settings copy says so in one sentence — see
+  // lib/analysis/rates-realtime.ts. Both tiers are priced; neither is a guess.
+  realtimeTier: RealtimeTier;
   // How long a tutor conversation must run to count toward the day (E-43 criterion
   // 6). Below it the conversation is still real and still logs evidence — it simply
   // has not met the bar. Shown as calm progress on the tutor surface; never a
@@ -66,7 +75,11 @@ export const DEFAULT_SETTINGS: Settings = {
   newPronPerDay: 10,
   register: DEFAULT_REGISTER,
   tutorVoice: DEFAULT_TUTOR_VOICE,
-  tutorMinMinutes: 5,
+  realtimeTier: DEFAULT_REALTIME_TIER,
+  // Ten minutes, by operator ruling after driving the built tutor ("let's make it ten
+  // minutes default"; it was five). Still settable, still shown as progress, and still
+  // with no countdown, no warning and no guilt copy for leaving early (D-24).
+  tutorMinMinutes: 10,
 };
 
 /** Read every preference, filling any unset key from DEFAULT_SETTINGS. */
@@ -89,9 +102,12 @@ export function readSettings(db: Db): Settings {
     newRulesPerDay: capOr("newRulesPerDay"),
     newPronPerDay: capOr("newPronPerDay"),
     register: isRegister(stored.get("register")) ? (stored.get("register") as Register) : DEFAULT_SETTINGS.register,
-    tutorVoice: isTutorVoiceChoice(stored.get("tutorVoice"))
-      ? (stored.get("tutorVoice") as TutorVoiceChoice)
+    tutorVoice: isRealtimeVoice(stored.get("tutorVoice"))
+      ? (stored.get("tutorVoice") as RealtimeVoice)
       : DEFAULT_SETTINGS.tutorVoice,
+    realtimeTier: isRealtimeTier(stored.get("realtimeTier"))
+      ? (stored.get("realtimeTier") as RealtimeTier)
+      : DEFAULT_SETTINGS.realtimeTier,
     tutorMinMinutes: minutesOr(stored.get("tutorMinMinutes")),
   };
 }
@@ -123,10 +139,17 @@ export function validateSettings(patch: Record<string, unknown>): Partial<Settin
   }
 
   if (patch.tutorVoice !== undefined) {
-    if (!isTutorVoiceChoice(patch.tutorVoice)) {
-      throw new SettingsValidationError(`tutorVoice must be one of: ${TUTOR_VOICE_CHOICES.join(", ")}.`);
+    if (!isRealtimeVoice(patch.tutorVoice)) {
+      throw new SettingsValidationError(`tutorVoice must be one of: ${REALTIME_VOICES.join(", ")}.`);
     }
     out.tutorVoice = patch.tutorVoice;
+  }
+
+  if (patch.realtimeTier !== undefined) {
+    if (!isRealtimeTier(patch.realtimeTier)) {
+      throw new SettingsValidationError(`realtimeTier must be one of: ${REALTIME_TIERS.join(", ")}.`);
+    }
+    out.realtimeTier = patch.realtimeTier;
   }
 
   if (patch.tutorMinMinutes !== undefined) {

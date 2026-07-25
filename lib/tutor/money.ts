@@ -1,20 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db";
-import {
-  finalizeReservation,
-  monthKey,
-  releaseReservation,
-  reserveSpend,
-  type SpendReservation,
-} from "../analysis/budget";
-import {
-  TTS_MODEL,
-  realtimeSessionCost,
-  ttsAudioSecondsFromMp3Bytes,
-  ttsCallCost,
-  ttsCostFromAudioSeconds,
-  type RealtimeModelId,
-} from "../analysis/rates";
+import { monthKey, releaseReservation, reserveSpend, type SpendReservation } from "../analysis/budget";
+import { realtimeSessionCost, type RealtimeModelId } from "../analysis/rates";
 
 // The realtime tutor's money spine (E-34, D-10/D-20). The tutor is the MOST
 // EXPENSIVE money path AND a long-lived session — a call can run for many minutes
@@ -224,82 +211,16 @@ export function releaseTutorLease(db: Db, tutorId: string): void {
   for (const { id } of r) releaseReservation(db, id);
 }
 
-// ── the SPEAKING leg (E-43, D-28) ────────────────────────────────────────────
+// ── ONE LEG AGAIN (E-43, Amendment 5) ────────────────────────────────────────
 //
-// The listening leg above is a LEASE because a Realtime session is long-lived and
-// bills while it runs; the server cannot observe its usage turn by turn. The speaking
-// leg is the opposite shape — one bounded server-side call per reply — so it takes
-// the ordinary reserve-before-call/finalize-on-resolve discipline (E-27) with no
-// lease, no heartbeat, and therefore no stale window at all. Two different shapes
-// because the two legs really are different, not because there are two money paths:
-// both reserve into the ONE `spend_ledger` under the ONE cap.
+// This branch briefly carried a SECOND money path here: a per-reply TTS reservation
+// (`tutor-tts:<id>:<seq>`), reserved before each synthesis call and settled on the
+// bytes that arrived. It went with the speaking leg it billed. The tutor is back to
+// ONE billable leg — the Realtime session itself — so there is one lease, one prefix
+// and one committed row per conversation, and no second vendor call to reserve
+// against mid-turn.
 //
-// THE INVARIANT, and the paths that could violate it:
-//   * A refusal must mint NO charge and make NO call    → `reserveTutorSpeech` returns
-//     null and the route returns 402 before touching the vendor.
-//   * A resolved call must be recorded EXACTLY once     → `settleTutorSpeech`
-//     finalizes the same reservation it was handed; the ledger row id is the identity.
-//   * A crash with audio on the wire must still bill    → `tutor-tts:` is an
-//     assumed-run prefix, so an abandoned pending row COMMITS on sweep (never
-//     releases). A partial stream bills for the bytes that arrived.
-//   * The charge must never exceed what the cap admitted → the finalized amount is
-//     clamped to the reservation.
-
-/** The ledger content-hash for ONE synthesized tutor reply. Distinct from the
- *  `tutor:` lease prefix so the two legs never group together. */
-export function tutorSpeechContentHash(tutorId: string, seq: number | string): string {
-  return `tutor-tts:${tutorId}:${seq}`;
-}
-
-/**
- * Reserve one reply's synthesis BEFORE the vendor is called, at the pre-call upper
- * bound (`ttsCallCost`, which rounds the duration up through the slowest measured
- * voice). Returns null when the cap refuses it — in which case the caller must make
- * no call and mint no charge.
- */
-export function reserveTutorSpeech(
-  db: Db,
-  tutorId: string,
-  seq: number | string,
-  text: string,
-  budgetUsd: number,
-): SpendReservation | null {
-  return reserveSpend(
-    db,
-    {
-      model: TTS_MODEL,
-      contentHash: tutorSpeechContentHash(tutorId, seq),
-      costUsd: ttsCallCost(TTS_MODEL, text.length),
-    },
-    budgetUsd,
-  );
-}
-
-/**
- * Settle a reply's reservation once the audio has (or has not) arrived.
- *
- * `audioBytes` is what actually reached the browser. Because this model's mp3 is
- * constant-bitrate the byte count IS the duration (TTS_MP3_BYTES_PER_SECOND,
- * measured), so the committed charge is computed from the audio that really exists
- * rather than from the pre-call character bound — which over-states by ~1.14× on the
- * slowest voice and more on a fast one. Zero bytes releases: nothing was synthesized,
- * nothing is charged. The charge is clamped to the reservation, so it can never
- * exceed what the cap admitted.
- *
- * Returns the USD committed (0 when released).
- */
-export function settleTutorSpeech(
-  db: Db,
-  reservation: SpendReservation,
-  text: string,
-  audioBytes: number,
-): number {
-  if (audioBytes <= 0) {
-    releaseReservation(db, reservation);
-    return 0;
-  }
-  const seconds = ttsAudioSecondsFromMp3Bytes(audioBytes);
-  const actual = Math.min(ttsCostFromAudioSeconds(TTS_MODEL, seconds, text.length), reservation.costUsd);
-  finalizeReservation(db, reservation, actual);
-  return actual;
-}
+// That is a real simplification of the money spine and not just of the transport: a
+// reply used to be able to be refused by the cap HALFWAY THROUGH A CONVERSATION,
+// leaving a live session that could hear but not answer. It cannot now; the only
+// refusal points are opening a session and extending its lease.
