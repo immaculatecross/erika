@@ -9,6 +9,7 @@ import {
   type Grade as FsrsGrade,
 } from "ts-fsrs";
 import type { Db } from "../db";
+import { VISIBLE_PLACEMENT_EVIDENCE } from "./placement-runs";
 import { isAudioDerived, type Evidence, type EvidenceMode, type KnowledgeStatus } from "./types";
 import type { Grade } from "../srs";
 
@@ -218,10 +219,27 @@ function toEvidence(r: EvidenceRow): Evidence {
   };
 }
 
-/** One item's evidence in the canonical fold order (`created_at`, then `id`). */
+/**
+ * One item's evidence in the canonical fold order (`created_at`, then `id`) — the ONE
+ * read the derived cache is built from.
+ *
+ * [RETRO-004 §DE-2] Evidence from a SUPERSEDED placement run is excluded here. A
+ * placement writes recognition rows for every rule below the level it estimated; when
+ * the learner takes the check again, the earlier estimate is withdrawn, and the rows it
+ * wrote must stop counting as current belief or a wrong placement is permanent (it was:
+ * re-placing as A1 left the plan serving C2 grammar, and only deleting the database
+ * recovered). The rows themselves are untouched — `evidence` stays append-only, the v14
+ * triggers stand, and the whole history remains readable — but the DERIVATION considers
+ * only the latest run's seeds. See lib/knowledge/placement-runs.ts for the mechanism and
+ * for why compensating negative evidence was the wrong shape of fix.
+ */
 export function itemEvidence(db: Db, itemId: string): Evidence[] {
   const rows = db
-    .prepare("SELECT * FROM evidence WHERE item_id = ? ORDER BY created_at, id")
+    .prepare(
+      `SELECT e.* FROM evidence e
+        WHERE e.item_id = ? AND ${VISIBLE_PLACEMENT_EVIDENCE}
+        ORDER BY e.created_at, e.id`,
+    )
     .all(itemId) as EvidenceRow[];
   return rows.map(toEvidence);
 }

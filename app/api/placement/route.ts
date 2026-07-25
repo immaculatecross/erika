@@ -12,6 +12,13 @@ import { seedPlacement } from "@/lib/knowledge/seed-placement";
 // (yes-bias corrected via the pseudoword false-alarm rate) and seeds recognition-only
 // evidence — words the learner knew + sub-level grammar — which can never mint `known`
 // (D-19). No OpenAI key is touched anywhere on this path.
+//
+// [RETRO-004 §DE-2] Two things this response must carry that it did not. `caveat` says
+// WHY an estimate is rough (response style / incoherent bands / thin sample) instead of
+// leaving `calibrated: false` to be rendered as one undifferentiated line — and
+// `calibrated` now reflects real confidence, not sample size alone. `runId` is the
+// placement generation: a later run supersedes an earlier one, so a careless placement
+// is repairable by re-taking the check rather than by deleting the database.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -57,17 +64,28 @@ export async function POST(request: Request) {
   }
 
   const result = scorePlacement(answers);
+  // Seeding records a placement RUN, which supersedes every earlier one (§DE-2): the
+  // derivation stops counting the previous placement's seeds, so re-taking the check
+  // actually re-places the learner. `evidence` is still only ever appended to.
   const seeded = seedPlacement(getDb(), {
     level: result.level,
     recognizedItemIds: recognizedItemIds(answers),
+    calibrated: result.calibrated,
+    falseAlarmRate: result.falseAlarmRate,
   });
 
   return NextResponse.json({
     level: result.level,
     calibrated: result.calibrated,
+    // Why the estimate is rough, so the UI can say so rather than imply confidence.
+    caveat: result.caveat,
+    highestCleared: result.highestCleared,
+    contiguous: result.contiguous,
     falseAlarmRate: result.falseAlarmRate,
     bands: result.bands,
+    runId: seeded.runId,
     seededWords: seeded.seededWords,
     seededRules: seeded.seededRules,
+    supersededItems: seeded.supersededItems,
   });
 }

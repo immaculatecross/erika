@@ -53,10 +53,21 @@ npm run worker
 It is a plain Node process, not Next, so it loads `.env.local` itself
 (`lib/env-file.ts` — an explicit loader rather than `node --env-file`, which
 hard-fails when the file is absent). Variables already in the environment win, so
-`OPENAI_API_KEY=… npm run worker` overrides the file. Without an
-`OPENAI_API_KEY` the worker says so and exits non-zero at startup rather than
-failing later at the first model call. While no worker is running, a job that has
-sat queued says so on the session page instead of showing a calm badge forever.
+`OPENAI_API_KEY=… npm run worker` overrides the file.
+
+**No key? The worker still runs.** Ingest — normalisation, VAD, hashing,
+segmenting, duration, the speech timeline — makes zero model calls, so without an
+`OPENAI_API_KEY` the worker prints a notice and drains the ingest queue normally:
+recordings finish, segments and the timeline appear, and you can hear yourself
+back. Only *analysis* needs a key, and an analysis job started without one fails
+individually with the fix in its message; the worker keeps running and the ingest
+queue keeps moving. Add the key to `.env.local`, restart the worker, and press
+Analyze again. (Until v0.6 the worker exited non-zero at startup without a key,
+which meant a keyless install could never ingest anything at all — RETRO-004
+§DE-1.)
+
+While no worker is running, a job that has sat queued says so on the session page
+instead of showing a calm badge forever.
 
 ### Screenshot a route
 

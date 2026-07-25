@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { migrations } from "./migrations";
+import { reconcileMigrationLedger } from "./migrations/reconcile";
 
 // The one SQLite entry point. Server-only — never import from a client
 // component. Settings and every later table are read/written through the
@@ -17,6 +18,12 @@ function defaultDbPath(): string {
  * Apply every migration not yet recorded, in order, inside one transaction per
  * migration. Idempotent: a second call after the first applies nothing.
  * Returns the versions applied by this call.
+ *
+ * The ledger is reconciled first (lib/migrations/reconcile.ts): a database that ran
+ * the E-37 pronunciation migration back when it was numbered v24 carries a ledger row
+ * that no longer matches any migration, and without the repair v26 throws on tables
+ * that already exist — on EVERY boot, forever. The repair is a no-op on a healthy
+ * database.
  */
 export function runMigrations(db: Db): number[] {
   db.exec(`
@@ -26,6 +33,7 @@ export function runMigrations(db: Db): number[] {
       applied_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+  reconcileMigrationLedger(db);
   const done = new Set(
     db.prepare("SELECT version FROM _migrations").all().map((r) => (r as { version: number }).version),
   );

@@ -93,14 +93,38 @@ describe("seedPlacement — recognition-only evidence never mints known (criteri
     db.close();
   });
 
-  it("is idempotent per item on re-run — the append-only log does not grow", () => {
+  // [RETRO-004 §DE-2] This test used to assert the opposite: that a re-run seeded
+  // NOTHING ("idempotent per item — the append-only log does not grow"), because any
+  // pre-existing placement row suppressed the write. That invariant is exactly what made
+  // a careless placement permanent, so it is gone. A re-run now seeds afresh under a new
+  // run id, and the visible belief is that run's alone.
+  it("re-runs seed afresh under a new run; the visible log stays one row per item", () => {
     const db = freshDb();
     const id = someLemmaId(db);
-    seedPlacement(db, { level: "A2", recognizedItemIds: [id] });
-    const after1 = itemEvidence(db, id).length;
-    const res2 = seedPlacement(db, { level: "A2", recognizedItemIds: [id] });
-    expect(res2.seededWords).toBe(0); // already placement-seeded → skipped
-    expect(itemEvidence(db, id).length).toBe(after1);
+    const first = seedPlacement(db, { level: "A2", recognizedItemIds: [id] });
+    const second = seedPlacement(db, { level: "A2", recognizedItemIds: [id] });
+    expect(second.runId).not.toBe(first.runId);
+    expect(second.seededWords).toBe(1); // seeded again, under the new run
+
+    // The STORED log grew — nothing was rewritten or removed, so append-only holds.
+    const stored = db
+      .prepare("SELECT COUNT(*) AS n FROM evidence WHERE item_id = ? AND source = 'placement'")
+      .get(id) as { n: number };
+    expect(stored.n).toBe(2);
+    // The VISIBLE log — what belief is derived from — is the latest run's row only.
+    expect(itemEvidence(db, id)).toHaveLength(1);
+    expect(itemEvidence(db, id)[0].sourceRef).toBe(`placement:${second.runId}`);
+    // Same answers, same conclusion.
+    expect(getItem(db, id)!.status).toBe("introduced");
+    db.close();
+  });
+
+  it("one run never writes the same target twice (per-run dedup)", () => {
+    const db = freshDb();
+    const id = someLemmaId(db);
+    const res = seedPlacement(db, { level: "A2", recognizedItemIds: [id, id, id] });
+    expect(res.seededWords).toBe(1);
+    expect(itemEvidence(db, id)).toHaveLength(1);
     db.close();
   });
 });

@@ -1,6 +1,8 @@
 import type { Db } from "../db";
 import { recordEvidence } from "./evidence";
+import { rebuildItem } from "./derive";
 import { itemExists } from "./items";
+import { placementSeedRef, recordPlacementRun } from "./placement-runs";
 import { bandIndex, type Band } from "../placement/scoring";
 
 // Seeding the knowledge model from a placement result (E-35, D-19). Placement is a
@@ -26,18 +28,43 @@ import { bandIndex, type Band } from "../placement/scoring";
 //     so they are the new grammar offered. This is teaching-eligibility only; the
 //     `known` mastery gate in derive.ts still excludes recognition (D-19, untouched).
 //
-// Re-runnable: re-placement is idempotent per item (a target that already carries a
-// placement recognition row is skipped), so the append-only log does not grow on
-// repeated placements with the same answers.
+// RE-PLACEMENT SUPERSEDES (RETRO-004 §DE-2, v27). This used to be "idempotent per item":
+// a target that already carried ANY placement recognition row was skipped, so the log
+// did not grow on a repeat. That was the wrong invariant — it made a careless placement
+// permanent. A run placed at C2 seeded 238 rules, the plan served C2 grammar, and
+// re-taking the check honestly as A1 returned `level: "A1"` while the plan went on
+// serving the same C2 rules, with no way out short of deleting the database.
+//
+// So each placement now records a RUN first, tags its rows with that run
+// (`source_ref = 'placement:<run id>'`), and re-derives every item the PREVIOUS runs had
+// touched. Because the evidence read path shows only the latest run's placement rows
+// (derive.ts `itemEvidence`), items the new placement does not claim fall back to
+// `unseen` and leave the daily plan. The dedup is now per-run, which is all it ever
+// needed to be: within one placement each target is written once.
+//
+// The append-only log DOES grow across placements, and that is correct — every
+// observation ever made is retained and auditable. Nothing is updated or deleted, so the
+// v14 triggers are never touched.
 
-/** True once this item already carries a placement-sourced recognition row — so a
- *  re-run does not append a duplicate. */
-function alreadyPlacementSeeded(db: Db, itemId: string): boolean {
+/** True once this item already carries a recognition row from THIS run — so one run
+ *  cannot write a target twice. Deliberately scoped to the run: a row from an earlier,
+ *  now-superseded placement must NOT suppress the current one's seeding. */
+function alreadySeededInRun(db: Db, itemId: string, ref: string): boolean {
   return !!db
     .prepare(
-      "SELECT 1 FROM evidence WHERE item_id = ? AND source = 'placement' AND mode = 'recognition' LIMIT 1",
+      "SELECT 1 FROM evidence WHERE item_id = ? AND source = 'placement' AND source_ref = ? LIMIT 1",
     )
-    .get(itemId);
+    .get(itemId, ref);
+}
+
+/** Every item any placement has ever seeded — the set whose derived state may need
+ *  rebuilding once a new run supersedes the old ones. */
+function everPlacementSeeded(db: Db): string[] {
+  return (
+    db
+      .prepare("SELECT DISTINCT item_id FROM evidence WHERE source = 'placement'")
+      .all() as { item_id: string }[]
+  ).map((r) => r.item_id);
 }
 
 /** The rule items whose CEFR band is strictly BELOW `level` — the sub-level grammar
@@ -53,53 +80,89 @@ function rulesBelowLevel(db: Db, level: Band): string[] {
 }
 
 export interface SeedPlacementInput {
-  /** The placed level; null means below A1 (a true beginner) — no grammar is seeded. */
+  /** The placed level; null means below A1 (or unplaceable) — no grammar is seeded. */
   level: Band | null;
   /** Lemma item ids the learner genuinely recognized (marked "known"). */
   recognizedItemIds: string[];
+  /** Whether the scorer trusted this estimate — recorded on the run for provenance. */
+  calibrated?: boolean;
+  /** The run's measured false-alarm rate — recorded on the run for provenance. */
+  falseAlarmRate?: number | null;
 }
 
 export interface SeedPlacementResult {
+  /** The run this seeding belongs to. A later run supersedes it. */
+  runId: string;
   seededWords: number;
   seededRules: number;
+  /** Items a PREVIOUS placement had seeded that this one does not — re-derived, so they
+   *  leave the daily plan. Zero on a first placement. */
+  supersededItems: number;
 }
 
 /**
  * Write recognition-only evidence for a placement result. All rows are
  * `source:'placement'`, `mode:'recognition'`, `polarity:1`, NOT audio-derived. No
- * row can reach `known` (D-19). One transaction is not required — each `recordEvidence`
- * is atomic and independent — but skipping already-seeded items keeps re-placement
- * from bloating the append-only log. Returns how many words and rules were seeded.
+ * row can reach `known` (D-19).
+ *
+ * The run is recorded FIRST: that insert is what makes earlier runs superseded, so
+ * every `recordEvidence` below (each of which re-derives its item) already sees the new
+ * world. Items the previous runs claimed and this one does not are re-derived explicitly
+ * at the end — that is the step that actually re-places the learner.
  */
 export function seedPlacement(db: Db, input: SeedPlacementInput): SeedPlacementResult {
+  const previouslySeeded = everPlacementSeeded(db);
+  const runId = recordPlacementRun(db, {
+    level: input.level,
+    calibrated: input.calibrated ?? false,
+    falseAlarmRate: input.falseAlarmRate ?? null,
+  });
+  const ref = placementSeedRef(runId);
+  const seededNow = new Set<string>();
+
   let seededWords = 0;
   for (const itemId of new Set(input.recognizedItemIds)) {
     if (!itemExists(db, itemId)) continue; // a tampered/unknown id is ignored, never invented
-    if (alreadyPlacementSeeded(db, itemId)) continue;
+    if (alreadySeededInRun(db, itemId, ref)) continue;
     recordEvidence(db, {
       itemId,
       source: "placement",
+      sourceRef: ref,
       polarity: 1,
       mode: "recognition",
       audioDerived: false,
     });
+    seededNow.add(itemId);
     seededWords += 1;
   }
 
   let seededRules = 0;
   if (input.level !== null) {
     for (const ruleId of rulesBelowLevel(db, input.level)) {
-      if (alreadyPlacementSeeded(db, ruleId)) continue;
+      if (alreadySeededInRun(db, ruleId, ref)) continue;
       recordEvidence(db, {
         itemId: ruleId,
         source: "placement",
+        sourceRef: ref,
         polarity: 1,
         mode: "recognition",
         audioDerived: false,
       });
+      seededNow.add(ruleId);
       seededRules += 1;
     }
   }
 
-  return { seededWords, seededRules };
+  // The retraction. These items' cached status still reflects a placement that is no
+  // longer current; re-deriving from the (now filtered) log is what drops them back to
+  // `unseen` and out of the daily plan. `rebuildItem` reads through
+  // `VISIBLE_PLACEMENT_EVIDENCE`, so this needs no knowledge of what changed.
+  let supersededItems = 0;
+  for (const itemId of previouslySeeded) {
+    if (seededNow.has(itemId)) continue;
+    rebuildItem(db, itemId);
+    supersededItems += 1;
+  }
+
+  return { runId, seededWords, seededRules, supersededItems };
 }

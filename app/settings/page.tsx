@@ -173,11 +173,17 @@ export default function SettingsPage() {
         </div>
 
         {/* Re-run placement (E-35). The vocabulary check is re-runnable; a new run
-            re-seeds recognition evidence and can record a fresh enrollment take. */}
+            re-seeds recognition evidence and can record a fresh enrollment take.
+            [RETRO-004 §DE-2] This copy used to promise a repair it did not perform: a
+            new run left the previous placement's seeded grammar in the daily plan, so
+            re-taking it honestly as a beginner still served C2 rules. A later run now
+            SUPERSEDES the earlier one, so the sentence below is finally true — and it
+            says plainly that the new result replaces the old. */}
         <div className="flex flex-col gap-1.5 border-t border-hairline pt-4" data-placement-entry>
           <span className={LABEL}>Placement</span>
           <p className="text-[13px] text-secondary">
-            Re-take the quick vocabulary check to re-estimate your level, or record a new enrollment take.
+            Re-take the quick vocabulary check to re-estimate your level, or record a new enrollment take. The newest
+            run replaces the last one — your daily plan follows it.
           </p>
           <Link
             href="/practice/placement"

@@ -360,6 +360,35 @@ describe("migrations runner", () => {
     expect((db.prepare("SELECT COUNT(*) AS n FROM pronunciation_visits").get() as { n: number }).n).toBe(1);
     db.close();
   });
+
+  it("v27 adds placement_runs, ordered by a monotonic seq (RETRO-004 §DE-2)", () => {
+    const db = openDatabase(tmpDbPath());
+    const cols = (db.prepare("PRAGMA table_info(placement_runs)").all() as { name: string; pk: number }[]);
+    expect(cols.map((c) => c.name).sort()).toEqual(
+      ["calibrated", "created_at", "false_alarm_rate", "id", "level", "seq"],
+    );
+    expect(cols.find((c) => c.name === "seq")?.pk).toBe(1);
+    // FK-free from `evidence`: the append-only log outlives what it cites.
+    expect(db.prepare("PRAGMA foreign_key_list(placement_runs)").all()).toEqual([]);
+
+    // `seq` is monotonic even for rows written inside the same second — which
+    // `created_at` (second-granular) is not, and supersession depends on the order.
+    const ins = db.prepare("INSERT INTO placement_runs (id, level, calibrated) VALUES (?, ?, ?)");
+    ins.run("run-a", "C2", 1);
+    ins.run("run-b", "A1", 1);
+    const rows = db.prepare("SELECT seq, id, created_at FROM placement_runs ORDER BY seq").all() as {
+      seq: number;
+      id: string;
+      created_at: string;
+    }[];
+    expect(rows.map((r) => r.id)).toEqual(["run-a", "run-b"]);
+    expect(rows[1].seq).toBeGreaterThan(rows[0].seq);
+    expect(rows[0].created_at).toBe(rows[1].created_at); // same second — hence `seq`
+    // A run's level may be NULL: a check that could not place the learner still
+    // supersedes the previous one.
+    expect(() => ins.run("run-c", null, 0)).not.toThrow();
+    db.close();
+  });
 });
 
 // E-17 criterion 3: docs/schema.md is bound to the migration ritual mechanically,
