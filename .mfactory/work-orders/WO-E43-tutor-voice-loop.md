@@ -369,6 +369,8 @@ npm run lint · npx tsc --noEmit · npm run test · npm run build   — all gree
 npm run test → 143 files passed, 1 skipped · 1252 passed, 5 skipped
 ```
 
+⚠️ **`npm run lint` is a NO-OP inside a worktree that sits under the parent checkout**: ESLint walks up, finds the parent `.eslintrc.json`, and dies on `Plugin "@next/next" was conflicted`. CI runs on a clean clone and therefore lints for real — it caught one `react/no-unescaped-entities` error (`Erika's voice`) that no local run could have. Fixed, and the rest of the diff was swept with a standalone one-rule ESLint config: clean. A future worker in a worktree should know that local lint proves nothing.
+
 Every verification ran against a **disposable database** (`ERIKA_DB_PATH` and `ERIKA_DATA_DIR` under `mkdtemp`). One correction mid-run, recorded rather than hidden: an early walk set only `ERIKA_DATA_DIR`, so the database went to the repo's default `data/erika.db`. That worktree-local file was deleted and the harness fixed to set both variables.
 
 ### Tests changed or removed

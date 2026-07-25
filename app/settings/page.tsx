@@ -101,7 +101,7 @@ export default function SettingsPage() {
             so the knob count goes DOWN by one inscrutable choice and up by one a
             learner can actually judge with their own ears (D-26). */}
         <div className="flex flex-col gap-1.5" data-tutor-voice>
-          <span className={LABEL}>Erika's voice</span>
+          <span className={LABEL}>Erika&rsquo;s voice</span>
           <div className="inline-flex gap-1 rounded-control border border-hairline p-1">
             {TUTOR_VOICE_CHOICES.map((choice) => (
               <button
