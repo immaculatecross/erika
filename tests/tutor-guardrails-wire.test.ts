@@ -8,7 +8,6 @@ import { registerInstruction } from "@/lib/register";
 import { MISTAKE_CLASS_LINES, PRECISION_CORE_LINES } from "@/lib/mistakes";
 import { buildTutorSessionConfig } from "@/lib/tutor/session-config";
 import { buildMintSessionWireBody } from "@/lib/tutor/mint";
-import { decodeSpeechSse, speechDeltaBytes } from "@/lib/voice/openai-speech";
 
 // THE GUARDRAILS, IN THE INSTRUCTIONS THE MODEL ACTUALLY RECEIVES (E-43 criterion 3).
 //
@@ -79,15 +78,19 @@ describe("every precision guardrail reaches the wire", () => {
     db.close();
   });
 
-  it("tells the model its text will be SPOKEN — the one thing D-28 added", () => {
-    // With `output_modalities: ["text"]` a model writing for a screen produces bullet
-    // lists and markdown, which a voice reads out as literal punctuation. Nothing else
-    // in the persona would stop it and no other test would notice: the text would be
-    // perfectly good text.
+  it("tells the model this is SPOKEN, and to keep every turn short", () => {
+    // The spoken-output block survives the return to audio-out. The brevity clause is
+    // the one dial that improves both halves of what the operator asked for: audio
+    // output bills at $64/1M and is the largest leg of a conversation, and a shorter
+    // reply hands the turn back sooner. Measured motivation: a 19.45-second reply to a
+    // 5-second learner turn on the shipping configuration.
     const db = freshDb();
     const sent = wireInstructions(db);
-    expect(sent).toContain("spoken aloud");
+    expect(sent).toContain("This is a spoken conversation");
     expect(sent).toContain("no markdown");
+    expect(sent).toContain("Keep every turn SHORT");
+    // …and brevity must never cost a correction. The opposite failure, asserted.
+    expect(sent).toContain("Brevity is never a reason to skip a correction");
     db.close();
   });
 
@@ -106,53 +109,19 @@ describe("every precision guardrail reaches the wire", () => {
     db.close();
   });
 
-  it("does NOT re-implement the register dial as a TTS prosody instruction", () => {
+  it("does NOT re-implement the register dial as voice styling", () => {
     // Amendment 2: both voices the operator chose were the PLAIN samples, and D-23
     // governs WHAT the tutor says through the language model, where register has
-    // always belonged. The session config must carry no voice styling at all.
+    // always belonged. Under audio-out `audio.output` exists again — it carries the
+    // learner's chosen voice — so the assertion is no longer "no output block" but
+    // "nothing in it but the voice". A `speed` or an instruction string appearing here
+    // would be the register dial quietly becoming prosody.
     const db = freshDb();
     const { config } = buildTutorSessionConfig(db);
     const wire = buildMintSessionWireBody(config) as unknown as Record<string, unknown>;
     expect(JSON.stringify(wire)).not.toContain("instructions_audio");
-    expect((wire.audio as Record<string, unknown>).output).toBeUndefined();
+    const output = (wire.audio as { output: Record<string, unknown> }).output;
+    expect(Object.keys(output)).toEqual(["voice"]);
     db.close();
-  });
-});
-
-// ── the vendor's streaming contract, decoded ─────────────────────────────────
-
-describe("the TTS SSE stream decodes to audio bytes", () => {
-  function sseResponse(lines: string[]): Response {
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        // Deliberately split across arbitrary byte boundaries, because a real stream
-        // does not arrive one tidy line at a time.
-        const text = lines.join("\n") + "\n";
-        const bytes = new TextEncoder().encode(text);
-        for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i + 7));
-        controller.close();
-      },
-    });
-    return new Response(body);
-  }
-
-  it("reassembles deltas that arrive split across chunks", async () => {
-    const payload = Buffer.from([1, 2, 3, 4, 5]);
-    const res = sseResponse([
-      `data: ${JSON.stringify({ type: "speech.audio.delta", audio: payload.toString("base64") })}`,
-      `data: ${JSON.stringify({ type: "speech.audio.delta", audio: payload.toString("base64") })}`,
-      `data: ${JSON.stringify({ type: "speech.audio.done" })}`,
-    ]);
-    const out: number[] = [];
-    for await (const chunk of decodeSpeechSse(res)) out.push(...chunk);
-    expect(out).toEqual([1, 2, 3, 4, 5, 1, 2, 3, 4, 5]);
-  });
-
-  it("ignores comments, blank lines, [DONE] and non-audio events", () => {
-    expect(speechDeltaBytes(": keep-alive")).toBeNull();
-    expect(speechDeltaBytes("")).toBeNull();
-    expect(speechDeltaBytes("data: [DONE]")).toBeNull();
-    expect(speechDeltaBytes(`data: ${JSON.stringify({ type: "speech.audio.done" })}`)).toBeNull();
-    expect(speechDeltaBytes("data: not json at all")).toBeNull();
   });
 });

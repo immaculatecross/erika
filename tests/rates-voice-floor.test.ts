@@ -3,6 +3,7 @@ import { REGISTERS } from "@/lib/register";
 import { PROFILE_MAX_CHARS } from "@/lib/analysis/profile";
 import { buildTutorPersona } from "@/lib/tutor/persona";
 import {
+  REALTIME_AUDIO_OUTPUT_TOKENS_PER_MINUTE,
   REALTIME_AUDIO_TOKENS_PER_MINUTE,
   REALTIME_FLAGSHIP,
   REALTIME_MINI,
@@ -32,19 +33,27 @@ import {
 // each is asserted PER LEG rather than on one conflated total — a total can survive
 // while a leg inside it is under-priced.
 //
-// Two independent defects are guarded here, both of which shipped:
+// THREE independent defects are guarded here, all of which shipped:
 //
 //   * `REALTIME_RATES` had NO text-token rates at all, and `realtimePerMinuteUsd`
-//     charged 1500 audio-OUTPUT tokens/minute at $64/1M for audio that, under
-//     `output_modalities: ["text"]`, is never generated. Measured: $1.44 modelled
+//     charged 1500 audio-OUTPUT tokens/minute at $64/1M. Measured: $1.44 modelled
 //     against $0.283 real — a 5.1× OVER-book (spike-6 §5.6). Safe direction, but
 //     large enough to refuse a learner who has budget.
+//   * The text-out rebuild then removed the audio-OUTPUT leg entirely, which was
+//     correct while `output_modalities` was `["text"]` and became an UNDER-book the
+//     moment the operator sent the speaking leg back to audio-out. This file used to
+//     assert the leg's ABSENCE; that assertion is now a floor on its presence (below).
+//     A test rewritten to agree with whatever the code does is how a defect becomes a
+//     contract, so the replacement derives its number from `usage`, not from the model.
 //   * `TTS_RATES` billed per input CHARACTER at the audio-output-token rate:
 //     1.23×–1.76× UNDER, voice-dependent (spike-5 §5.3). Third independent finding
 //     of the same bug; spike-3 ordered it fixed in 2026-07-23 and only half landed.
+//     TTS still bills for `lib/render/` (E-21 renditions, E-33/E-37 phrase renders),
+//     so this half of the file stands whatever the tutor's transport is.
 //
-// The expectations below come from the FIXTURE — the published prices and the spikes'
-// own `usage` tables — never from the artifact under test.
+// The expectations below come from the FIXTURE — the published prices, the spikes'
+// own `usage` tables, and this revision's own live runs — never from the artifact
+// under test.
 
 // ── measured ground truth ────────────────────────────────────────────────────
 
@@ -73,6 +82,42 @@ const MEASURED_10MIN = {
   listeningLegUsd: 0.2075,
 } as const;
 
+/**
+ * AUDIO-OUTPUT throughput — the leg the text-out rebuild deleted, and the number two
+ * sources disagreed about by 2×.
+ *
+ * spike-7 §5.2 derived 20.00 tok/s (1 200 per audio-minute) from `usage` across ten
+ * voices; a money review of this branch measured 9.93 tok/s and proposed booking 700
+ * per elapsed minute. So it was measured again on the shipping configuration —
+ * `gpt-realtime-2.1`, `output_modalities: ["audio"]`, the real persona, nine labelled
+ * spike-6 fixtures. Every turn that completed returned EXACTLY 20.0 tokens per second
+ * of speech. These are the raw pairs; the constant is derived from them here rather
+ * than restated, so a fixture typo cannot quietly agree with a wrong constant.
+ */
+const MEASURED_AUDIO_OUT_TURNS = [
+  { label: "G1", audioTokens: 86, seconds: 4.3 },
+  { label: "G2", audioTokens: 104, seconds: 5.2 },
+  { label: "G3", audioTokens: 389, seconds: 19.45 },
+  { label: "G4", audioTokens: 106, seconds: 5.3 },
+  { label: "P2", audioTokens: 264, seconds: 13.2 },
+  { label: "C1", audioTokens: 102, seconds: 5.1 },
+  { label: "C2", audioTokens: 95, seconds: 4.75 },
+] as const;
+
+/**
+ * spike-7 §5.3's modelled 10-minute AUDIO-OUT conversation, per model — the same
+ * assumptions for both, so the ratio between them is meaningful even where the
+ * absolute numbers rest on a model. These are what the band below is measured against.
+ */
+const SPIKE7_10MIN_AUDIO_OUT = {
+  "gpt-realtime-2.1": { totalUsd: 0.83, audioOutUsd: 0.3818, textOutUsd: 0.108, inputUsd: 0.3398 },
+  "gpt-realtime-2.1-mini": { totalUsd: 0.227, audioOutUsd: 0.1193, textOutUsd: 0.0108, inputUsd: 0.0968 },
+} as const;
+
+/** The widest over-book this table is allowed to sit at. Over-booking is the safe
+ *  direction; 5.1× is what "safe" degenerates into when nothing bounds it. */
+const MAX_OVER_BOOK = 2.5;
+
 /** spike-5 §2.2: the same 92-character sentence, five voices, MEASURED durations. */
 const TTS_SAMPLES = [
   { voice: "marin", chars: 92, seconds: 5.448, bytes: 87_168 },
@@ -100,11 +145,31 @@ describe("REALTIME_RATES carries every leg the tutor actually bills", () => {
   });
 
   it("has a TEXT-OUTPUT rate at all — the leg the old table did not model", () => {
-    // Under D-28 the reply IS text, so this is the dominant output cost. A table
-    // without it prices the tutor's whole answer at zero.
+    // Reasoning and the reply's own transcript bill as text even under audio-out —
+    // this revision measured 163–365 text-output tokens per turn alongside the audio.
+    // A table without this rate prices part of every answer at zero.
     for (const model of [REALTIME_FLAGSHIP, REALTIME_MINI] as const) {
       expect(REALTIME_RATES[model].usdPerTextOutputToken).toBeGreaterThan(0);
       expect(REALTIME_RATES[model].usdPerTextInputToken).toBeGreaterThan(0);
+    }
+  });
+
+  it("charges EVERY leg, so no direction of transport change can zero one out", () => {
+    // The generalisation of both shipped defects. E-34 priced text at $0; the text-out
+    // rebuild priced audio-out at $0. Each was correct for its transport and wrong the
+    // moment the transport moved. A leg priced at zero is the failure mode, whichever
+    // leg it is.
+    for (const model of [REALTIME_FLAGSHIP, REALTIME_MINI] as const) {
+      for (const [leg, usd] of Object.entries(REALTIME_RATES[model])) {
+        expect(usd, `${model}.${leg} must not be free`).toBeGreaterThan(0);
+      }
+    }
+    for (const model of [REALTIME_FLAGSHIP, REALTIME_MINI] as const) {
+      const b = realtimeCostBreakdown(model, 10);
+      for (const [leg, usd] of Object.entries(b)) {
+        if (!leg.endsWith("Usd")) continue;
+        expect(usd as number, `${model} breakdown.${leg} must not be free`).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -201,35 +266,59 @@ describe("the realtime cost model is a floor over spike-6's measured legs", () =
     expect(realtimeSessionCost(REALTIME_FLAGSHIP, 20 / 60)).toBeGreaterThan(personaAlone + oneTurnOut);
   });
 
-  it("no longer charges for audio output that is never generated", () => {
-    // The 5.1× over-book, as a permanent guard. The old model booked 1500 audio-out
-    // tokens per minute at $64/1M = $0.096/min = $0.96 on this leg alone for 10
-    // minutes; under D-28 no audio output exists, so the whole session must cost less
-    // than that phantom leg did.
-    const phantomAudioOutLeg = 10 * 1500 * r.usdPerAudioOutputToken;
-    expect(realtimeSessionCost(REALTIME_FLAGSHIP, 10)).toBeLessThan(phantomAudioOutLeg);
+  it("derives the audio-output throughput from `usage`, at 20 tokens per second", () => {
+    // The fixture speaks first: every measured turn is exactly 20.0 tok/s, which is
+    // what settles spike-7 (20.00) against the review's 9.93. If a future measurement
+    // disagrees, this is the line that has to change, and it changes with data.
+    for (const t of MEASURED_AUDIO_OUT_TURNS) {
+      expect(t.audioTokens / t.seconds, `${t.label}`).toBeCloseTo(20.0, 1);
+    }
   });
 
-  it("stays within a stated, bounded over-book of measured reality", () => {
+  it("books audio OUTPUT above the measured rate — the leg the text-out table deleted", () => {
+    // ⚠️ This assertion REPLACES one that asserted the opposite ("no longer charges for
+    // audio output that is never generated"). Under `output_modalities: ["audio"]` the
+    // audio IS generated and is the single largest leg of a conversation, so pricing it
+    // at zero is a straight under-book — the one direction that makes the cap a lie.
+    const measuredPerAudioMinute = Math.max(...MEASURED_AUDIO_OUT_TURNS.map((t) => (t.audioTokens / t.seconds) * 60));
+    expect(REALTIME_AUDIO_OUTPUT_TOKENS_PER_MINUTE).toBeGreaterThan(measuredPerAudioMinute);
+
+    // And a real turn can be most of its minute: the longest measured reply ran 19.45 s
+    // to a 5.15 s learner turn, so a constant that assumes the tutor speaks half the
+    // time under-books that minute outright.
+    const longest = MEASURED_AUDIO_OUT_TURNS.reduce((a, b) => (a.seconds > b.seconds ? a : b));
+    const tokensInThatMinute = (longest.audioTokens / longest.seconds) * 60 * (longest.seconds / (longest.seconds + 5.15));
+    expect(REALTIME_AUDIO_OUTPUT_TOKENS_PER_MINUTE).toBeGreaterThan(tokensInThatMinute);
+  });
+
+  it("covers spike-7's modelled AUDIO-OUTPUT leg for both models", () => {
+    for (const model of [REALTIME_FLAGSHIP, REALTIME_MINI] as const) {
+      expect(realtimeCostBreakdown(model, 10).audioOutUsd).toBeGreaterThanOrEqual(
+        SPIKE7_10MIN_AUDIO_OUT[model].audioOutUsd,
+      );
+    }
+  });
+
+  it("stays within a stated, bounded over-book of measured reality — BOTH models", () => {
     // Over-booking is safe, but "safe" is not a licence for any number: a cap that
-    // fires 5× early is a cap that lies in the generous direction, and that is what
-    // the old table did (5.1×). This pins the modelled/measured ratio into a BAND, so
-    // both directions of drift are caught.
+    // fires 5× early is a cap that lies in the generous direction, and that is what the
+    // E-34 table did (5.1×). This pins the modelled/measured ratio into a BAND so both
+    // directions of drift are caught, and it is applied to mini as well — an operator
+    // choosing mini for its price is exactly who an unbounded over-book would hurt.
     //
-    // It currently sits at **2.47×**, and the upper bound is deliberately just above
-    // it: every leg is individually ~2–2.5× its measured mean because each constant
-    // clears a measured MAXIMUM (and the audio leg books every elapsed minute as
-    // speech, which is the honest bound since the server cannot know the split). The
-    // tightness is the point — like the mint allowlist, widening this takes a
-    // deliberate edit and a stated reason, rather than drifting one constant at a time.
-    const ratio = realtimeSessionCost(REALTIME_FLAGSHIP, 10) / MEASURED_10MIN.listeningLegUsd;
-    expect(ratio).toBeGreaterThan(1); // never under
-    expect(ratio).toBeLessThan(2.5); // and never a 5.1×-style fiction
+    // Currently flagship 1.95×, mini 2.35×. Widening this bound takes a deliberate edit
+    // and a stated reason, rather than one constant drifting at a time.
+    for (const model of [REALTIME_FLAGSHIP, REALTIME_MINI] as const) {
+      const ratio = realtimeSessionCost(model, 10) / SPIKE7_10MIN_AUDIO_OUT[model].totalUsd;
+      expect(ratio, `${model} must never under-book`).toBeGreaterThan(1);
+      expect(ratio, `${model} must never become a 5.1×-style fiction`).toBeLessThan(MAX_OVER_BOOK);
+    }
   });
 
-  it("prices mini above its own measured leg too, so an env override is not free", () => {
-    expect(realtimeSessionCost(REALTIME_MINI, 10)).toBeGreaterThanOrEqual(0.0446);
-    expect(realtimeSessionCost(REALTIME_MINI, 10)).toBeLessThan(realtimeSessionCost(REALTIME_FLAGSHIP, 10));
+  it("keeps mini genuinely cheaper, so the Settings choice means what it says", () => {
+    // The tier dial is offered on price. If the model priced them alike the dial would
+    // be a lie in the other direction.
+    expect(realtimeSessionCost(REALTIME_MINI, 10)).toBeLessThan(realtimeSessionCost(REALTIME_FLAGSHIP, 10) / 2);
   });
 });
 

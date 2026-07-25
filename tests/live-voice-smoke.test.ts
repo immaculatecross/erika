@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildMintSessionWireBody } from "@/lib/tutor/mint";
-import { openAiSpeechToText, openAiTextToSpeech, STT_MODEL } from "@/lib/voice/openai-speech";
-import { TTS_MODEL_SNAPSHOT, ttsAudioSecondsFromMp3Bytes } from "@/lib/analysis/rates";
-import { OPENAI_TUTOR_VOICE_IDS, TUTOR_VOICE_CHOICES } from "@/lib/voice/voices";
+import { TUTOR_TURN_DETECTION } from "@/lib/tutor/session-config";
+import { DEFAULT_TUTOR_VOICE, JUDGED_VOICE, REALTIME_VOICES } from "@/lib/tutor/voices";
+import { REALTIME_FLAGSHIP, REALTIME_MINI } from "@/lib/analysis/rates";
 
 // OBS-001 — THE CHEAPEST POSSIBLE REAL CALL PER INTEGRATION. Owed since v0.5.
 //
@@ -14,113 +14,90 @@ import { OPENAI_TUTOR_VOICE_IDS, TUTOR_VOICE_CHOICES } from "@/lib/voice/voices"
 // WHY THESE EXIST AT ALL, in this repo's own words: "no path in this app has ever run
 // against a live API", and the v0.6 tutor bug — a fabricated `maxSessionSeconds` field
 // that 400'd OpenAI and broke the tutor in real use while CI stayed green — is the
-// proof that a mock cannot catch contract drift. Three integrations, three smokes:
-// the Realtime mint (the listening leg's front door), TTS (the speaking leg), and STT
-// (D-21's scripted-answer leg, which E-45/E-46 will import).
+// proof that a mock cannot catch contract drift.
 //
-// Cost per full run is a fraction of a cent: one mint (no session is ever opened), one
-// two-word synthesis, one transcription of that same clip.
+// ⚠️ THE TTS AND STT SMOKES ARE GONE WITH THE CODE THEY COVERED. This branch briefly
+// synthesized the tutor's reply through `/v1/audio/speech` and had a smoke for it; the
+// operator sent the speaking leg back to Realtime audio-out and those implementations
+// were deleted, so keeping their smokes would be testing nothing. What remains is the
+// integration the tutor actually has, and it now covers BOTH tiers and the voice enum —
+// the two things that would silently break a conversation.
+//
+// A mint costs nothing: no session is ever opened, so no audio is billed.
 
 const KEY = process.env.OPENAI_API_KEY;
 const live = KEY ? describe : describe.skip;
 
-/** A sentence short enough to be nearly free and long enough to be real Italian. */
-const PHRASE = "Buongiorno, come stai?";
+/** Mint through the product's OWN allowlist builder, never a hand-written body — a
+ *  hand-written approximation is how the mint-body bug survived review. */
+async function mint(session: Record<string, unknown>): Promise<Response> {
+  return fetch("https://api.openai.com/v1/realtime/client_secrets", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
+    body: JSON.stringify({ session }),
+  });
+}
 
-live("live: the Realtime mint accepts this product's own session (the listening leg)", () => {
-  it("mints an ephemeral secret for an audio-in / TEXT-out session", async () => {
-    // The exact body the product sends, built by the product's own allowlist — not a
-    // hand-written approximation, which is how the mint-body bug survived review.
-    const wire = buildMintSessionWireBody({
-      type: "realtime",
-      model: "gpt-realtime-2.1",
-      instructions: "Rispondi in italiano.",
-      output_modalities: ["text"],
-      audio: {
-        input: {
-          turn_detection: {
-            type: "server_vad",
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 500,
-            create_response: true,
-            interrupt_response: true,
-          },
-        },
-      },
-      tools: [],
-      tool_choice: "auto",
-      maxSessionSeconds: 1800,
-    });
-    const res = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
-      body: JSON.stringify({ session: wire }),
-    });
+function wireFor(model: string, voice: string) {
+  return buildMintSessionWireBody({
+    type: "realtime",
+    model: model as typeof REALTIME_FLAGSHIP,
+    instructions: "Rispondi in italiano.",
+    output_modalities: ["audio"],
+    audio: {
+      input: { turn_detection: TUTOR_TURN_DETECTION },
+      output: { voice: voice as (typeof REALTIME_VOICES)[number] },
+    },
+    tools: [],
+    tool_choice: "auto",
+    maxSessionSeconds: 1800,
+  }) as unknown as Record<string, unknown>;
+}
+
+live("live: the Realtime mint accepts this product's own audio-out session", () => {
+  it("mints an ephemeral secret for an audio-in / AUDIO-out session on the default tier", async () => {
+    const res = await mint(wireFor(REALTIME_FLAGSHIP, DEFAULT_TUTOR_VOICE));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { value?: string; expires_at?: number; session?: Record<string, unknown> };
+    const body = (await res.json()) as { value?: string; session?: Record<string, unknown> };
     expect(typeof body.value).toBe("string");
     expect(body.value?.startsWith("ek_")).toBe(true);
-    // The gating fact of this whole milestone, re-checked live: text-only output is
-    // accepted and echoed back, not silently downgraded to the ["audio"] default.
-    expect(body.session?.output_modalities).toEqual(["text"]);
+    // Echoed back rather than silently altered — the gating fact of the revert.
+    expect(body.session?.output_modalities).toEqual(["audio"]);
+    const audio = body.session?.audio as { output?: { voice?: string } } | undefined;
+    expect(audio?.output?.voice).toBe(DEFAULT_TUTOR_VOICE);
+  }, 30_000);
+
+  it("accepts the other tier too, so the Settings dial cannot offer a dead option", async () => {
+    // The tier dial is learner-facing. A tier the mint rejects would be a Settings
+    // choice that breaks every conversation for whoever picked it.
+    const res = await mint(wireFor(REALTIME_MINI, DEFAULT_TUTOR_VOICE));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { value?: string }).value?.startsWith("ek_")).toBe(true);
+  }, 30_000);
+
+  it("rejects a voice that is not in the enum — the check the dial depends on", async () => {
+    // `nova` is a real OpenAI TTS voice and was this branch's default while the
+    // speaking leg was TTS. On Realtime it is HTTP 400 (spike-7 §1.2). This asserts the
+    // enum is REAL rather than trusting a list copied from a datasheet: if our list
+    // contained something OpenAI rejects, a learner could pick a voice that kills the
+    // tutor for them and nothing else would catch it.
+    const res = await mint(wireFor(REALTIME_FLAGSHIP, "nova"));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: { message?: string } };
+    // The error names the supported set; every voice we offer must appear in it.
+    const message = body.error?.message ?? "";
+    for (const voice of REALTIME_VOICES) expect(message).toContain(voice);
   }, 30_000);
 });
 
-live("live: TTS speaks (the speaking leg)", () => {
-  it("synthesizes real Italian in the operator's default voice and returns mp3", async () => {
-    const tts = openAiTextToSpeech("female");
-    expect(tts.voice).toBe(OPENAI_TUTOR_VOICE_IDS.female);
-    const speech = await tts.synthesize({ text: PHRASE, language: "it" });
-    expect(speech.mimeType).toBe("audio/mpeg");
-    expect(speech.audio.byteLength).toBeGreaterThan(1_000);
-    expect(speech.source).toContain(TTS_MODEL_SNAPSHOT);
-    // The mp3 is constant-bitrate, which is what lets the speak route charge the
-    // honest duration without ffprobe. A plausible duration for two words is 0.5–6 s;
-    // a wildly different figure means the bitrate assumption has moved and the
-    // finalized charge would be wrong.
-    const seconds = ttsAudioSecondsFromMp3Bytes(speech.audio.byteLength);
-    expect(seconds).toBeGreaterThan(0.5);
-    expect(seconds).toBeLessThan(6);
-  }, 60_000);
-
-  it("streams, and its SSE decodes to the same audio", async () => {
-    // Streaming is mandatory, not an optimization (spike-5 §4), so its contract gets
-    // the same live check as the blocking one.
-    const tts = openAiTextToSpeech("male");
-    expect(tts.voice).toBe(OPENAI_TUTOR_VOICE_IDS.male);
-    let bytes = 0;
-    let chunks = 0;
-    for await (const chunk of tts.synthesizeStream!({ text: PHRASE, language: "it" })) {
-      bytes += chunk.byteLength;
-      chunks += 1;
-    }
-    expect(chunks).toBeGreaterThan(0);
-    expect(bytes).toBeGreaterThan(1_000);
-  }, 60_000);
-
-  it("offers exactly the two voices the operator chose, and both are real", async () => {
-    expect([...TUTOR_VOICE_CHOICES]).toEqual(["female", "male"]);
-    expect(Object.values(OPENAI_TUTOR_VOICE_IDS).sort()).toEqual(["alloy", "nova"]);
+describe("the voice dial, without a key", () => {
+  it("offers ten voices and defaults to one the operator's verdict was NOT formed against", () => {
+    // Their "it does not speak super well" was passed on `marin` alone — the only
+    // Realtime voice this repo ever carried. Defaulting back to it would re-ship the
+    // exact thing that was rejected.
+    expect(REALTIME_VOICES).toHaveLength(10);
+    expect(REALTIME_VOICES).toContain(JUDGED_VOICE);
+    expect(DEFAULT_TUTOR_VOICE).not.toBe(JUDGED_VOICE);
+    expect(REALTIME_VOICES).toContain(DEFAULT_TUTOR_VOICE);
   });
-});
-
-live("live: STT transcribes a scripted answer (D-21's allowance only)", () => {
-  it("parses a transcription of a known phrase", async () => {
-    // ⚠️ This is a SCRIPTED, KNOWN-ANSWER check — the only thing STT is allowed to do
-    // in this product (D-3, D-28). It is never used for free-spoken error detection:
-    // spike-6 §2.2 measured `whisper-1` silently repairing this repo's own planted
-    // errors. The phrase is synthesized here so the test needs no fixture on disk.
-    const speech = await openAiTextToSpeech("female").synthesize({ text: PHRASE, language: "it" });
-    const transcript = await openAiSpeechToText.transcribe({
-      audio: speech.audio,
-      mimeType: "audio/mpeg",
-      language: "it",
-    });
-    expect(transcript.source).toContain(STT_MODEL);
-    expect(typeof transcript.text).toBe("string");
-    expect(transcript.text.toLowerCase()).toContain("buongiorno");
-    // `verbose_json` is a hard 400 on this model, so no caller may require segments.
-    expect(transcript.segments).toBeUndefined();
-  }, 90_000);
 });

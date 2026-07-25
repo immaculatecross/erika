@@ -47,9 +47,9 @@ function startedSecondsAgo(db: Db, id: string, seconds: number): void {
 }
 
 describe("the minimum comes from Settings and is copied in at open", () => {
-  it("defaults to five minutes", () => {
+  it("defaults to ten minutes (operator ruling; was five)", () => {
     const db = freshDb();
-    expect(tutorMinimumSeconds(db)).toBe(300);
+    expect(tutorMinimumSeconds(db)).toBe(600);
     db.close();
   });
 
@@ -58,27 +58,27 @@ describe("the minimum comes from Settings and is copied in at open", () => {
     // the learner is still talking. Reading it live at close would judge a conversation
     // against a bar it never agreed to — in either direction.
     const db = freshDb();
-    openConversation(db, "c", tutorMinimumSeconds(db)); // 300 s in force
+    openConversation(db, "c", tutorMinimumSeconds(db)); // 600 s in force
     writeSettings(db, { tutorMinMinutes: 1 }); // …now 60 s, mid-conversation
     startedSecondsAgo(db, "c", 120);
     const closed = closeConversation(db, "c", { clientSeconds: 120 });
-    expect(closed?.minSeconds).toBe(300);
-    expect(closed?.metMinimum).toBe(false); // judged against 300 s, not the new 60 s
+    expect(closed?.minSeconds).toBe(600);
+    expect(closed?.metMinimum).toBe(false); // judged against 600 s, not the new 60 s
     expect(metMinimumOnDay(db, localDay())).toBe(false);
     db.close();
   });
 
   it("a later change to the setting never rewrites a conversation already recorded", () => {
     const db = freshDb();
-    openConversation(db, "c1", tutorMinimumSeconds(db)); // 300 s
-    startedSecondsAgo(db, "c1", 360);
-    closeConversation(db, "c1", { clientSeconds: 360 });
+    openConversation(db, "c1", tutorMinimumSeconds(db)); // 600 s
+    startedSecondsAgo(db, "c1", 660);
+    closeConversation(db, "c1", { clientSeconds: 660 });
     expect(getConversation(db, "c1")?.metMinimum).toBe(true);
 
     writeSettings(db, { tutorMinMinutes: 20 });
     expect(tutorMinimumSeconds(db)).toBe(1200);
     // The recorded day is untouched: history is never rewritten (the E-38 rule).
-    expect(getConversation(db, "c1")?.minSeconds).toBe(300);
+    expect(getConversation(db, "c1")?.minSeconds).toBe(600);
     expect(getConversation(db, "c1")?.metMinimum).toBe(true);
     db.close();
   });
