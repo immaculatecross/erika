@@ -44,10 +44,17 @@ describe("derivePatterns (criterion 1)", () => {
   });
 
   it("returns only the categories that meet the threshold, in canonical order", () => {
-    const findings = [...nOf("pronunciation", 4), ...nOf("grammar", 3), ...nOf("idiom", 1)];
+    // [E-39 §B7] This case USED to expect ["grammar", "pronunciation"] — it pinned the
+    // defect. A `pronunciation` pattern is offered on /practice/lessons and handed to
+    // `generateLessonForPattern`, a BILLED text-model call whose output is the unanswerable
+    // "____ · pronunciation" exercise `UNCARDABLE_CATEGORIES` exists to prevent
+    // (RETRO-003). Cards refused it; the lesson door was open. `derivePatterns` now applies
+    // the same one rule, so an uncardable category is never a pattern however many findings
+    // it has. Owned end to end by tests/uncardable-lesson.test.ts.
+    const findings = [...nOf("pronunciation", 4), ...nOf("phrasing", 3), ...nOf("idiom", 1)];
     const patterns = derivePatterns(findings);
-    // idiom (1) is dropped; grammar precedes pronunciation in CATEGORIES order.
-    expect(patterns.map((p) => p.category)).toEqual(["grammar", "pronunciation"]);
+    // idiom (1) is below the threshold; pronunciation (4) can never be a typed lesson.
+    expect(patterns.map((p) => p.category)).toEqual(["phrasing"]);
   });
 
   it("each pattern carries exactly its own findings as source material", () => {

@@ -1,4 +1,4 @@
-import { CATEGORIES, type Category, type Finding } from "../analysis/findings";
+import { CATEGORIES, isCardable, type Category, type Finding } from "../analysis/findings";
 
 // Pure, explainable pattern derivation (E-6, WO criterion 1). A *pattern* is a
 // recurring error grouping in the user's findings; for v1 it is simply a category
@@ -36,6 +36,24 @@ export function parsePatternKey(key: string): Category | null {
  * keep only those meeting the threshold, each carrying its example findings. The
  * result is ordered by the canonical CATEGORIES order for a stable, explainable
  * list. A category below the threshold is deliberately *not* a pattern.
+ *
+ * THE INVARIANT [E-39 §B7]: a pattern is a recurring mistake a TYPED TEXT LESSON can
+ * actually teach. An `UNCARDABLE_CATEGORIES` category is never one, and it is excluded
+ * HERE — at the single producer — rather than at each consumer, so `lib/plan.ts`'s lesson
+ * ranking, `GET /api/lessons/patterns` and `POST /api/lessons/generate` all inherit it
+ * from one place and no future consumer has to remember.
+ *
+ * What this stops: three `pronunciation` findings made a pattern, `/practice/lessons`
+ * offered it, and `POST /api/lessons/generate` looked it up here and handed it to
+ * `generateLessonForPattern` — a BILLED text-model call whose output is the unanswerable
+ * typed exercise `UNCARDABLE_CATEGORIES` was introduced to prevent (RETRO-003). Cards were
+ * refused correctly all along; the lesson door was left open because the rule was private
+ * to `lib/cards.ts`.
+ *
+ * What this deliberately does NOT do: pronunciation findings are not hidden anywhere else.
+ * They keep their Focus category bar and their letter ranking (those read `findingTallies`,
+ * not patterns) and they keep the studio, which is the surface that can practise them.
+ * Only the typed-lesson route is closed.
  */
 export function derivePatterns(findings: Finding[]): Pattern[] {
   const byCategory = new Map<Category, Finding[]>();
@@ -46,6 +64,7 @@ export function derivePatterns(findings: Finding[]): Pattern[] {
   }
   const patterns: Pattern[] = [];
   for (const category of CATEGORIES) {
+    if (!isCardable(category)) continue;
     const group = byCategory.get(category);
     if (!group || group.length < PATTERN_THRESHOLD) continue;
     patterns.push({ key: patternKey(category), category, count: group.length, findings: group });

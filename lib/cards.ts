@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "./db";
 import { INCLUDED_FINDING_SCOPE } from "./findings-model";
+import { isCardable, UNCARDABLE_CATEGORIES } from "./analysis/findings";
 import { schedule, FRESH_EASE, type Grade } from "./srs";
 import { recordEvidence } from "./knowledge";
 import { cardBack, deriveFaces, type CardView, type CardBrowserView, type CardFaces } from "./cards-view";
@@ -176,12 +177,12 @@ interface GeneratableFinding {
 // Archive and the report. One constant serves BOTH card paths — bulk generation and the
 // deliberate pin — so neither can produce an unanswerable card.
 
-export const UNCARDABLE_CATEGORIES: ReadonlySet<string> = new Set(["pronunciation"]);
-
-/** Whether a finding of this category can become an answerable card. */
-export function isCardable(category: string): boolean {
-  return !UNCARDABLE_CATEGORIES.has(category);
-}
+// [E-39 §B7] The definition MOVED to lib/analysis/findings.ts, beside the closed
+// `CATEGORIES` vocabulary it constrains, and is re-exported here so every existing caller
+// is untouched. It was private to this module, which is precisely why `derivePatterns`
+// could still emit a `pronunciation` pattern and bill a typed text lesson for it — the
+// same defect `UNCARDABLE_CATEGORIES` exists to prevent, one door further along.
+export { UNCARDABLE_CATEGORIES, isCardable };
 
 /** The SQL form of `isCardable`, built from the same constant. The values are internal
  *  literals from the closed `CATEGORIES` vocabulary, never user input. */

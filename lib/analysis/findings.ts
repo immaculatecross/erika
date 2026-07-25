@@ -19,6 +19,29 @@ export const SEVERITIES = ["high", "medium", "low"] as const;
 export type Severity = (typeof SEVERITIES)[number];
 
 /**
+ * Categories a TYPED TEXT exercise cannot test, and therefore must never be turned into
+ * one (E-37, RETRO-003).
+ *
+ * A mispronunciation's spelling was never wrong, so there is no localized change for a
+ * cloze to hide: `deriveFront` degrades to a bare "____ · pronunciation" — a card nobody
+ * can answer. The studio (E-37) is the surface that can actually practise these.
+ *
+ * It lives HERE, beside the closed `CATEGORIES` vocabulary it constrains, so that the two
+ * producers of typed practice — card generation (`lib/cards.ts`, which re-exports this) and
+ * lesson patterns (`lib/lessons/patterns.ts`) — read ONE definition. [E-39 §B7] They did
+ * not: the constant was private to `lib/cards.ts`, so cards were correctly refused while
+ * `derivePatterns` still emitted a `pronunciation` pattern, and that pattern could be
+ * handed to `generateLessonForPattern` — a BILLED text-model call producing exactly the
+ * unanswerable typed exercise this set exists to prevent, on the learner's money.
+ */
+export const UNCARDABLE_CATEGORIES: ReadonlySet<string> = new Set<string>(["pronunciation"]);
+
+/** Whether a finding of this category can become an answerable typed exercise. */
+export function isCardable(category: string): boolean {
+  return !UNCARDABLE_CATEGORIES.has(category);
+}
+
+/**
  * The enriched observation channel on a finding (E-28, D-20). The deep prompt now
  * also asks — per finding — for a pronunciation-suspect note, an italiano-colto
  * register-upgrade suggestion, and a disfluency note. These are annotations ON the
