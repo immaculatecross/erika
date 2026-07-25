@@ -54,8 +54,8 @@ beforeAll(async () => {
     flagged: true,
     deepDone: true,
     findings: Array.from({ length: 3 }, (_, i) => ({
-      quote: `q${i}`,
-      correction: `c${i}`,
+      quote: `ieri ho andato al posto ${i}`,
+      correction: `ieri sono andato al posto ${i}`,
       category: "grammar" as const,
       explanation: "why",
       severity: "high" as const,
@@ -134,14 +134,15 @@ describe("the plan and the letter-viewed marker (criterion 1)", () => {
     expect(after.letterUnread).toBe(false);
   });
 
-  it("prescribes the qualifying pattern with its price", async () => {
-    const plan = (await (await GET_PLAN()).json()) as {
-      dueCount: number;
-      lesson: { category: string; count: number; ready: boolean; estimateUsd: number | null };
-    };
-    expect(plan.lesson.category).toBe("grammar");
-    expect(plan.lesson.count).toBe(3);
-    expect(plan.lesson.ready).toBe(true); // generated in the patterns test above
-    expect(plan.lesson.estimateUsd).toBeNull();
+  // [E-45] The plan no longer prescribes or PRICES a lesson. It priced one the
+  // learner then had to choose to buy, from a screen listing several kinds of
+  // lesson; the day's lesson is now chosen at the knowledge edge (D-27) and opens
+  // free. What the plan still answers is the due queue and the letter.
+  it("answers the due queue, and carries no lesson to price", async () => {
+    const { generateCards } = await import("@/lib/cards");
+    generateCards(db); // the 3 seeded findings become 3 due cards
+    const plan = (await (await GET_PLAN()).json()) as Record<string, unknown>;
+    expect(plan.dueCount).toBe(3);
+    expect("lesson" in plan).toBe(false);
   });
 });
