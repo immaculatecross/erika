@@ -38,6 +38,11 @@ describe("buildMintSessionWireBody — the allowlist (OBS-001)", () => {
       "type",
       "model",
       "instructions",
+      // [E-43] output_modalities is what makes the tutor answer in TEXT (D-28). Its
+      // ABSENCE would not 400 — it would silently mint an ["audio"] session, the
+      // default, and speak in the voice D-26 exists to remove. spike-6 §0 measured the
+      // mint accepting it (HTTP 200, echoed back).
+      "output_modalities",
       "audio",
       "tools",
       "tool_choice",

@@ -53,21 +53,49 @@ describe("settings persistence", () => {
       newRulesPerDay: 3,
       newPronPerDay: 10,
       register: "colto",
-      realtimeTier: "flagship",
+      tutorVoice: "female",
+      tutorMinMinutes: 5,
     });
     reopened.close();
   });
 
-  it("persists the realtime tutor tier and rejects an unknown tier (E-34)", () => {
+  it("persists the tutor voice and rejects an unknown one (E-43)", () => {
     const p = tmpDbPath();
     const db = openDatabase(p);
-    expect(readSettings(db).realtimeTier).toBe("flagship"); // default flagship
-    writeSettings(db, { realtimeTier: "mini" });
+    expect(readSettings(db).tutorVoice).toBe("female"); // default: the product is Erika
+    writeSettings(db, { tutorVoice: "male" });
     db.close();
     const reopened = openDatabase(p);
-    expect(readSettings(reopened).realtimeTier).toBe("mini");
+    expect(readSettings(reopened).tutorVoice).toBe("male");
     reopened.close();
-    expect(() => validateSettings({ realtimeTier: "turbo" })).toThrow(SettingsValidationError);
+    expect(() => validateSettings({ tutorVoice: "marin" })).toThrow(SettingsValidationError);
+  });
+
+  it("persists the conversation minimum and rejects a nonsense one (E-43)", () => {
+    const p = tmpDbPath();
+    const db = openDatabase(p);
+    expect(readSettings(db).tutorMinMinutes).toBe(5);
+    writeSettings(db, { tutorMinMinutes: 8 });
+    db.close();
+    const reopened = openDatabase(p);
+    expect(readSettings(reopened).tutorMinMinutes).toBe(8);
+    reopened.close();
+    expect(() => validateSettings({ tutorMinMinutes: -1 })).toThrow(SettingsValidationError);
+    expect(() => validateSettings({ tutorMinMinutes: "soon" })).toThrow(SettingsValidationError);
+  });
+
+  it("a database that stored the REMOVED realtimeTier still reads (E-43 criterion 10)", () => {
+    // Deleting a Settings key must not break readSettings for a database that has one.
+    // A stored key nobody selects is inert, and every other preference survives it.
+    const p = tmpDbPath();
+    const db = openDatabase(p);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('realtimeTier', 'mini')").run();
+    writeSettings(db, { register: "standard" });
+    const s = readSettings(db);
+    expect(s.register).toBe("standard");
+    expect(s.tutorVoice).toBe("female");
+    expect((s as unknown as Record<string, unknown>).realtimeTier).toBeUndefined();
+    db.close();
   });
 
   it("no longer knows the removed modelTier control [RETRO-002 P5]", () => {

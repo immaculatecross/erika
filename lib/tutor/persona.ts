@@ -101,6 +101,34 @@ const PRECISION_GUARDRAIL = precisionCore();
 const IN_THE_FLOW =
   "Stay a conversation, not a lecture. Correct in the flow: name the error in a few words, give the correct form, and carry the conversation onward in the same breath — never stop to teach a mini-lesson after every sentence. Correct at most one error per learner turn — the one that most gets in the way of being understood, or that looks like a habit rather than a one-off, whichever of the three classes it belongs to — and let everything else go, even when several of them are of the same kind; a stretch of fluent speech you pass over in silence is a good conversation, not a missed job. Do not re-drill an error you have already corrected in this session; if it comes back, remind them of the correct form once more at most, then let it go for the rest of the call — a recurring error is signal to record with `log_evidence` (when it is one of the ids you were given), not a reason to keep correcting.";
 
+/**
+ * [E-43 / D-28] THE REPLY IS TEXT THAT WILL BE SPOKEN, and the model has to know it.
+ *
+ * The tutor now answers with `output_modalities: ["text"]` and that text goes straight
+ * into TTS. A model writing for a screen produces bullet lists, bold, headings and
+ * parenthetical asides — all of which a voice reads out as literal punctuation or as
+ * an oddly-paced monotone. Nothing else in the persona would have stopped it, and no
+ * test would have caught it: the text would be perfectly good text.
+ *
+ * It does NOT touch a single guardrail, and deliberately does not restate the register
+ * line (D-23 governs word choice through this leg, and must not be re-implemented as
+ * TTS prosody — Amendment 2).
+ */
+const SPOKEN_OUTPUT = [
+  "Everything you write is spoken aloud to the learner — they hear it, they never read it.",
+  "So write plain spoken Italian: no markdown, no bullet points, no headings, no emoji, no stage directions, no parentheses full of asides, and never spell out formatting.",
+  "Keep each turn short, the length of something a person would actually say in conversation — a couple of sentences, not a paragraph.",
+].join(" ");
+
+/**
+ * What Erika says first. Sent once as the instruction for the opening response, so the
+ * learner is greeted instead of meeting silence — the single most important affordance
+ * on a voice surface, and the one nothing in the old tutor supplied. The persona
+ * governs everything after it.
+ */
+export const TUTOR_OPENING =
+  "Greet the learner warmly in Italian in one short sentence, then ask them one open question to get them talking. Do not explain what you are or how this works.";
+
 function bulletBlock(title: string, items: readonly string[]): string | null {
   const clean = items.map((s) => s.trim()).filter((s) => s.length > 0);
   if (clean.length === 0) return null;
@@ -141,6 +169,7 @@ export function buildTutorPersona(input: TutorPersonaInput): string {
     ERROR_FLAGGING_MANDATE,
     PRECISION_GUARDRAIL,
     IN_THE_FLOW,
+    SPOKEN_OUTPUT,
     "Keep the learner talking; correct plainly and specifically. When you correct, say the correct form clearly once and move on — never make the learner repeat their own error (their mistakes are never the drill).",
     // The log_evidence tool contract (WO criterion 3). The tool schema is in the
     // session config; this tells the model WHEN to call it and on WHAT ids.

@@ -66,17 +66,56 @@ export function extractLogEvidenceCall(event: RealtimeEvent): ExtractedLogEviden
   return { callId: typeof event.call_id === "string" ? event.call_id : null, args };
 }
 
+// ── the reply, as TEXT (E-43, D-28) ──────────────────────────────────────────
+//
+// With `output_modalities: ["text"]` the tutor's reply arrives on this same data
+// channel as text deltas, and the browser speaks it through TTS. The GA event is
+// `response.output_text.delta`; the beta lineage used `response.text.delta`, and this
+// account's exact naming was not enumerated by spike-6 (it measured the SESSION
+// contract, §0/§4, not the text event names). Rather than guess one, both suffixes
+// are accepted — a matcher on the suffix is strictly safer than a hard-coded string
+// that would leave the tutor silent if the naming differs, which is the same class of
+// silent failure as the mint allowlist. The event names are then confirmed live and
+// recorded in the exit report.
+
+/** The text carried by a delta event, or null when the event carries none. */
+export function extractTextDelta(event: RealtimeEvent): string | null {
+  if (typeof event.type !== "string" || !event.type.endsWith("text.delta")) return null;
+  return typeof event.delta === "string" ? event.delta : null;
+}
+
+/** Whether this event says the tutor has finished its turn — the cue to flush the
+ *  last, possibly short, chunk of text to the voice. */
+export function isResponseComplete(event: RealtimeEvent): boolean {
+  return event.type === "response.done" || event.type === "response.completed";
+}
+
+/** Whether this event says the LEARNER has started speaking — server VAD's barge-in
+ *  signal. The tutor's own playback is stopped on it, so talking over Erika works. */
+export function isSpeechStarted(event: RealtimeEvent): boolean {
+  return event.type === "input_audio_buffer.speech_started";
+}
+
 export interface RealtimeHandlers {
   /** Called with the parsed args of each completed `log_evidence` tool call. */
   onLogEvidence: (args: unknown) => void | Promise<void>;
-  /** Any other event, for UI (e.g. audio-activity dots). Optional. */
+  /** One piece of the tutor's reply text, in order. */
+  onTextDelta?: (delta: string) => void;
+  /** The tutor has finished this turn. */
+  onTurnComplete?: () => void;
+  /** The learner started speaking (barge-in). */
+  onSpeechStarted?: () => void;
+  /** Any other event, for UI (e.g. the dots field). Optional. */
   onEvent?: (event: RealtimeEvent) => void;
 }
 
-/** Dispatch one parsed realtime event: forward a `log_evidence` call to the handler,
- *  and pass every event to the optional `onEvent` sink. */
+/** Dispatch one parsed realtime event to the handlers that care about it. */
 export function dispatchRealtimeEvent(event: RealtimeEvent, handlers: RealtimeHandlers): void {
   handlers.onEvent?.(event);
+  const delta = extractTextDelta(event);
+  if (delta !== null && delta !== "") handlers.onTextDelta?.(delta);
+  if (isResponseComplete(event)) handlers.onTurnComplete?.();
+  if (isSpeechStarted(event)) handlers.onSpeechStarted?.();
   const call = extractLogEvidenceCall(event);
   if (call && call.args !== null) void handlers.onLogEvidence(call.args);
 }
@@ -86,7 +125,14 @@ export function dispatchRealtimeEvent(event: RealtimeEvent, handlers: RealtimeHa
 /** Minimal structural shapes so the seam is testable without the DOM WebRTC types. */
 export interface DataChannelLike {
   onmessage: ((ev: { data: string }) => void) | null;
+  onopen?: (() => void) | null;
   send(data: string): void;
+}
+
+/** The `response.create` event that makes Erika speak first. Pure, so the wire shape
+ *  is unit-tested without a channel. */
+export function openingResponse(instructions: string): Record<string, unknown> {
+  return { type: "response.create", response: { instructions } };
 }
 export interface TrackLike {
   kind: string;
@@ -100,7 +146,6 @@ export interface PeerConnectionLike {
   createOffer(): Promise<{ sdp?: string; type: string }>;
   setLocalDescription(desc: { sdp?: string; type: string }): Promise<void>;
   setRemoteDescription(desc: { sdp: string; type: string }): Promise<void>;
-  ontrack: ((ev: { streams: MediaStreamLike[] }) => void) | null;
   close(): void;
 }
 
@@ -114,7 +159,10 @@ export interface TutorConnectDeps {
    *  EPHEMERAL client secret (never the key). Default impl POSTs to the realtime
    *  endpoint; tests inject a fake. */
   exchangeSdp: (offerSdp: string, opts: { clientSecret: string; model: string }) => Promise<string>;
-  onRemoteAudio?: (stream: MediaStreamLike) => void;
+  /** Sent on the event channel once the channel opens, if given — this is how Erika
+   *  speaks FIRST. Without it a learner who has never seen this app is left staring at
+   *  a silent screen wondering whose turn it is. */
+  greeting?: string;
 }
 
 export interface TutorConnection {
@@ -140,8 +188,15 @@ export async function connectTutor(deps: TutorConnectDeps): Promise<TutorConnect
     const event = parseRealtimeEvent(ev.data);
     if (event) dispatchRealtimeEvent(event, deps.handlers);
   };
+  // Erika opens the conversation. `deps.greeting` is an instruction for the FIRST
+  // response only; the persona still governs everything after it.
+  if (deps.greeting) {
+    channel.onopen = () => channel.send(JSON.stringify(openingResponse(deps.greeting as string)));
+  }
 
-  pc.ontrack = (ev) => deps.onRemoteAudio?.(ev.streams[0]);
+  // There is deliberately no `ontrack` handler: `output_modalities: ["text"]` means
+  // the model never sends an audio track back, so the downstream half of WebRTC is
+  // simply unused (spike-6 §0). Audio only goes UP.
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);

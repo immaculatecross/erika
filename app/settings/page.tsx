@@ -5,7 +5,7 @@ import Link from "next/link";
 import { type Settings } from "@/lib/settings";
 import { ACTIVE_NEW_ITEM_KNOBS, PENDING_NEW_ITEM_KNOBS } from "@/lib/settings-knobs";
 import { REGISTERS, type Register } from "@/lib/register";
-import { REALTIME_TIERS, type RealtimeTier } from "@/lib/analysis/rates";
+import { TUTOR_VOICE_CHOICES, TUTOR_VOICE_LABELS, type TutorVoiceChoice } from "@/lib/voice/voices";
 import { formatUsd } from "@/lib/format";
 
 type Status = { kind: "idle" | "saving" | "saved" } | { kind: "error"; message: string };
@@ -96,31 +96,51 @@ export default function SettingsPage() {
           />
         </label>
 
-        {/* The realtime tutor tier (E-34, WO criterion 2): flagship vs the cheaper
-            mini. The ONE live tier control — it replaced the dead Model-Tier control
-            [RETRO-002 P5]. */}
-        <div className="flex flex-col gap-1.5" data-realtime-tier>
-          <span className={LABEL}>Tutor voice model</span>
+        {/* The tutor's voice (E-43, D-28). This REPLACES the realtime tier switch,
+            which offered a model spike-6 measured as unfit for the tutor's core job —
+            so the knob count goes DOWN by one inscrutable choice and up by one a
+            learner can actually judge with their own ears (D-26). */}
+        <div className="flex flex-col gap-1.5" data-tutor-voice>
+          <span className={LABEL}>Erika's voice</span>
           <div className="inline-flex gap-1 rounded-control border border-hairline p-1">
-            {REALTIME_TIERS.map((tier) => (
+            {TUTOR_VOICE_CHOICES.map((choice) => (
               <button
-                key={tier}
+                key={choice}
                 type="button"
-                data-tier={tier}
-                data-selected={form.realtimeTier === tier ? "true" : "false"}
-                onClick={() => set("realtimeTier", tier as RealtimeTier)}
-                className={`flex-1 rounded-[9px] px-3 py-1.5 text-[15px] capitalize transition-colors ${
-                  form.realtimeTier === tier ? "bg-accent text-accent-ink" : "text-secondary"
+                data-voice={choice}
+                data-selected={form.tutorVoice === choice ? "true" : "false"}
+                onClick={() => set("tutorVoice", choice as TutorVoiceChoice)}
+                className={`flex-1 rounded-[9px] px-3 py-1.5 text-[15px] transition-colors ${
+                  form.tutorVoice === choice ? "bg-accent text-accent-ink" : "text-secondary"
                 }`}
               >
-                {tier}
+                {TUTOR_VOICE_LABELS[choice]}
               </button>
             ))}
           </div>
           <span className="text-[13px] text-secondary">
-            Flagship is the most capable spoken tutor; mini is cheaper per minute.
+            Two voices, chosen by ear for Italian. Takes effect on your next conversation.
           </span>
         </div>
+
+        {/* How long a conversation must run to count toward the day (E-43 criterion 6).
+            Stated plainly here because otherwise the rule is a mystery the learner meets
+            only as a progress bar. No countdown and no penalty: a shorter conversation
+            is still real, it just has not met the bar (D-24). */}
+        <label className="flex flex-col gap-1.5" data-tutor-minimum>
+          <span className={LABEL}>Conversation counts after</span>
+          <input
+            className={FIELD}
+            type="number"
+            min={0}
+            step={1}
+            value={form.tutorMinMinutes}
+            onChange={(e) => set("tutorMinMinutes", Number(e.target.value))}
+          />
+          <span className="text-[13px] text-secondary">
+            Minutes. A shorter conversation still happens and still teaches Erika about you.
+          </span>
+        </label>
 
         {/* The register dial (E-33, D-23): how Erika phrases Italian — corrections,
             lessons, the tutor voice, and spoken renders. Style only, never

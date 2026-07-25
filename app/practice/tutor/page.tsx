@@ -5,10 +5,13 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { DotsField } from "@/components/tutor/dots-field";
-import { formatUsd } from "@/lib/format";
-import { formatElapsed, recordingFilename } from "@/lib/recording";
+import { ConversationProgress } from "@/components/tutor/conversation-progress";
+import { recordingFilename } from "@/lib/recording";
 import { SUPPORTED_FORMATS, type AudioFormat } from "@/lib/session-types";
 import { uploadAudio } from "@/lib/upload-audio";
+import { TUTOR_OPENING } from "@/lib/tutor/persona";
+import { ReplyChunker } from "@/lib/tutor/reply-stream";
+import { SpeechQueue } from "@/lib/tutor/speech-queue";
 import {
   connectTutor,
   exchangeSdpOverHttp,
@@ -17,31 +20,40 @@ import {
   type TutorConnection,
 } from "@/lib/tutor/realtime-client";
 
-// The Learn-tab spoken tutor (E-34, D-24). One calm surface: the dots field breathing
-// with the voice, a per-session estimate, a plain start/stop, an elapsed timer in
-// tabular numerals — no avatar, no waveform. The call records locally and, on end,
-// lands as a NORMAL session through the same upload→ingest path as any capture
-// (uploadAudio), so its findings are the one truth (E-17). The live WebRTC connection
-// is the operator-gated step (needs a configured key + network); a failure here is a
-// quiet, honest line, never a dead control.
+// The Learn-tab spoken tutor (E-34, rebuilt at E-43 for D-28).
+//
+// HOW A TURN WORKS NOW. The learner speaks; the Realtime session hears them NATIVELY
+// (D-3: a transcript erases pronunciation, hesitation and the almost-right word — and
+// spike-6 measured `whisper-1` silently repairing this repo's own planted errors); the
+// reply comes back as TEXT on the data channel; each finished sentence is spoken
+// through TTS in the voice the operator chose. Server VAD ends a turn on silence, so
+// the learner presses NOTHING between turns — one button to begin, one to stop, and
+// that is the whole interaction.
+//
+// D-24 and DESIGN hold: a quiet field of dots breathing with the voice, no avatar, no
+// waveform, tabular numbers, no countdown and no guilt copy if the learner leaves
+// early.
 
 type Phase = "idle" | "connecting" | "live" | "ending" | "refused" | "error";
 
-interface Estimate {
+interface SessionInfo {
   estimateUsd: number;
   remainingUsd: number;
   budgetUsd: number;
   model: string;
+  minSeconds: number;
+  keyConfigured: boolean;
 }
 
 const HEARTBEAT_MS = 20_000;
 
 export default function TutorPage() {
-  const [estimate, setEstimate] = useState<Estimate | null>(null);
+  const [info, setInfo] = useState<SessionInfo | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [level, setLevel] = useState(0.4);
+  const [speaking, setSpeaking] = useState(false);
+  const [closing, setClosing] = useState<string | null>(null);
 
   const conn = useRef<TutorConnection | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -51,23 +63,32 @@ export default function TutorPage() {
   const startedAt = useRef<number>(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chunker = useRef(new ReplyChunker());
+  const voice = useRef<SpeechQueue | null>(null);
+  const audioEl = useRef<HTMLAudioElement | null>(null);
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     fetch("/api/tutor/session")
       .then((r) => r.json())
-      .then(setEstimate)
-      .catch(() => setEstimate(null));
+      .then(setInfo)
+      .catch(() => setInfo(null));
   }, []);
+
+  useEffect(refresh, [refresh]);
 
   const cleanup = useCallback(() => {
     if (timer.current) clearInterval(timer.current);
     if (heartbeat.current) clearInterval(heartbeat.current);
     timer.current = null;
     heartbeat.current = null;
+    voice.current?.stop();
+    voice.current = null;
     conn.current?.stop();
     conn.current = null;
     stream.current?.getTracks().forEach((t) => t.stop());
     stream.current = null;
+    chunker.current.reset();
+    setSpeaking(false);
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
@@ -80,21 +101,68 @@ export default function TutorPage() {
     }).catch(() => {});
   }
 
+  /** The speaking leg: one fetch per sentence, pipelined, played in order. */
+  function makeVoice(id: string): SpeechQueue {
+    return new SpeechQueue({
+      fetchAudio: async (text, seq, signal) => {
+        const res = await fetch("/api/tutor/speak", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tutorId: id, seq, text }),
+          signal,
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body?.error?.message ?? "Erika could not speak just now.");
+        }
+        return res.blob();
+      },
+      play: (clip, signal) =>
+        new Promise<void>((resolve) => {
+          const el = audioEl.current ?? new Audio();
+          audioEl.current = el;
+          const url = URL.createObjectURL(clip);
+          const done = () => {
+            URL.revokeObjectURL(url);
+            signal.removeEventListener("abort", onAbort);
+            resolve();
+          };
+          const onAbort = () => {
+            el.pause();
+            done();
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+          el.onended = done;
+          el.onerror = done;
+          el.src = url;
+          void el.play().catch(done);
+        }),
+      onSpeakingChange: setSpeaking,
+      onError: (m) => setMessage(m),
+    });
+  }
+
   async function start() {
     setMessage(null);
+    setClosing(null);
     setPhase("connecting");
     try {
       const res = await fetch("/api/tutor/session", { method: "POST" });
       const body = await res.json();
       if (res.status === 402) {
         setPhase("refused");
-        setMessage(body?.error?.message ?? "The monthly budget cannot cover a session right now.");
+        setMessage(body?.error?.message ?? "The monthly budget cannot cover a conversation right now.");
         return;
       }
-      if (!res.ok) throw new Error(body?.error?.message ?? "Could not start the tutor.");
+      if (!res.ok) throw new Error(body?.error?.message ?? "Erika could not start a conversation.");
 
       tutorId.current = body.tutorId;
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Echo cancellation matters here specifically: the mic stays open while Erika
+      // speaks so the learner can talk over her, and without AEC her own voice would
+      // come back as a learner turn.
+      const mic = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       stream.current = mic;
 
       // Record the take locally so it lands as a normal session on end.
@@ -104,23 +172,29 @@ export default function TutorPage() {
       rec.start(1000);
       recorder.current = rec;
 
+      const queue = makeVoice(body.tutorId);
+      voice.current = queue;
+      chunker.current.reset();
+
       conn.current = await connectTutor({
         clientSecret: body.clientSecret,
         model: body.model,
+        greeting: TUTOR_OPENING,
         getMicStream: async () => mic as unknown as MediaStreamLike,
         createPeerConnection: () => new RTCPeerConnection() as unknown as PeerConnectionLike,
         exchangeSdp: exchangeSdpOverHttp,
         handlers: {
           onLogEvidence: logEvidence,
-          onEvent: (ev) => {
-            if (typeof ev.type === "string" && ev.type.includes("audio")) setLevel((l) => Math.min(1, l + 0.15));
-            else setLevel((l) => Math.max(0.35, l - 0.05));
+          onTextDelta: (delta) => {
+            for (const sentence of chunker.current.push(delta)) queue.speak(sentence);
           },
-        },
-        onRemoteAudio: (s) => {
-          const el = new Audio();
-          el.srcObject = s as unknown as MediaStream;
-          void el.play().catch(() => {});
+          onTurnComplete: () => {
+            const rest = chunker.current.flush();
+            if (rest) queue.speak(rest);
+            chunker.current.reset();
+          },
+          // Barge-in: the learner talking cancels Erika's voice at once.
+          onSpeechStarted: () => queue.stop(),
         },
       });
 
@@ -142,10 +216,7 @@ export default function TutorPage() {
       }, HEARTBEAT_MS);
     } catch (err) {
       setPhase("error");
-      setMessage(
-        (err as Error).message ??
-          "The live tutor needs a configured key and network — this is an operator-gated step.",
-      );
+      setMessage(startFailureMessage(err, info));
       cleanup();
     }
   }
@@ -154,6 +225,7 @@ export default function TutorPage() {
     if (phase !== "live") return;
     setPhase("ending");
     const elapsedSeconds = (Date.now() - startedAt.current) / 1000;
+    const capturedAt = new Date(startedAt.current).toISOString();
     const id = tutorId.current;
 
     // Stop heart-beating BEFORE the wind-down's awaits (the take is assembled and
@@ -164,6 +236,7 @@ export default function TutorPage() {
     // there is no reason to keep firing them once the user has ended the call.
     if (heartbeat.current) clearInterval(heartbeat.current);
     heartbeat.current = null;
+    voice.current?.stop();
 
     // Stop recording and assemble the take.
     const rec = recorder.current;
@@ -174,30 +247,59 @@ export default function TutorPage() {
     });
     recorder.current = null;
 
-    // Land the recording as a normal session (→ ingest → deep analysis).
+    // Land the recording as a normal session (→ ingest → deep analysis). `capturedAt`
+    // is the instant the conversation began, which is also how the server links this
+    // recording to the conversation record (E-42's v28 column).
     if (blob && blob.size > 0) {
       const raw = (blob.type.split("/")[1] || "webm").split(";")[0];
       const ext: AudioFormat = (SUPPORTED_FORMATS as readonly string[]).includes(raw) ? (raw as AudioFormat) : "webm";
-      await uploadAudio(recordingFilename(ext), blob).catch(() => {});
+      await uploadAudio(recordingFilename(ext), blob, { capturedAt }).catch(() => {});
     }
 
-    // Finalize the money lease to actual.
+    // Finalize the money lease and close the durable conversation record.
     if (id) {
-      await fetch(`/api/tutor/session/${id}/end`, {
+      const closed = await fetch(`/api/tutor/session/${id}/end`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ elapsedSeconds }),
-      }).catch(() => {});
+      })
+        .then((r) => r.json())
+        .catch(() => null);
+      // Factual, once, and silent when the minimum was not reached — leaving early
+      // costs nothing and is told nothing (D-24).
+      setClosing(
+        closed?.metMinimum
+          ? "That conversation counts toward today. Erika is listening back to it now."
+          : "Erika is listening back to that conversation now.",
+      );
     }
 
     cleanup();
     tutorId.current = null;
     setPhase("idle");
-    // Refresh the estimate/remaining after a finalized session.
-    fetch("/api/tutor/session").then((r) => r.json()).then(setEstimate).catch(() => {});
-  }, [phase, cleanup]);
+    refresh();
+  }, [phase, cleanup, refresh]);
+
+  // A closed tab is the common way a conversation ends without the button. The beacon
+  // carries the client's own elapsed time so the record closes honestly rather than
+  // being written off as an unknown by the abandoned-conversation sweep.
+  useEffect(() => {
+    const onHide = () => {
+      const id = tutorId.current;
+      if (!id || phase !== "live") return;
+      navigator.sendBeacon?.(
+        `/api/tutor/session/${id}/end`,
+        new Blob([JSON.stringify({ elapsedSeconds: (Date.now() - startedAt.current) / 1000 })], {
+          type: "application/json",
+        }),
+      );
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, [phase]);
 
   const live = phase === "live" || phase === "ending";
+  const minSeconds = info?.minSeconds ?? 0;
 
   return (
     <div data-tutor className="mx-auto max-w-2xl p-8">
@@ -209,23 +311,28 @@ export default function TutorPage() {
       </div>
 
       <header className="mb-6">
-        <h1 className="text-[34px] font-bold tracking-tight">Tutor</h1>
+        <h1 className="text-[34px] font-bold tracking-tight">Conversation</h1>
         <p className="mt-1 text-[17px] text-secondary">
-          A spoken conversation, steered toward your own recurring mistakes. It records like any session,
-          so what you say still becomes findings.
+          Speak Italian with Erika. She listens to how you actually say it, corrects one thing at a
+          time, and records the whole thing like any other session — so it still becomes findings.
         </p>
       </header>
 
       <section className="flex flex-col items-center gap-6 rounded-card bg-card p-8 shadow-card">
-        <DotsField active={live} intensity={live ? level : 0.4} />
+        <DotsField active={live} intensity={speaking ? 0.9 : 0.4} />
 
         {live ? (
-          <p data-tutor-timer className="tabular text-[22px] font-semibold text-ink" aria-label="Elapsed">
-            {formatElapsed(elapsedMs)}
-          </p>
-        ) : estimate ? (
-          <p className="tabular text-[15px] text-secondary" data-tutor-estimate>
-            About {formatUsd(estimate.estimateUsd)} for a session · {formatUsd(estimate.remainingUsd)} left this month
+          <>
+            <ConversationProgress elapsedMs={elapsedMs} minSeconds={minSeconds} />
+            <p className="text-[13px] text-secondary" data-tutor-turn aria-live="polite">
+              {speaking ? "Erika is speaking" : "Listening — just talk"}
+            </p>
+          </>
+        ) : info ? (
+          <p className="tabular text-[15px] text-secondary" data-tutor-ready>
+            {minSeconds > 0
+              ? `${Math.round(minSeconds / 60)} minutes of conversation counts toward your day.`
+              : "A spoken conversation, steered toward your own recurring mistakes."}
           </p>
         ) : (
           <p className="text-[15px] text-secondary">Preparing…</p>
@@ -251,16 +358,45 @@ export default function TutorPage() {
           </motion.button>
         )}
 
+        {closing && !live && (
+          <p className="max-w-sm text-center text-[13px] text-secondary" role="status" data-tutor-closing>
+            {closing}
+          </p>
+        )}
+
         {message && (
-          <p
-            className={`max-w-sm text-center text-[13px] ${phase === "refused" ? "text-secondary" : "text-secondary"}`}
-            role="status"
-            data-tutor-message
-          >
-            {message}
+          <p className="max-w-sm text-center text-[13px] text-secondary" role="status" data-tutor-message>
+            {message}{" "}
+            {info && !info.keyConfigured && (
+              <Link href="/settings" className="underline underline-offset-2 hover:text-ink">
+                Open Settings
+              </Link>
+            )}
           </p>
         )}
       </section>
     </div>
   );
+}
+
+/**
+ * A message a person can act on, never an internal error string. RETRO-004 §1: the
+ * only place a new user learned that a key is required was a leaked internal error on
+ * exactly this screen.
+ */
+export function startFailureMessage(err: unknown, info: { keyConfigured: boolean } | null): string {
+  const name = (err as { name?: string })?.name;
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Erika needs microphone access to hear you. Allow it in your browser and start again.";
+  }
+  if (name === "NotFoundError") {
+    return "No microphone was found. Connect one and start again.";
+  }
+  if (info && !info.keyConfigured) {
+    return "Erika needs an OpenAI API key to hold a conversation.";
+  }
+  const message = (err as Error)?.message;
+  return typeof message === "string" && message.length > 0
+    ? message
+    : "Erika could not start a conversation just now. Try again in a moment.";
 }

@@ -8,7 +8,6 @@ import {
   REALTIME_FLAGSHIP,
   REALTIME_MINI,
   REALTIME_RATES,
-  realtimeAudioTokensPerMinute,
   realtimeSessionCost,
 } from "@/lib/analysis/rates";
 import {
@@ -84,13 +83,11 @@ describe("the realtime rate table is at or above real pricing", () => {
     expect(perMillion(r.usdPerAudioOutputToken)).toBeGreaterThanOrEqual(20);
   });
 
-  it("books at least the researched audio-token throughput (~600 in / ~1200 out per minute)", () => {
-    // The throughput knob is a deliberate over-estimate for the same reason. If it is
-    // ever tuned DOWN below the researched figures the estimate starts under-pricing.
-    const { input, output } = realtimeAudioTokensPerMinute();
-    expect(input).toBeGreaterThanOrEqual(600);
-    expect(output).toBeGreaterThanOrEqual(1200);
-  });
+  // The old "≥1200 audio-OUTPUT tokens per minute" assertion is DELETED, not moved:
+  // under D-28 the reply is text and no audio output is ever generated, so booking
+  // audio output was the 5.1× over-book itself (spike-6 §5.6). The leg-wise floors
+  // that replace it live in tests/rates-voice-floor.test.ts, measured against
+  // spike-6's real `usage`.
 
   it("a cached-audio rate is never priced above the uncached one it discounts", () => {
     for (const model of [FLAG, REALTIME_MINI] as const) {

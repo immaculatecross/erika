@@ -66,7 +66,6 @@ describe("connectTutor handshake (against fakes)", () => {
       createOffer: async () => ({ type: "offer", sdp: "OFFER_SDP" }),
       setLocalDescription: vi.fn(async () => {}),
       setRemoteDescription: vi.fn(async () => {}),
-      ontrack: null,
       close: vi.fn(),
     };
 

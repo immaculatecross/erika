@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { readSettings } from "@/lib/settings";
-import { realtimeModelForTier } from "@/lib/analysis/rates";
+import { tutorRealtimeModel } from "@/lib/analysis/rates";
 import {
   ensureTutorLeaseCovers,
   maxTutorSessionSeconds,
@@ -85,7 +85,7 @@ export async function POST(request: Request, { params }: Ctx) {
   // incurred must be reserved so `/end` can commit it in full (finalize clamps the
   // committed row to what was reserved).
   const minutesNeeded = Math.ceil(elapsedSeconds / 60) + 1;
-  const model = tutorLeaseModel(db, id) ?? realtimeModelForTier(readSettings(db).realtimeTier);
+  const model = tutorLeaseModel(db, id) ?? tutorRealtimeModel();
   const covered = ensureTutorLeaseCovers(db, id, model, minutesNeeded, readSettings(db).monthlyBudgetUsd);
   if (!covered) {
     return NextResponse.json(

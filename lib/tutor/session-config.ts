@@ -6,7 +6,7 @@ import { listSlips } from "../slips";
 import { compose } from "../compose";
 import { parseItemId } from "../knowledge/items";
 import { localDay } from "../local-day";
-import { realtimeModelForTier, type RealtimeModelId } from "../analysis/rates";
+import { tutorRealtimeModel, type RealtimeModelId } from "../analysis/rates";
 import { maxTutorSessionSeconds } from "./money";
 import { buildTutorPersona } from "./persona";
 import { TUTOR_EVIDENCE_MODES } from "./log-evidence";
@@ -27,18 +27,50 @@ export interface TutorTarget {
   label: string;
 }
 
-/** The default realtime voice. Pinned to a real account voice at real-run (the live
- *  WebRTC call is operator-gated); a neutral, widely-available default until then. */
-export const TUTOR_VOICE = "marin";
+/** Server VAD, as the live API reports its own defaults (spike-6 §7, MEASURED from
+ *  `session.created`). Stated explicitly rather than inherited so the turn-taking
+ *  contract is visible in this repo instead of only on OpenAI's side.
+ *
+ *  `create_response` is what makes the conversation continue with the learner
+ *  pressing NOTHING between turns (criterion 1 — no buttons is the whole point of
+ *  this version); `interrupt_response` is barge-in, so talking over the tutor
+ *  cancels its reply. Both cost zero lines under transport (A), and both would have
+ *  had to be rebuilt in the browser under (B) — where, as spike-6 §7 puts it, bad
+ *  turn detection does not degrade the tutor gently, it MANUFACTURES FALSE
+ *  CORRECTIONS by cutting a learner off mid-sentence. */
+export const TUTOR_TURN_DETECTION = {
+  type: "server_vad",
+  threshold: 0.5,
+  prefix_padding_ms: 300,
+  silence_duration_ms: 500,
+  create_response: true,
+  interrupt_response: true,
+} as const;
 
-/** The OpenAI Realtime session object (the mint body + the browser's session.update).
- *  Shaped per the VALIDATED 2026-07-24 contract: `type:"realtime"`, a `gpt-realtime`
- *  model, free-text instructions, an output voice, and function tools. */
+/**
+ * The OpenAI Realtime session object (the mint body + the browser's session.update).
+ *
+ * [E-43 / D-28] `output_modalities: ["text"]` IS THE WHOLE ARCHITECTURE OF THIS
+ * MILESTONE. The tutor keeps listening natively — a transcript erases pronunciation,
+ * hesitation and the almost-right word (D-3), and spike-6 §2.2 measured `whisper-1`
+ * silently repairing this repo's own planted errors — but takes its REPLY as text and
+ * speaks it through TTS, because the voice was the only broken half.
+ *
+ * The field is confirmed live two independent ways (spike-6 §0): echoed back by
+ * `session.updated` over the session WebSocket, and accepted by this product's own
+ * `POST /v1/realtime/client_secrets` mint (HTTP 200). `["audio"]` is the default when
+ * unset — which is why it must also reach the wire; see MINT_SESSION_WIRE_FIELDS.
+ *
+ * There is deliberately NO `audio.output.voice`: no audio output is generated, the
+ * voice now comes from lib/voice/, and leaving a dead voice field here is exactly the
+ * kind of stale concept D-26 exists to remove.
+ */
 export interface RealtimeSessionConfig {
   type: "realtime";
   model: RealtimeModelId;
   instructions: string;
-  audio: { output: { voice: string } };
+  output_modalities: ["text"];
+  audio: { input: { turn_detection: typeof TUTOR_TURN_DETECTION } };
   tools: RealtimeTool[];
   tool_choice: "auto";
   /** [T2b — money] The server-chosen ceiling on this session's length, in seconds — an
@@ -154,7 +186,7 @@ export function buildTutorSessionConfig(db: Db, day: string = localDay()): {
   targets: TutorTarget[];
 } {
   const settings = readSettings(db);
-  const model = realtimeModelForTier(settings.realtimeTier);
+  const model = tutorRealtimeModel();
   const profile = collectSpeakerProfile(db);
   const slipTargets = collectActiveSlipTargets(db);
   const targets = collectTutorTargets(db, day);
@@ -174,7 +206,8 @@ export function buildTutorSessionConfig(db: Db, day: string = localDay()): {
       type: "realtime",
       model,
       instructions,
-      audio: { output: { voice: TUTOR_VOICE } },
+      output_modalities: ["text"],
+      audio: { input: { turn_detection: TUTOR_TURN_DETECTION } },
       tools: [logEvidenceTool()],
       tool_choice: "auto",
       maxSessionSeconds: maxTutorSessionSeconds(),
@@ -183,4 +216,4 @@ export function buildTutorSessionConfig(db: Db, day: string = localDay()): {
   };
 }
 
-export type { RealtimeModelId, RealtimeTier } from "../analysis/rates";
+export type { RealtimeModelId } from "../analysis/rates";

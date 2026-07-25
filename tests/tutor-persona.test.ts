@@ -249,13 +249,19 @@ describe("logEvidenceTool schema", () => {
 });
 
 describe("buildTutorSessionConfig — the wired config", () => {
-  it("ships the tier model, an output voice, the log_evidence tool, and a register-correct instruction", () => {
+  it("ships the pinned model, TEXT-ONLY output, server VAD, the log_evidence tool, and a register-correct instruction", () => {
     const db = freshDb();
-    writeSettings(db, { register: "colto", nativeLanguage: "English", realtimeTier: "flagship" });
+    writeSettings(db, { register: "colto", nativeLanguage: "English" });
     const { config } = buildTutorSessionConfig(db);
     expect(config.type).toBe("realtime");
     expect(config.model).toBe(REALTIME_FLAGSHIP);
-    expect(config.audio.output.voice).toBeTruthy();
+    // [E-43 / D-28] audio in, TEXT out — the whole architecture of this milestone.
+    expect(config.output_modalities).toEqual(["text"]);
+    // Turn-taking is server VAD with automatic responses, so the learner presses
+    // nothing between turns (criterion 1) and can talk over the tutor.
+    expect(config.audio.input.turn_detection.type).toBe("server_vad");
+    expect(config.audio.input.turn_detection.create_response).toBe(true);
+    expect(config.audio.input.turn_detection.interrupt_response).toBe(true);
     expect(config.tools.some((t) => t.name === "log_evidence")).toBe(true);
     expect(config.instructions).toContain(registerInstruction("colto"));
     expect(config.instructions).toContain(l1Line("English"));
@@ -275,11 +281,15 @@ describe("buildTutorSessionConfig — the wired config", () => {
     db.close();
   });
 
-  it("follows the tier switch to mini", () => {
+  it("pins the flagship listening model regardless of what Settings holds (E-43)", () => {
+    // The realtimeTier knob is gone: spike-6 measured gpt-realtime-2.1-mini producing
+    // 3 empty replies and 2 hallucinated errors on clean speech out of 9 fixtures, so
+    // a learner-facing choice between "works" and "invents corrections" was removed.
+    // A database that still holds the old key must not resurrect it.
     const db = freshDb();
-    writeSettings(db, { realtimeTier: "mini" });
+    db.prepare("INSERT INTO settings (key, value) VALUES ('realtimeTier', 'mini')").run();
     const { config } = buildTutorSessionConfig(db);
-    expect(config.model).toBe("gpt-realtime-2.1-mini");
+    expect(config.model).toBe(REALTIME_FLAGSHIP);
     db.close();
   });
 });

@@ -36,9 +36,20 @@ const CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
  * The EXPLICIT allowlist of session fields OpenAI recognizes on
  * `POST /v1/realtime/client_secrets`. Verified against the live OpenAI Realtime
  * `client_secrets` / RealtimeSessionCreateRequest schema (2026-07-24): the recognized
- * session fields are `type, model, instructions, audio, tools, tool_choice` (the GA
- * schema also allows `output_modalities`/`max_output_tokens`, which this tutor config
- * does not set). The endpoint **400s on any unknown param**, so the mint body is built
+ * session fields are `type, model, instructions, audio, tools, tool_choice`, plus
+ * `output_modalities` / `max_output_tokens` on the GA schema.
+ *
+ * [E-43] `output_modalities` IS NOW ON THIS LIST AND ITS ABSENCE WOULD HAVE BEEN
+ * SILENT. spike-6 §9 condition 3 named this exactly: the field is what makes the tutor
+ * take its reply as TEXT (D-28), the mint builds its body from this allowlist rather
+ * than by spreading the config, and `["audio"]` is the API's default when the field is
+ * unset. So omitting it would not 400 — it would mint a perfectly valid session that
+ * speaks in the voice D-26 exists to remove, with every test still green. It is
+ * verified accepted: `POST /v1/realtime/client_secrets` with
+ * `session.output_modalities = ["text"]` → HTTP 200, echoed back in the response
+ * (spike-6 §0, MEASURED).
+ *
+ * The endpoint **400s on any unknown param**, so the mint body is built
  * from THIS allowlist — NOT by spreading the internal config — so no internal-only
  * field can ride along. In particular `maxSessionSeconds` is deliberately NOT an OpenAI
  * wire field: it is an INTERNAL, server-only value that OpenAI has no parameter for.
@@ -53,6 +64,7 @@ export const MINT_SESSION_WIRE_FIELDS = [
   "type",
   "model",
   "instructions",
+  "output_modalities",
   "audio",
   "tools",
   "tool_choice",

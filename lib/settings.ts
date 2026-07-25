@@ -1,10 +1,26 @@
 import type { Db } from "./db";
 import { REGISTERS, DEFAULT_REGISTER, isRegister, type Register } from "./register";
-import { REALTIME_TIERS, type RealtimeTier } from "./analysis/rates";
+import {
+  DEFAULT_TUTOR_VOICE,
+  isTutorVoiceChoice,
+  TUTOR_VOICE_CHOICES,
+  type TutorVoiceChoice,
+} from "./voice/voices";
 
 // The persisted preferences. [RETRO-002 P5] The vestigial `modelTier` (no behavior
-// ever hung off it) is REMOVED here — the real tier switch is now the E-34 realtime
-// `realtimeTier` (flagship / mini), which drives the tutor's Realtime model.
+// ever hung off it) was removed at E-34.
+//
+// [E-43] `realtimeTier` (flagship / mini) IS REMOVED TOO, and its removal is the
+// reason this milestone can afford a voice dial at all (D-26: the count goes down).
+// It offered a model spike-6 §3.1 measured as unfit for the tutor's core job — 3
+// empty replies and 2 hallucinated errors on clean speech out of 9 — so the choice
+// was between "works" and "invents corrections", which is not a choice to put in
+// front of a learner. The listening model is now a code default with an env override
+// (`tutorRealtimeModel`).
+//
+// A database that stored `realtimeTier` still reads fine: `readSettings` selects the
+// keys it knows and ignores the rest, so a removed key is inert, not fatal
+// (tests/settings.test.ts pins this).
 
 export interface Settings {
   targetLanguage: string;
@@ -20,10 +36,15 @@ export interface Settings {
   // style, and the E-34 tutor persona (lib/register.ts). Style only, never
   // correctness.
   register: Register;
-  // The realtime tutor tier (E-34, WO criterion 2): flagship `gpt-realtime-2.1`
-  // (default) or the cheaper `gpt-realtime-2.1-mini`. The one live tier control in
-  // the app — it replaces the dead `modelTier` [RETRO-002 P5].
-  realtimeTier: RealtimeTier;
+  // The tutor's voice (E-43, D-28's speaking leg): the operator chose `alloy` and
+  // `nova` by ear and asked for the choice to be presented as male / female. The
+  // provider-scoped voice ids live in lib/voice/voices.ts, never here.
+  tutorVoice: TutorVoiceChoice;
+  // How long a tutor conversation must run to count toward the day (E-43 criterion
+  // 6). Below it the conversation is still real and still logs evidence — it simply
+  // has not met the bar. Shown as calm progress on the tutor surface; never a
+  // countdown, and leaving early costs nothing and says nothing (D-24).
+  tutorMinMinutes: number;
 }
 
 /** The three new-item-per-day caps that are user-settable — the composer's
@@ -44,7 +65,8 @@ export const DEFAULT_SETTINGS: Settings = {
   newRulesPerDay: 3,
   newPronPerDay: 10,
   register: DEFAULT_REGISTER,
-  realtimeTier: "flagship",
+  tutorVoice: DEFAULT_TUTOR_VOICE,
+  tutorMinMinutes: 5,
 };
 
 /** Read every preference, filling any unset key from DEFAULT_SETTINGS. */
@@ -67,15 +89,18 @@ export function readSettings(db: Db): Settings {
     newRulesPerDay: capOr("newRulesPerDay"),
     newPronPerDay: capOr("newPronPerDay"),
     register: isRegister(stored.get("register")) ? (stored.get("register") as Register) : DEFAULT_SETTINGS.register,
-    realtimeTier: isRealtimeTier(stored.get("realtimeTier"))
-      ? (stored.get("realtimeTier") as RealtimeTier)
-      : DEFAULT_SETTINGS.realtimeTier,
+    tutorVoice: isTutorVoiceChoice(stored.get("tutorVoice"))
+      ? (stored.get("tutorVoice") as TutorVoiceChoice)
+      : DEFAULT_SETTINGS.tutorVoice,
+    tutorMinMinutes: minutesOr(stored.get("tutorMinMinutes")),
   };
 }
 
-/** Whether a stored/submitted value is a valid realtime tier. */
-function isRealtimeTier(x: unknown): x is RealtimeTier {
-  return typeof x === "string" && (REALTIME_TIERS as readonly string[]).includes(x);
+/** A stored minimum-duration value, or the default when unset or unusable. */
+function minutesOr(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_SETTINGS.tutorMinMinutes;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SETTINGS.tutorMinMinutes;
 }
 
 /** Thrown when a submitted value fails validation. Message is user-facing. */
@@ -97,11 +122,20 @@ export function validateSettings(patch: Record<string, unknown>): Partial<Settin
     out[key] = v.trim();
   }
 
-  if (patch.realtimeTier !== undefined) {
-    if (!isRealtimeTier(patch.realtimeTier)) {
-      throw new SettingsValidationError(`realtimeTier must be one of: ${REALTIME_TIERS.join(", ")}.`);
+  if (patch.tutorVoice !== undefined) {
+    if (!isTutorVoiceChoice(patch.tutorVoice)) {
+      throw new SettingsValidationError(`tutorVoice must be one of: ${TUTOR_VOICE_CHOICES.join(", ")}.`);
     }
-    out.realtimeTier = patch.realtimeTier;
+    out.tutorVoice = patch.tutorVoice;
+  }
+
+  if (patch.tutorMinMinutes !== undefined) {
+    const raw = patch.tutorMinMinutes;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (typeof raw === "boolean" || raw === "" || raw === null || !Number.isFinite(n) || n < 0) {
+      throw new SettingsValidationError("tutorMinMinutes must be a number of minutes, 0 or more.");
+    }
+    out.tutorMinMinutes = n;
   }
 
   if (patch.monthlyBudgetUsd !== undefined) {
