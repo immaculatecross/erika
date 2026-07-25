@@ -1,6 +1,7 @@
 import { removeSessionDir } from "@/lib/audio-storage";
 import { getDb } from "@/lib/db";
-import { FfprobeError, probeDurationSeconds } from "@/lib/ffprobe";
+import { FfprobeError, probeCreationTime, probeDurationSeconds } from "@/lib/ffprobe";
+import { normalizeCapturedAt, parseContainerCreationTime } from "@/lib/capture-time";
 import {
   createSession,
   isSupportedFormat,
@@ -44,6 +45,13 @@ export interface FinalizeInput {
   sourceFile: string;
   /** Exact byte count already written to `sourceFile`. */
   sizeBytes: number;
+  /**
+   * When the learner SPOKE, as the client claimed it (E-39 §B2) — the in-app recorder
+   * knows the instant it started and sends it. Raw and untrusted here; normalised (and a
+   * future-dated clock refused) by `normalizeCapturedAt`. Absent for a file the learner
+   * picked, in which case the container's own tag is the only remaining source.
+   */
+  capturedAt?: string | null;
 }
 
 /**
@@ -87,11 +95,22 @@ export async function finalizeStagedUpload(input: FinalizeInput): Promise<Sessio
     );
   }
 
+  // WHEN THE LEARNER SPOKE (E-39 §B2), resolved here — the one place a staged recording
+  // becomes a session — so both upload paths get the identical answer. In order of trust:
+  // what the app measured at capture, then what the recording DEVICE wrote into the
+  // container, then nothing. `File.lastModified` is deliberately not in that list; see
+  // lib/capture-time.ts. A null is stored as a null: an unknown capture time is a real
+  // answer, and substituting the upload instant is exactly the defect being fixed.
+  const capturedAt =
+    normalizeCapturedAt(input.capturedAt) ??
+    parseContainerCreationTime(await probeCreationTime(sourceFile));
+
   return createSession(getDb(), {
     id,
     originalFilename: filename,
     format,
     sizeBytes,
     durationSeconds,
+    capturedAt,
   });
 }

@@ -3,6 +3,7 @@ import type { Db } from "./db";
 import type { Category } from "./analysis/findings";
 import type { Grade } from "./srs";
 import { INCLUDED_FINDING_SCOPE, listAnalysedSessions, listIncludedFindingsWithSession } from "./findings-model";
+import { TIMELINE_AT_SQL } from "./capture-time";
 import { findingIdsBySlip, hasPositiveEventAfter, positiveEventTimeByFinding } from "./slip-events";
 
 // E-20 Slips, the fossil dossier. The founding sentence's fourth clause — "stop
@@ -293,7 +294,7 @@ export function listSlips(db: Db): SlipSummary[] {
   const rows = db
     .prepare(
       `SELECT sl.id AS id, sl.category AS category, sl.correction AS correction,
-              COUNT(*) AS n, MIN(s.created_at) AS first_at, MAX(s.created_at) AS last_at
+              COUNT(*) AS n, MIN(${TIMELINE_AT_SQL}) AS first_at, MAX(${TIMELINE_AT_SQL}) AS last_at
          FROM slips sl
          JOIN finding_slips fs ON fs.slip_id = sl.id
          JOIN findings f ON f.id = fs.finding_id
@@ -406,12 +407,12 @@ export function getSlipDossier(db: Db, id: string): SlipDossier | null {
     .prepare(
       `SELECT f.id AS finding_id, f.quote AS quote, f.correction AS correction,
               f.session_id AS session_id, f.start_ms AS start_ms,
-              s.created_at AS at, s.original_filename AS fname
+              ${TIMELINE_AT_SQL} AS at, s.original_filename AS fname
          FROM finding_slips fs
          JOIN findings f ON f.id = fs.finding_id
          JOIN sessions s ON s.id = f.session_id
         WHERE fs.slip_id = ? AND ${INCLUDED_FINDING_SCOPE}
-        ORDER BY s.created_at, f.start_ms, f.id`,
+        ORDER BY ${TIMELINE_AT_SQL}, f.start_ms, f.id`,
     )
     .all(id) as OccurrenceRow[];
   if (occRows.length === 0) return null;

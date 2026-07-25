@@ -2,6 +2,7 @@ import type { Db } from "./db";
 import { localDay, localDayBoundsUtc, localHour } from "./local-day";
 import { parseItemId, getItem } from "./knowledge/items";
 import { learnerSpokeAnyOf } from "./speaker/own-speech";
+import { CAPTURED_AT_SQL } from "./capture-time";
 
 // "Today's thread" (E-38, RETRO-003 owed item, D-19). ONE factual beat connecting
 // today's plan to something the learner ACTUALLY SAID:
@@ -46,6 +47,15 @@ import { learnerSpokeAnyOf } from "./speaker/own-speech";
 // capture time is missing or unreadable is SKIPPED, not cited — the same
 // "unverifiable ⇒ not a claim we make" stance as the rest of this module.
 //
+// [E-39 §B2] …and until now that CAPTURE TIME was `sessions.created_at`, which is the
+// UPLOAD instant. The reasoning above was right and the column was wrong, so the exact
+// case it was written to defeat — record at 08:10, upload at 21:30 — still produced
+// "this evening's recording", and an evening upload of the morning's speech landed on
+// the wrong local day. It now reads `sessions.captured_at` (lib/capture-time.ts), which
+// is NULL when nothing told us — and this module's existing stance already does the
+// right thing with a NULL: no capture time, no beat. It says less on a picked file with
+// no metadata, and what it says is true.
+//
 // This module WRITES NOTHING: `evidence` is append-only and read-only to E-38.
 
 /** The one beat, or null when nothing true can be said. */
@@ -62,9 +72,10 @@ interface ProducedRow {
   item_id: string;
   source_ref: string;
   session_id: string | null;
-  /** The SESSION's capture time — when the learner actually spoke. NULL when the
-   *  session is gone, in which case the row is skipped rather than cited. */
-  session_created_at: string | null;
+  /** The SESSION's capture time — when the learner actually spoke (E-39 §B2:
+   *  `sessions.captured_at`, never the upload instant). NULL when the session is gone
+   *  OR when nothing recorded a capture time; either way the row is skipped, not cited. */
+  session_captured_at: string | null;
 }
 
 /**
@@ -121,14 +132,14 @@ function producedOnLocalDay(db: Db, day: string): { itemId: string; spokenMs: nu
   const rows = db
     .prepare(
       `SELECT e.item_id AS item_id, e.source_ref AS source_ref, e.session_id AS session_id,
-              s.created_at AS session_created_at
+              ${CAPTURED_AT_SQL} AS session_captured_at
          FROM evidence e
          LEFT JOIN sessions s ON s.id = e.session_id
         WHERE e.source = 'finding' AND e.mode = 'spontaneous' AND e.polarity = 1
           AND e.source_ref IS NOT NULL
           AND COALESCE(s.exclude_from_evidence, 0) = 0
-          AND s.created_at IS NOT NULL
-          AND s.created_at >= ? AND s.created_at < ?`,
+          AND ${CAPTURED_AT_SQL} IS NOT NULL
+          AND ${CAPTURED_AT_SQL} >= ? AND ${CAPTURED_AT_SQL} < ?`,
     )
     .all(sqliteUtc(startMs - CAPTURE_PREFILTER_DAYS * 86_400_000), sqliteUtc(endMs)) as ProducedRow[];
 
@@ -141,8 +152,8 @@ function producedOnLocalDay(db: Db, day: string): { itemId: string; spokenMs: nu
 
   const out: { itemId: string; spokenMs: number }[] = [];
   for (const r of rows) {
-    if (!r.session_created_at || !r.session_id) continue; // no capture time ⇒ never cited
-    const captureMs = utcMs(r.session_created_at);
+    if (!r.session_captured_at || !r.session_id) continue; // no capture time ⇒ never cited
+    const captureMs = utcMs(r.session_captured_at);
     if (Number.isNaN(captureMs)) continue; // unreadable capture time ⇒ never cited
     const hash = contentHashOfSourceRef(r.source_ref);
     if (!hash) continue; // unverifiable provenance ⇒ never cited

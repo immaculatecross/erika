@@ -49,7 +49,11 @@ function legacyCollectFocus(db: Db): AnalyzedSession[] {
     if (!job || job.state !== "done") continue;
     const speechMs = listSegments(db, s.id).reduce((sum, seg) => sum + seg.durationMs, 0);
     const findings = listFindings(db, s.id).map((f) => ({ category: f.category, severity: f.severity }));
-    rows.push({ id: s.id, createdAt: s.createdAt, speechMs, findings });
+    // [E-39 §B2] The FILING instant, the same rule lib/capture-time.ts publishes:
+    // capture time when the recording told us, the upload instant otherwise. The legacy
+    // loop has to bucket by the same key as the aggregate, or this equality compares two
+    // different questions.
+    rows.push({ id: s.id, createdAt: s.capturedAt ?? s.createdAt, speechMs, findings });
   }
   return rows;
 }
@@ -69,7 +73,11 @@ function legacyCollectLetter(db: Db): LetterSession[] {
       category: f.category,
       severity: f.severity,
     }));
-    rows.push({ id: s.id, createdAt: s.createdAt, speechMs, findings });
+    // [E-39 §B2] The FILING instant, the same rule lib/capture-time.ts publishes:
+    // capture time when the recording told us, the upload instant otherwise. The legacy
+    // loop has to bucket by the same key as the aggregate, or this equality compares two
+    // different questions.
+    rows.push({ id: s.id, createdAt: s.capturedAt ?? s.createdAt, speechMs, findings });
   }
   return rows;
 }
@@ -86,7 +94,7 @@ interface Seed {
 /** Seed a cleanly-analysed session: every segment carries a complete witness. */
 function seed(db: Db, s: Seed): void {
   createSession(db, { id: s.id, originalFilename: `${s.id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 60 });
-  db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(`${s.day} 09:00:00`, s.id);
+  db.prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(`${s.day} 09:00:00`, s.id);
   let at = 0;
   s.segments.forEach((seg, i) => {
     const hash = `${s.id}-h${i}`;

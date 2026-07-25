@@ -2,6 +2,7 @@ import type { Db } from "./db";
 import type { Category, Finding, FindingRow, FindingWithSession, Severity } from "./analysis/findings";
 import { toFinding } from "./analysis/findings";
 import { learnerSegmentSql, learnerSpeechSql } from "./speaker/own-speech";
+import { CAPTURED_AT_SQL, TIMELINE_AT_SQL } from "./capture-time";
 
 // THE canonical findings read-model (E-17). One place answers "what are the
 // user's findings?" — every surface that asks (the session report, the Focus map,
@@ -119,7 +120,13 @@ export const INCLUDED_FINDING_SCOPE = `(${hashIsAnalysed("f.content_hash")} AND 
 /** One analysed session, with the speech that was actually listened to. */
 export interface AnalysedSessionRow {
   id: string;
-  /** SQLite UTC `created_at` — the chronological / ISO-week key. */
+  /**
+   * The FILING instant (SQLite UTC) — the chronological / ISO-week key. Capture time when
+   * the recording told us, the upload instant otherwise (`lib/capture-time.ts`), so every
+   * analysed session sorts and buckets: refusing here would empty the letter and the trend
+   * on any recording with no capture metadata, which is as wrong as the over-claim
+   * [E-39 §B2]. Not a claim about the hour the learner spoke.
+   */
   createdAt: string;
   /**
    * Σ duration of this session's ANALYSED segments that are the LEARNER'S OWN
@@ -145,7 +152,7 @@ export interface AnalysedSessionRow {
 export function listAnalysedSessions(db: Db): AnalysedSessionRow[] {
   const rows = db
     .prepare(
-      `SELECT s.id AS id, s.created_at AS created_at,
+      `SELECT s.id AS id, ${TIMELINE_AT_SQL} AS created_at,
               COALESCE(SUM(CASE WHEN ${WITNESS_COMPLETE}
                              AND ${learnerSegmentSql("sg.is_user", "s.exclude_from_evidence")}
                            THEN sg.duration_ms ELSE 0 END), 0) AS analysed_ms,
@@ -157,7 +164,7 @@ export function listAnalysedSessions(db: Db): AnalysedSessionRow[] {
         WHERE ${sessionHasOwnRun("s.id")}
         GROUP BY s.id
        HAVING analysed_count > 0
-        ORDER BY s.created_at, s.id`,
+        ORDER BY created_at, s.id`,
     )
     .all() as { id: string; created_at: string; analysed_ms: number; segment_count: number; analysed_count: number }[];
   return rows.map((r) => ({
@@ -208,22 +215,32 @@ export function listIncludedFindings(db: Db): Finding[] {
 }
 
 /**
- * Every included finding joined to its session's capture date and name — the
- * Archive's chronological source. Base order only; the pure archive builder owns
- * the display order.
+ * Every included finding joined to its session's dates and name — the Archive's
+ * chronological source. Base order only; the pure archive builder owns the display order.
+ *
+ * [E-39 §B2] Two instants, deliberately: the FILING instant (capture when known, upload
+ * otherwise) which orders and groups so nothing disappears, and the CAPTURE instant which
+ * may be null and is the only basis for a claim about the hour the learner spoke.
  */
 export function listIncludedFindingsWithSession(db: Db): FindingWithSession[] {
   const rows = db
     .prepare(
-      `SELECT f.*, s.created_at AS session_created_at, s.original_filename AS session_filename
+      `SELECT f.*, ${TIMELINE_AT_SQL} AS session_created_at,
+              ${CAPTURED_AT_SQL} AS session_captured_at,
+              s.original_filename AS session_filename
          FROM findings f JOIN sessions s ON s.id = f.session_id
         WHERE ${INCLUDED_FINDING_SCOPE}
-        ORDER BY s.created_at DESC, f.session_id, f.start_ms, f.id`,
+        ORDER BY ${TIMELINE_AT_SQL} DESC, f.session_id, f.start_ms, f.id`,
     )
-    .all() as (FindingRow & { session_created_at: string; session_filename: string })[];
+    .all() as (FindingRow & {
+      session_created_at: string;
+      session_captured_at: string | null;
+      session_filename: string;
+    })[];
   return rows.map((r) => ({
     ...toFinding(r),
     sessionCreatedAt: r.session_created_at,
+    sessionCapturedAt: r.session_captured_at,
     sessionFilename: r.session_filename,
   }));
 }

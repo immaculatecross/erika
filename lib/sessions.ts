@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "./db";
 import type { AudioFormat, IngestState, Session } from "./session-types";
+import { TIMELINE_AT_SQL } from "./capture-time";
 
 // Data layer for captured sessions and their ingest jobs (E-2 part 1). Typed,
 // server-only, mirroring lib/settings.ts. This module is the single ingestion
@@ -30,6 +31,7 @@ interface SessionRow {
   size_bytes: number;
   duration_seconds: number;
   created_at: string;
+  captured_at: string | null;
   job_state: IngestState;
   exclude_from_evidence: number;
 }
@@ -42,6 +44,7 @@ function toSession(row: SessionRow): Session {
     sizeBytes: row.size_bytes,
     durationSeconds: row.duration_seconds,
     createdAt: row.created_at,
+    capturedAt: row.captured_at ?? null,
     jobState: row.job_state,
     excludeFromEvidence: row.exclude_from_evidence === 1,
   };
@@ -49,7 +52,7 @@ function toSession(row: SessionRow): Session {
 
 const SELECT = `
   SELECT s.id, s.original_filename, s.format, s.size_bytes, s.duration_seconds,
-         s.created_at, s.exclude_from_evidence, j.state AS job_state
+         s.created_at, s.captured_at, s.exclude_from_evidence, j.state AS job_state
   FROM sessions s
   JOIN ingest_jobs j ON j.session_id = s.id
 `;
@@ -60,6 +63,10 @@ export interface NewSession {
   format: AudioFormat;
   sizeBytes: number;
   durationSeconds: number;
+  /** When the learner SPOKE, in SQLite UTC text, or null/omitted when nothing told us
+   *  (E-39 §B2). Never defaulted to `datetime('now')`: that is the upload instant, and
+   *  writing it here is the defect. `lib/capture-time.ts` normalises every source. */
+  capturedAt?: string | null;
 }
 
 /**
@@ -68,8 +75,8 @@ export interface NewSession {
  */
 export function createSession(db: Db, input: NewSession): Session {
   const insertSession = db.prepare(
-    `INSERT INTO sessions (id, original_filename, format, size_bytes, duration_seconds)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions (id, original_filename, format, size_bytes, duration_seconds, captured_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
   );
   const insertJob = db.prepare(`INSERT INTO ingest_jobs (id, session_id, state) VALUES (?, ?, 'queued')`);
   db.transaction(() => {
@@ -79,15 +86,24 @@ export function createSession(db: Db, input: NewSession): Session {
       input.format,
       input.sizeBytes,
       input.durationSeconds,
+      input.capturedAt ?? null,
     );
     insertJob.run(randomUUID(), input.id);
   })();
   return getSession(db, input.id)!;
 }
 
-/** Every session, newest first. */
+/**
+ * Every session, newest first. Ordered by the FILING instant (capture time when the
+ * recording told us, the upload instant otherwise — `lib/capture-time.ts`), so a
+ * day-dump uploaded after dinner sorts by when it was spoken rather than jumping above
+ * a take recorded an hour ago. A session whose capture time is unknown still sorts, by
+ * the only instant it has.
+ */
 export function listSessions(db: Db): Session[] {
-  const rows = db.prepare(`${SELECT} ORDER BY s.created_at DESC, s.id DESC`).all() as SessionRow[];
+  const rows = db
+    .prepare(`${SELECT} ORDER BY ${TIMELINE_AT_SQL} DESC, s.id DESC`)
+    .all() as SessionRow[];
   return rows.map(toSession);
 }
 

@@ -79,7 +79,16 @@ async function onUploadFinish(_req: Request, upload: Upload): Promise<{ status_c
     await ensureSessionDir(id);
     const dest = sourcePath(id, format || "bin");
     await copyFile(stagedPath, dest);
-    await finalizeStagedUpload({ id, filename, format, sourceFile: dest, sizeBytes });
+    await finalizeStagedUpload({
+      id,
+      filename,
+      format,
+      sourceFile: dest,
+      sizeBytes,
+      // The capture instant rides in the tus metadata alongside the filename (E-39 §B2),
+      // so the resumable path and the streamed fallback resolve it identically.
+      capturedAt: upload.metadata?.capturedAt?.trim() || null,
+    });
   } catch (err) {
     await removeSessionDir(id).catch(() => {});
     await dropUpload(upload.id);

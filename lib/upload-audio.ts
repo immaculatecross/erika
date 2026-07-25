@@ -19,14 +19,30 @@ const REJECTION_STATUSES = new Set([400, 413, 415, 422]);
 
 const GENERIC_FAILURE = "Upload failed.";
 
-export async function uploadAudio(filename: string, body: BodyInit): Promise<UploadResult> {
+/**
+ * Optional facts about the recording the SERVER cannot work out for itself.
+ *
+ * `capturedAt` is when the learner SPOKE, ISO-8601, and only the in-app recorder can
+ * supply it — the instant recording STARTED, measured rather than inferred (E-39 §B2). A
+ * picked file sends nothing: `File.lastModified` is a fact about a file, not about a
+ * recording, and the server reads the container's own tag instead. See lib/capture-time.ts.
+ */
+export interface UploadFacts {
+  capturedAt?: string;
+}
+
+export async function uploadAudio(
+  filename: string,
+  body: BodyInit,
+  facts: UploadFacts = {},
+): Promise<UploadResult> {
   if (tus.isSupported) {
-    const viaTus = await uploadViaTus(filename, body as Blob);
+    const viaTus = await uploadViaTus(filename, body as Blob, facts);
     // A resolved result (success, or a definitive file rejection) is final; a
     // null means the tus transport failed and the streamed fallback should try.
     if (viaTus) return viaTus;
   }
-  return uploadStreamed(filename, body);
+  return uploadStreamed(filename, body, facts);
 }
 
 /**
@@ -34,13 +50,13 @@ export async function uploadAudio(filename: string, body: BodyInit): Promise<Upl
  * succeeds or the server definitively rejects the file; resolves to null when
  * the tus transport itself failed, so the caller falls back to the streamed POST.
  */
-function uploadViaTus(filename: string, body: Blob): Promise<UploadResult | null> {
+function uploadViaTus(filename: string, body: Blob, facts: UploadFacts): Promise<UploadResult | null> {
   return new Promise((resolve) => {
     const upload = new tus.Upload(body, {
       endpoint: "/api/upload",
       retryDelays: [0, 1000, 3000, 5000],
       removeFingerprintOnSuccess: true,
-      metadata: { filename },
+      metadata: { filename, ...(facts.capturedAt ? { capturedAt: facts.capturedAt } : {}) },
       onError(error) {
         const status = tusErrorStatus(error);
         if (status !== null && REJECTION_STATUSES.has(status)) {
@@ -64,11 +80,18 @@ function uploadViaTus(filename: string, body: Blob): Promise<UploadResult | null
 }
 
 /** The original streamed upload, kept as the automatic fallback. */
-async function uploadStreamed(filename: string, body: BodyInit): Promise<UploadResult> {
+async function uploadStreamed(
+  filename: string,
+  body: BodyInit,
+  facts: UploadFacts,
+): Promise<UploadResult> {
   try {
     const res = await fetch("/api/sessions", {
       method: "POST",
-      headers: { "x-filename": encodeURIComponent(filename) },
+      headers: {
+        "x-filename": encodeURIComponent(filename),
+        ...(facts.capturedAt ? { "x-captured-at": facts.capturedAt } : {}),
+      },
       body,
     });
     if (!res.ok) {

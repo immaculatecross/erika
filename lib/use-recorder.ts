@@ -30,6 +30,15 @@ export interface RecorderError {
 export interface RecordedTake {
   blob: Blob;
   extension: AudioFormat;
+  /**
+   * When recording STARTED, in wall-clock terms — the moment the learner began to speak
+   * (E-39 §B2). Measured here, at capture, which makes this the strongest capture-time
+   * source the app has: nothing downstream has to infer it from an upload instant or a
+   * file mtime. Set when `start()` armed the MediaRecorder, so it is the START of the
+   * take rather than its end, which is the instant every offset in the recording is
+   * measured from.
+   */
+  capturedAt: Date;
 }
 
 export interface Recorder {
@@ -76,6 +85,9 @@ export function useRecorder(): Recorder {
   const rafRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef<number>(0);
+  /** The WALL-CLOCK start of the take (E-39 §B2). `startedAtRef` is a monotonic
+   *  `performance.now()` for the elapsed display and cannot be turned into a date. */
+  const startedWallClockRef = useRef<Date | null>(null);
 
   const cleanup = useCallback(() => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
@@ -158,6 +170,7 @@ export function useRecorder(): Recorder {
     recorder.start(TIMESLICE_MS);
 
     startedAtRef.current = performance.now();
+    startedWallClockRef.current = new Date();
     setElapsedMs(0);
     timerRef.current = setInterval(() => {
       setElapsedMs(performance.now() - startedAtRef.current);
@@ -179,6 +192,10 @@ export function useRecorder(): Recorder {
         // re-encode to WAV, whose header states an exact, probeable length.
         const wav = recorded.size > 0 ? await toWav(recorded).catch(() => null) : null;
         const { take, lost } = takeOutcome(wav);
+        // The wall-clock instant recording started — captured when `start()` armed the
+        // MediaRecorder, not now (E-39 §B2). "Now" is the END of the take, and every
+        // finding offset in the recording is measured from its start.
+        const capturedAt = startedWallClockRef.current ?? new Date();
         cleanup();
         setStatus("idle");
         setElapsedMs(0);
@@ -186,7 +203,7 @@ export function useRecorder(): Recorder {
         // resolving null silently returned the UI to idle and the person never
         // learned their recording had been discarded (E-16b criterion 6).
         if (lost) setError({ kind: "lost", message: TAKE_LOST_MESSAGE });
-        resolve(take);
+        resolve(take ? { ...take, capturedAt } : null);
       };
       recorder.stop();
     });

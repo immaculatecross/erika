@@ -52,7 +52,14 @@ export function Recorder({
     if (!take) return;
     setSaving(true);
     setSaveError(null);
-    const result = await uploadAudio(recordingFilename(take.extension), take.blob);
+    // The take carries the wall-clock instant recording STARTED — the strongest capture
+    // time the app has, measured rather than inferred (E-39 §B2). The filename has always
+    // been built from it; now the session row is too, so "this morning's recording" and
+    // Focus's hour-of-day histogram are about when the learner spoke, not when the bytes
+    // finished uploading.
+    const result = await uploadAudio(recordingFilename(take.extension, take.capturedAt), take.blob, {
+      capturedAt: take.capturedAt.toISOString(),
+    });
     setSaving(false);
     if (result.ok) {
       await onRecorded();

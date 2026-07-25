@@ -26,8 +26,17 @@ export const HOURS_IN_DAY = 24;
 
 /** One finding reduced to what the distribution needs. */
 export interface SlipHourInput {
-  /** The owning session's SQLite UTC capture time ("YYYY-MM-DD HH:MM:SS"). */
-  sessionCreatedAt: string;
+  /**
+   * The owning session's SQLite UTC CAPTURE time ("YYYY-MM-DD HH:MM:SS") — when the
+   * learner spoke — or null when nothing recorded it.
+   *
+   * [E-39 §B2] This used to be `sessionCreatedAt`, the UPLOAD instant, and for anyone who
+   * uploads in the evening the whole histogram collapsed into a single bar at the hour
+   * they upload, under the heading "your local time". A null is now counted as UNKNOWN and
+   * left out — `total` reports how many findings this histogram actually speaks for, so
+   * the surface can say so instead of inventing a bar.
+   */
+  sessionCapturedAt: string | null;
   /** The finding's offset into the recording, in ms. */
   startMs: number;
 }
@@ -36,8 +45,11 @@ export interface SlipHourInput {
 export interface SlipHourDistribution {
   /** Exactly 24 counts, index = LOCAL hour of day (0..23). Never NaN. */
   buckets: number[];
-  /** Σ of the buckets — findings that carried a readable timestamp. */
+  /** Σ of the buckets — findings whose CAPTURE time is known and readable. */
   total: number;
+  /** Findings left out because nothing recorded when they were spoken (E-39 §B2). The
+   *  surface discloses this rather than implying the histogram covers everything. */
+  unknownTime: number;
   /** The hour with the most slips, or null when there are none. */
   peakHour: number | null;
   /** How many slips fell in the peak hour (0 when empty). */
@@ -51,15 +63,21 @@ function parseUtc(value: string): number | null {
 }
 
 /**
- * Bucket findings by the learner's LOCAL hour of day into 24 buckets. A finding
- * whose session timestamp cannot be parsed is skipped rather than corrupting a
- * bucket with NaN; the empty input returns 24 zeros with a null peak.
+ * Bucket findings by the learner's LOCAL hour of day into 24 buckets. A finding whose
+ * session has no capture time — or one that cannot be parsed — is COUNTED AS UNKNOWN and
+ * left out of the buckets, rather than corrupting one with NaN or, worse, being filed
+ * under the hour the file happened to be uploaded (E-39 §B2). The empty input returns 24
+ * zeros with a null peak.
  */
 export function slipHourDistribution(findings: readonly SlipHourInput[]): SlipHourDistribution {
   const buckets = new Array<number>(HOURS_IN_DAY).fill(0);
+  let unknownTime = 0;
   for (const f of findings) {
-    const base = parseUtc(f.sessionCreatedAt);
-    if (base === null) continue;
+    const base = f.sessionCapturedAt === null ? null : parseUtc(f.sessionCapturedAt);
+    if (base === null) {
+      unknownTime += 1;
+      continue;
+    }
     const hour = localHour(new Date(base + Math.max(0, f.startMs)));
     buckets[hour] += 1;
   }
@@ -72,5 +90,5 @@ export function slipHourDistribution(findings: readonly SlipHourInput[]): SlipHo
       peakHour = h;
     }
   });
-  return { buckets, total, peakHour, peakCount };
+  return { buckets, total, unknownTime, peakHour, peakCount };
 }

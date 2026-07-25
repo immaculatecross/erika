@@ -219,13 +219,20 @@ export interface FocusPayload extends FocusModel {
  * The findings, bucketed by the LOCAL hour they were spoken (E-22 criterion 3,
  * corrected from UTC by E-38/RETRO-003 — D-24: the user's day is local). The
  * scope is the canonical INCLUDED_FINDING_SCOPE — the same set the rest of Focus
- * counts — read once through `listIncludedFindingsWithSession`, which already
- * carries each finding's session capture time. The bucketing itself is pure.
+ * counts — read once through `listIncludedFindingsWithSession`. The bucketing itself
+ * is pure.
+ *
+ * [E-39 §B2] It reads the session's CAPTURE time, which is what "when you slip" claims to
+ * be about. It used to read the upload instant, so an evening-uploader's histogram was one
+ * bar at 21:00 labelled "your local time".
  */
 function collectSlipHours(db: Db): SlipHourDistribution {
   return slipHourDistribution(
     listIncludedFindingsWithSession(db).map((f) => ({
-      sessionCreatedAt: f.sessionCreatedAt,
+      // The CAPTURE time, never the filing instant (E-39 §B2). A null is passed through
+      // as a null on purpose: the histogram counts it as unknown and the surface says so,
+      // rather than filing the learner's morning under the hour they uploaded.
+      sessionCapturedAt: f.sessionCapturedAt,
       startMs: f.startMs,
     })),
   );

@@ -163,8 +163,13 @@ export function SessionRow({ item, onStarted }: { item: SessionListItem; onStart
         className="min-w-0 flex-1 transition-opacity active:opacity-70"
       >
         <span className="block truncate text-[17px] text-ink">{item.originalFilename}</span>
+        {/* [E-39 §B2] The row shows when the learner SPOKE when the recording says so,
+            and marks the instant as an upload time when it does not — a bare date over a
+            filing instant reads as a capture date and is not always one. */}
         <span data-session-meta className="tabular text-[13px] text-secondary">
-          {formatCreatedAt(item.createdAt)} · {formatDuration(item.durationSeconds)}
+          {formatCreatedAt(item.capturedAt ?? item.createdAt)}
+          {item.capturedAt === null && <span className="not-tabular"> (uploaded)</span>} ·{" "}
+          {formatDuration(item.durationSeconds)}
         </span>
         {gate === "analysed" ? (
           <span data-session-yield className="tabular mt-1 block text-[13px] text-secondary">

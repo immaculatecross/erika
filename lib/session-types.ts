@@ -32,10 +32,15 @@ export interface Session {
   format: string;
   sizeBytes: number;
   durationSeconds: number;
+  /** When the UPLOAD landed — the row-insert instant. Not when the learner spoke. */
   createdAt: string;
+  /** When the learner actually SPOKE, or null when nothing told us (E-39 §B2). The
+   *  basis of every claim about the learner's clock; null means the claim is not made.
+   *  See lib/capture-time.ts — the one place that decides what null means per surface. */
+  capturedAt: string | null;
   jobState: IngestState;
   /** The manual "this recording isn't me — don't learn from it" flag (E-36, D-22).
-   *  An excluded session mints NO produced-lemma positive evidence regardless of the
-   *  acoustic verdict; findings/corrections are unaffected. Defaults false. */
+   *  An excluded session mints NO produced-lemma positive evidence, and (E-39 §B1) its
+   *  findings leave the canonical findings scope — reversibly. Defaults false. */
   excludeFromEvidence: boolean;
 }

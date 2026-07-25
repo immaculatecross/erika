@@ -301,10 +301,21 @@ export function listFindings(db: Db, sessionId: string): Finding[] {
 // scope belongs with the definition, not with the row mapper. This module stays
 // the row-level data layer (writes, the segment cache, one session's findings).
 
-/** A finding enriched with its session's capture date and name — for the Archive. */
+/** A finding enriched with its session's dates and name — for the Archive. */
 export interface FindingWithSession extends Finding {
-  /** The owning session's `created_at` (SQLite UTC) — the chronological key. */
+  /**
+   * The instant to FILE this finding under (SQLite UTC): its session's capture time when
+   * the recording told us, its upload instant otherwise (`lib/capture-time.ts`
+   * `TIMELINE_AT_SQL`). Every session has one, so nothing falls out of a group, a week or
+   * an ordering. NOT a claim about the learner's clock — see `sessionCapturedAt`.
+   */
   sessionCreatedAt: string;
+  /**
+   * When the learner actually SPOKE, or null when nothing recorded it (E-39 §B2). This is
+   * the only field a surface may make an hour-of-day or time-of-day claim from; a null
+   * means the claim is not available, not that it should fall back to the upload instant.
+   */
+  sessionCapturedAt: string | null;
   /** The owning session's original filename — the group header label. */
   sessionFilename: string;
 }

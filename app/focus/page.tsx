@@ -165,6 +165,19 @@ export default function FocusPage() {
                     .
                   </>
                 )}
+                {/* [E-39 §B2] The histogram can only speak for recordings that carry a
+                    capture time. Saying how many it leaves out is the difference between
+                    a partial chart and a misleading one. */}
+                {model.slipHours.unknownTime > 0 && (
+                  <>
+                    {" "}
+                    <span data-slip-hours-unknown>
+                      {model.slipHours.unknownTime}{" "}
+                      {model.slipHours.unknownTime === 1 ? "finding is" : "findings are"} not shown:
+                      their recordings don&rsquo;t say what time they were made.
+                    </span>
+                  </>
+                )}
               </p>
             </div>
             <SlipHours distribution={model.slipHours} />

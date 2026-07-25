@@ -17,6 +17,7 @@ function item(over: Partial<SessionListItem>): SessionListItem {
     sizeBytes: 1,
     durationSeconds: 3600,
     createdAt: "2026-07-13 09:00:00",
+    capturedAt: null,
     jobState: "done",
     excludeFromEvidence: false,
     segmentCount: 2,

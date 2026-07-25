@@ -70,7 +70,18 @@ export async function POST(request: Request) {
   }
 
   try {
-    const session = await finalizeStagedUpload({ id, filename, format: ext, sourceFile: dest, sizeBytes });
+    const session = await finalizeStagedUpload({
+      id,
+      filename,
+      format: ext,
+      sourceFile: dest,
+      sizeBytes,
+      // When the learner SPOKE, if the client measured it (E-39 §B2) — the in-app
+      // recorder does. Untrusted text; lib/capture-time.ts normalises it and refuses a
+      // future-dated clock. Absent for a picked file, where the container is the only
+      // remaining source.
+      capturedAt: request.headers.get("x-captured-at"),
+    });
     return NextResponse.json(session, { status: 201 });
   } catch (err) {
     if (err instanceof UploadRejected) return apiError(err.code, err.message, err.status);

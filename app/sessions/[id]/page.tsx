@@ -17,6 +17,7 @@ import {
   highlightedFindingIds as computeHighlighted,
 } from "@/lib/session-map";
 import { formatBytes, formatCreatedAt, formatDuration } from "@/lib/format";
+import { captureLabel } from "@/lib/capture-time";
 import type { Session } from "@/lib/session-types";
 
 type State =
@@ -195,7 +196,13 @@ export default function SessionDetailPage() {
             <Meta label="Duration" value={formatDuration(state.session.durationSeconds)} />
             <Meta label="Size" value={formatBytes(state.session.sizeBytes)} />
             <Meta label="Format" value={state.session.format.toUpperCase()} />
-            <Meta label="Captured" value={formatCreatedAt(state.session.createdAt)} />
+            {/* [E-39 §B2] This said "Captured" over the UPLOAD instant. It now shows the
+                capture time when the recording carries one and says "Uploaded" when it
+                does not — the label is the fact, so it has to match. */}
+            <Meta
+              label={captureLabel(state.session.capturedAt)}
+              value={formatCreatedAt(state.session.capturedAt ?? state.session.createdAt)}
+            />
           </div>
 
           <div className="rounded-card bg-card p-6 shadow-card">

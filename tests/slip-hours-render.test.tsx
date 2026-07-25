@@ -25,9 +25,9 @@ describe("SlipHours — a quiet monochrome distribution", () => {
   /** The same three fixtures as before: 09:00Z/09:15Z → 10:xx CET, 14:00Z → 15:00 CET. */
   const build = () =>
     slipHourDistribution([
-      { sessionCreatedAt: "2026-01-01 09:00:00", startMs: 0 },
-      { sessionCreatedAt: "2026-01-01 09:15:00", startMs: 0 },
-      { sessionCreatedAt: "2026-01-01 14:00:00", startMs: 0 },
+      { sessionCapturedAt: "2026-01-01 09:00:00", startMs: 0 },
+      { sessionCapturedAt: "2026-01-01 09:15:00", startMs: 0 },
+      { sessionCapturedAt: "2026-01-01 14:00:00", startMs: 0 },
     ]);
 
   it("draws all 24 hour bars with their counts", () => {

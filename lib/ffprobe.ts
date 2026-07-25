@@ -34,3 +34,31 @@ export async function probeDurationSeconds(filePath: string): Promise<number> {
   }
   return seconds;
 }
+
+/**
+ * The container's `creation_time` tag — when the recording DEVICE says it started
+ * (E-39 §B2). Returns the raw tag text, or null when the file carries none.
+ *
+ * Unlike duration this is never an error: most formats simply do not carry it, and a
+ * missing capture time is a normal, honest answer (`lib/capture-time.ts`). A file that
+ * would not decode at all has already failed `probeDurationSeconds`, so an ffprobe
+ * failure here is treated as "no tag" rather than surfaced twice.
+ */
+export async function probeCreationTime(filePath: string): Promise<string | null> {
+  let stdout: string;
+  try {
+    ({ stdout } = await run("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format_tags=creation_time",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ]));
+  } catch {
+    return null;
+  }
+  const tag = stdout.trim();
+  return tag === "" ? null : tag;
+}
