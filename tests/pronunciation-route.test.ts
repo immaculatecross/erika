@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { tmpDir, makeWav } from "./helpers";
 
@@ -25,6 +27,7 @@ let getDb: typeof import("@/lib/db").getDb;
 let createSession: typeof import("@/lib/sessions").createSession;
 let persistSegmentFindings: typeof import("@/lib/analysis/findings").persistSegmentFindings;
 let drillKeyForFinding: typeof import("@/lib/pronunciation").drillKeyForFinding;
+let studioDrillPath: typeof import("@/lib/pronunciation").studioDrillPath;
 
 const FAKE_KEY = "azure-key-that-must-never-be-served";
 
@@ -43,7 +46,9 @@ beforeAll(async () => {
   getDb = (await import("@/lib/db")).getDb;
   createSession = (await import("@/lib/sessions")).createSession;
   persistSegmentFindings = (await import("@/lib/analysis/findings")).persistSegmentFindings;
-  drillKeyForFinding = (await import("@/lib/pronunciation")).drillKeyForFinding;
+  const pron = await import("@/lib/pronunciation");
+  drillKeyForFinding = pron.drillKeyForFinding;
+  studioDrillPath = pron.studioDrillPath;
 });
 
 afterEach(() => {
@@ -52,7 +57,14 @@ afterEach(() => {
 });
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 
+// A route HANDLER receives its dynamic params already DECODED by Next, so this mirrors
+// the framework's real contract for API routes.
 const ctx = (drillKey: string) => ({ params: Promise.resolve({ drillKey }) });
+
+// A PAGE does not: Next hands a page its params still percent-ENCODED. That asymmetry is
+// exactly what hid a defect where every drill 404'd in the browser while every route test
+// passed, so the encoded shape gets its own helper and its own assertions below.
+const encodedPageParams = (drillKey: string) => Promise.resolve({ drillKey: encodeURIComponent(drillKey) });
 
 let seq = 0;
 function seedPronFinding(): string {
@@ -224,6 +236,60 @@ describe("POST /api/phrasebook/[findingId]/pin — a pronunciation recast is rou
     // And the path it hands back resolves to a real drill.
     const drill = await drillGET(new Request("http://localhost"), ctx(drillKeyForFinding(findingId)));
     expect(drill.status).toBe(200);
+  });
+});
+
+describe("the drill page's param contract — Next hands PAGES an encoded key", () => {
+  // [B1] The studio drill page double-encoded its param, so `finding:<id>` became
+  // `finding%253A<id>` and EVERY drill rendered "That drill is no longer available." on
+  // every path. 958 tests passed over it because route handlers get decoded params and
+  // only pages get encoded ones — so a helper that feeds the decoded shape can never see
+  // the page's real contract.
+
+  it("the page decodes its param before use — the convention its sibling pages follow", () => {
+    const src = readFileSync(
+      join(process.cwd(), "app/practice/learn/studio/[drillKey]/page.tsx"),
+      "utf8",
+    );
+    expect(src).toContain("decodeURIComponent(rawDrillKey)");
+  });
+
+  it("a key in the shape Next really delivers round-trips to a resolvable drill", async () => {
+    const findingId = seedPronFinding();
+    const key = drillKeyForFinding(findingId);
+
+    // What the studio list puts in the href, and what the page therefore receives.
+    const href = studioDrillPath(key);
+    expect(href).toContain("finding%3A");
+    const { drillKey: asDelivered } = await encodedPageParams(key);
+    expect(asDelivered).not.toBe(key); // it really is encoded
+
+    // Decoding once — what the page now does — yields the key the API accepts.
+    const decoded = decodeURIComponent(asDelivered);
+    expect(decoded).toBe(key);
+    const ok = await drillGET(new Request("http://localhost"), ctx(decoded));
+    expect(ok.status).toBe(200);
+
+    // Encoding it AGAIN — the defect — is what the API rejects.
+    const doubled = encodeURIComponent(asDelivered);
+    expect(doubled).toContain("%253A");
+    const dead = await drillGET(new Request("http://localhost"), ctx(doubled));
+    expect(dead.status).toBe(404);
+  });
+
+  it("the visit route is reachable with the decoded key and dead with a double-encoded one", async () => {
+    const findingId = seedPronFinding();
+    const key = drillKeyForFinding(findingId);
+    const encodedOnce = (await encodedPageParams(key)).drillKey;
+
+    expect(
+      (await visitPOST(new Request("http://localhost", { method: "POST" }), ctx(decodeURIComponent(encodedOnce))))
+        .status,
+    ).toBe(200);
+    expect(
+      (await visitPOST(new Request("http://localhost", { method: "POST" }), ctx(encodeURIComponent(encodedOnce))))
+        .status,
+    ).toBe(404);
   });
 });
 

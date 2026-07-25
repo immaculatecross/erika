@@ -138,9 +138,14 @@ export default function StudioListPage() {
         </motion.ul>
       )}
 
-      <p data-studio-notice className="mt-6 text-[13px] leading-[1.5] text-secondary">
-        {view.notice}
-      </p>
+      {/* The threshold-calibration notice explains numbers that only exist when a scorer
+          does. On a server that can never score it would explain nothing, two paragraphs
+          after the page said nothing is scored here. */}
+      {view.scoringAvailable && (
+        <p data-studio-notice className="mt-6 text-[13px] leading-[1.5] text-secondary">
+          {view.notice}
+        </p>
+      )}
     </div>
   );
 }

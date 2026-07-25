@@ -12,10 +12,14 @@ import { drillKeyForFinding, studioDrillPath } from "@/lib/pronunciation/types";
 //
 // [E-37] A PRONUNCIATION finding is ROUTED, not carded. Its spelling was never wrong,
 // so a card front degrades to an unanswerable "____ · pronunciation" (RETRO-003) — the
-// exact artifact the studio exists to replace. The learner asked to practise this line,
-// which is a good request, so they get the surface that can actually drill it: the
-// response names the studio drill and the client follows it. No card is minted, and the
-// answer is a plain 200 — being sent somewhere better is not an error.
+// exact artifact the studio exists to replace. No card is minted, and the answer is a
+// plain 200 — being refused a broken card is not an error.
+//
+// The response NAMES the studio drill (`routedTo`/`studioPath`) but no client consumes
+// it: the Phrasebook offers a "Practise in Studio" link directly instead, so it never
+// posts a pin for a pronunciation row and this branch is not reachable from the UI. It is
+// kept for API honesty — a direct caller gets a truthful answer and somewhere to go —
+// and `studioPath` is present only when a drill actually resolves there.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

@@ -41,7 +41,17 @@ import { MAX_DRILL_REFERENCE_CHARS } from "./pronunciation/types";
 const CARDABLE_CATEGORY_SQL = `f.category NOT IN (${[...UNCARDABLE_CATEGORIES]
   .map((c) => `'${c}'`)
   .join(", ")})`;
-const DRILLABLE_CORRECTION_SQL = `(trim(f.correction) <> '' AND length(trim(f.correction)) <= ${MAX_DRILL_REFERENCE_CHARS})`;
+// SQLite's `trim()` strips SPACES ONLY, while JS `.trim()` strips all whitespace — so the
+// naive translation disagreed with `drillFitsShortAudio` on a correction padded with a
+// newline or a tab (one direction re-opened the forever loop, the other retired a finding
+// that did have a working drill). Trim the same ASCII whitespace set explicitly. Residual
+// caveat, stated rather than glossed: exotic Unicode whitespace (NBSP, form feed) is still
+// trimmed by JS and not by SQLite; no model output has ever carried it, and the comment on
+// `drillFitsShortAudio` names the same limit rather than claiming identity.
+const SQL_WHITESPACE = "char(32)||char(9)||char(10)||char(13)";
+const DRILLABLE_CORRECTION_SQL =
+  `(trim(f.correction, ${SQL_WHITESPACE}) <> '' ` +
+  `AND length(trim(f.correction, ${SQL_WHITESPACE})) <= ${MAX_DRILL_REFERENCE_CHARS})`;
 
 export type NewKind = "vocab" | "rule" | "pronunciation";
 export type PlanItemKind = "review" | "slip" | "finding" | NewKind;

@@ -128,9 +128,17 @@ export const READ_CHARS_PER_SECOND = 14;
  */
 export const MAX_DRILL_REFERENCE_CHARS = MAX_DRILL_SECONDS * READ_CHARS_PER_SECOND;
 
-/** Whether a reference text can be a drill at all: non-blank and short enough for the
- *  REST short-audio path. Pure and client-safe, so the browser and the composer apply
- *  the identical rule. */
+/**
+ * Whether a reference text can be a drill at all: non-blank and short enough for the REST
+ * short-audio path. Pure and client-safe, so the studio, the pin route, the Phrasebook row
+ * and the composer all apply ONE rule.
+ *
+ * The composer applies it in SQL rather than by calling this function, and the two agree on
+ * every input that can actually occur: `lib/compose.ts` trims the same ASCII whitespace set
+ * explicitly (SQLite's bare `trim()` strips spaces only). They would still differ on exotic
+ * Unicode whitespace — NBSP, form feed — which JS trims and SQLite does not; no model output
+ * carries it, and the divergence is named here rather than claimed away.
+ */
 export function drillFitsShortAudio(referenceText: string): boolean {
   const text = referenceText.trim();
   return text !== "" && text.length <= MAX_DRILL_REFERENCE_CHARS;
@@ -175,4 +183,22 @@ export function drillGate(state: DrillGateState): DrillGate {
     canRecord: state.heard || state.renditionUnavailable,
     visitCounts: state.heard,
   };
+}
+
+/**
+ * Should playing this take back REPORT a lap? Extracted from the recorder's ref so the
+ * decision is a truth table rather than a mutation buried in a component.
+ *
+ * `alreadyReported` is the per-take latch: one lap per recording, so "Said N×" counts
+ * real laps and not button presses. `canReport` is whether the parent is accepting laps
+ * at all (it passes no callback while the line has not been heard — `drillGate`).
+ *
+ * The subtlety that shipped a defect: the latch must only be SPENT when the lap can
+ * actually be reported. Burning it on a lap the parent is ignoring meant a learner who
+ * pressed "Hear yours" during a blind practice lap could then hear the line, compare
+ * properly, and have that lap silently dropped — the correction never spendable without
+ * re-recording. So a lap that cannot report must leave the latch untouched.
+ */
+export function shouldReportLap(state: { canReport: boolean; alreadyReported: boolean }): boolean {
+  return state.canReport && !state.alreadyReported;
 }

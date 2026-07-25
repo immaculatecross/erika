@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { tmpDir, makeWav } from "./helpers";
 import type { Db } from "@/lib/db";
 import type { NewFinding } from "@/lib/analysis/findings";
-import { drillGate, MAX_DRILL_REFERENCE_CHARS } from "@/lib/pronunciation/types";
+import { drillFitsShortAudio, drillGate, MAX_DRILL_REFERENCE_CHARS } from "@/lib/pronunciation/types";
 
 // E-37 criteria 4 + 5: where pronunciation signal GOES, and what a passing drill is
 // allowed to write.
@@ -339,6 +339,41 @@ describe("E-37 criterion 4 — pronunciation signal routes to the studio", () =>
     // It is still fully present as a finding — this is the composer's plan, not the
     // E-17 findings scope.
     expect(listIncludedFindings(db).map((f) => f.id)).toContain(findingId);
+  });
+
+  // [N-e] The JS rule and the composer's SQL rule must agree, or a finding is drillable by
+  // one and unspendable by the other — N2's forever loop, or a finding retired while its
+  // drill still works. SQLite's bare `trim()` strips SPACES ONLY; these are the inputs
+  // that exposed the gap.
+  it("the JS and SQL drillability rules agree on whitespace-padded corrections", () => {
+    const cases = [
+      "\n\t \n", // whitespace only, not just spaces → blank to both
+      `\n${"a".repeat(MAX_DRILL_REFERENCE_CHARS)}`, // 421 chars raw, 420 trimmed → drillable
+      `\t${"b".repeat(MAX_DRILL_REFERENCE_CHARS + 1)}\n`, // still too long after trimming
+      "   ", // spaces only
+      "Gli gnocchi sono buonissimi",
+    ];
+    for (const correction of cases) {
+      const db = freshDb();
+      seed(db, [
+        {
+          quote: "q",
+          correction,
+          category: "pronunciation",
+          explanation: "why",
+          severity: "low",
+          startMs: 0,
+          endMs: 100,
+        },
+      ]);
+      const js = drillFitsShortAudio(correction);
+      // The composer's SQL verdict, read through its real clause: a finding it still
+      // offers is one it believes has a drill waiting.
+      const sqlSaysDrillable = compose(db, "2026-07-25", DEFAULT_CAPS).counts.finding === 1;
+      expect(sqlSaysDrillable, `disagreement on ${JSON.stringify(correction)}`).toBe(js);
+      // And the studio's own door agrees with the JS rule by construction.
+      expect(listPronunciationDrills(db).length).toBe(js ? 1 : 0);
+    }
   });
 
   it("a drillable pronunciation finding is NOT retired by the length rule", () => {

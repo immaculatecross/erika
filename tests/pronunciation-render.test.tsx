@@ -6,7 +6,12 @@ import { PronunciationResult } from "@/components/pronunciation-result";
 import { DrillRecorder } from "@/components/drill-recorder";
 import { ListenButton } from "@/components/listen-button";
 import { whatToListenFor } from "@/lib/pronunciation/guidance";
-import { drillGate, drillFitsShortAudio, MAX_DRILL_REFERENCE_CHARS } from "@/lib/pronunciation/types";
+import {
+  drillGate,
+  drillFitsShortAudio,
+  shouldReportLap,
+  MAX_DRILL_REFERENCE_CHARS,
+} from "@/lib/pronunciation/types";
 import { buildResultView } from "@/lib/pronunciation/view";
 import { DEFAULT_PRONUNCIATION_THRESHOLDS } from "@/lib/pronunciation/thresholds";
 import { fixtureResult } from "@/lib/pronunciation/fixture-scorer";
@@ -129,6 +134,75 @@ describe("the drill gate — recording vs SPENDING the finding", () => {
     );
     expect(pageSrc).toContain("enabled={gate.canRecord}");
     expect(pageSrc).toContain("onCycleComplete={gate.visitCounts ? onCycleComplete : undefined}");
+  });
+});
+
+describe("the lap latch — a blind lap must not disarm the take (B2)", () => {
+  // [B2] `playMine` burnt the per-take latch BEFORE checking whether the lap could be
+  // reported. During an unheard blind lap the parent deliberately passes no callback (the
+  // N1 gate), so the latch was spent for nothing — and when the rendition recovered and
+  // the learner genuinely heard the line and compared, that real lap was silently dropped
+  // and the correction could never be spent without re-recording. F1's forever-loop,
+  // reachable through the newest repair.
+
+  /** The recorder's own sequence: a latch that is spent only by a reportable lap. */
+  function lapper() {
+    let latch = false;
+    return {
+      lap(canReport: boolean): boolean {
+        if (shouldReportLap({ canReport, alreadyReported: latch })) {
+          latch = true;
+          return true;
+        }
+        return false;
+      },
+      get spent() {
+        return latch;
+      },
+    };
+  }
+
+  it("does not report, and does not SPEND the latch, when the lap cannot be reported", () => {
+    expect(shouldReportLap({ canReport: false, alreadyReported: false })).toBe(false);
+    const r = lapper();
+    expect(r.lap(false)).toBe(false);
+    expect(r.spent).toBe(false); // still armed — this is the whole fix
+  });
+
+  it("reports the first reportable lap and then latches", () => {
+    expect(shouldReportLap({ canReport: true, alreadyReported: false })).toBe(true);
+    expect(shouldReportLap({ canReport: true, alreadyReported: true })).toBe(false);
+  });
+
+  it("[B2] blind lap, then hear the line, then compare — the genuine lap IS reported", () => {
+    const r = lapper();
+
+    // The rendition failed. F5 unlocks recording; the N1 gate passes no callback.
+    const blind = drillGate({ heard: false, renditionUnavailable: true });
+    expect(blind.canRecord).toBe(true);
+    expect(r.lap(blind.visitCounts)).toBe(false);
+    expect(r.spent).toBe(false);
+
+    // The rendition recovers, the learner hears the line, and compares again.
+    const heard = drillGate({ heard: true, renditionUnavailable: false });
+    expect(r.lap(heard.visitCounts)).toBe(true); // the lap that must count
+    expect(r.spent).toBe(true);
+
+    // A second press on the same take still reports only once.
+    expect(r.lap(heard.visitCounts)).toBe(false);
+  });
+
+  it("many blind laps never exhaust the take's one real lap", () => {
+    const r = lapper();
+    for (let i = 0; i < 5; i++) expect(r.lap(false)).toBe(false);
+    expect(r.lap(true)).toBe(true);
+  });
+
+  it("the recorder spends the latch only through shouldReportLap", () => {
+    const src = readFileSync(join(process.cwd(), "components/drill-recorder.tsx"), "utf8");
+    expect(src).toContain("shouldReportLap({ canReport: !!onCycleComplete");
+    // A wiring smoke; the invariant is the sequence test above.
+    expect(src).not.toContain("if (!cycleReported.current) {");
   });
 });
 

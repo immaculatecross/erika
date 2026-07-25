@@ -51,7 +51,14 @@ interface ScoredBody {
 }
 
 export default function StudioDrillPage({ params }: { params: Promise<{ drillKey: string }> }) {
-  const { drillKey } = use(params);
+  // Next hands a PAGE its dynamic params still percent-encoded (unlike a route handler,
+  // which receives them decoded). A drill key carries a `:` (`finding:<id>`), so the raw
+  // value arrives as `finding%3A<id>` — encoding it again would produce `finding%253A…`
+  // and every drill would 404. Decode once here, the same convention as
+  // app/practice/lessons/[patternKey]/page.tsx and .../learn/lesson/[itemId]/page.tsx;
+  // a drill key never contains a literal `%`, so the decode is always safe.
+  const { drillKey: rawDrillKey } = use(params);
+  const drillKey = decodeURIComponent(rawDrillKey);
   const reduced = usePrefersReducedMotion();
   const [status, setStatus] = useState<DrillStatus | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -159,7 +166,12 @@ export default function StudioDrillPage({ params }: { params: Promise<{ drillKey
                 exists={status.renditionExists}
                 estimateUsd={status.renditionEstimateUsd}
                 label="Listen"
-                onPlayed={() => setHeard(true)}
+                onPlayed={() => {
+                  setHeard(true);
+                  // A successful retry makes the "could not be played" notice false —
+                  // clear it rather than leave a stale (and now untrue) line on screen.
+                  setRenditionUnavailable(false);
+                }}
                 onUnavailable={() => setRenditionUnavailable(true)}
               />
             </div>

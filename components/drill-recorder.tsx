@@ -8,6 +8,7 @@ import { useRecorder } from "@/lib/use-recorder";
 import { formatElapsed } from "@/lib/recording";
 import { formatEstimate } from "@/lib/format";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
+import { shouldReportLap } from "@/lib/pronunciation/types";
 
 // The drill recorder (E-37). The take does NOT become a session: it stays in the page,
 // where its whole job is the loop that matters — hear the correct line, say it back,
@@ -21,8 +22,10 @@ import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 //
 // SEQUENTIAL BY CONSTRUCTION (vendor limitation, OBS-002, and plain sense): the
 // reference must not be audible while you record — a scorer cannot assess two voices,
-// and shadowing over the model teaches you to hear the model instead of yourself. The
-// record button stays locked until the rendition has finished playing once.
+// and shadowing over the model teaches you to hear the model instead of yourself. So
+// recording starts locked; the PARENT decides when to unlock it (`drillGate.canRecord`:
+// after the rendition has played, or when it could not be played at all, so a failed
+// render is never a dead end). This component makes no such judgement itself.
 
 // The recording state's one sanctioned use of red (D-14): a live indicator.
 function RecordingDot({ reduced }: { reduced: boolean }) {
@@ -51,7 +54,8 @@ export function DrillRecorder({
   /** The optional scoring route. Null when no scorer is configured — the loop is
    *  unchanged and no scoring control is offered. */
   scoreUrl: string | null;
-  /** False until the native rendition has been heard (sequential, never simultaneous). */
+  /** May the learner record? The parent's `drillGate.canRecord` — true once the rendition
+   *  has been heard, or if it could not be played at all. Never simultaneous with it. */
   enabled: boolean;
   maxSeconds: number;
   scoreEstimateUsd: number;
@@ -104,9 +108,14 @@ export function DrillRecorder({
     audio.src = take.url;
     void audio.play().catch(() => {});
     // Recorded, and now heard yourself back: one lap. Reported once per TAKE (a fresh
-    // recording re-arms it below), so "Said N×" counts real laps rather than page
-    // visits; the server-side upsert is idempotent regardless.
-    if (!cycleReported.current) {
+    // recording re-arms it in `onStop`), so "Said N×" counts real laps rather than button
+    // presses; the server-side upsert is idempotent regardless.
+    //
+    // The latch is spent ONLY when the lap can actually be reported. Burning it on a lap
+    // the parent is ignoring (an unheard blind lap, where `onCycleComplete` is undefined)
+    // would silently drop the learner's next, genuine lap on the same take — leaving the
+    // correction unspendable until they re-recorded.
+    if (shouldReportLap({ canReport: !!onCycleComplete, alreadyReported: cycleReported.current })) {
       cycleReported.current = true;
       onCycleComplete?.();
     }
