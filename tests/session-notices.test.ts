@@ -73,7 +73,7 @@ describe("rule 3 — a retry is offered where retrying can help", () => {
       // The three that legitimately offer neither are the ones where nothing is
       // wrong and nothing is owed: there is no card due, nothing new to teach, or
       // this build cannot record a conversation. Each says so as a fact.
-      const isHonestEnd = ["no-cards", "nothing-to-teach", "not-recorded"].includes(notice.reason);
+        const isHonestEnd = ["no-cards", "nothing-to-teach", "not-recorded"].includes(notice.reason);
       expect(hasWayForward || isHonestEnd, notice.reason).toBe(true);
     }
   });
@@ -86,6 +86,16 @@ describe("the copy is Erika's voice (DESIGN)", () => {
       expect(notice.body.toLowerCase()).not.toMatch(/sorry|oops|unfortunately|failed to|error/);
       expect(notice.body.length).toBeGreaterThan(20);
     }
+  });
+
+  it("names the exact remedy when it lies outside the app", () => {
+    // A denied microphone cannot be fixed by a link — the setting is the browser's.
+    // So the copy names where it lives instead of pointing nowhere.
+    const mic = noticeFor("mic-denied");
+    expect(mic.action).toBeNull();
+    expect(mic.retryable).toBe(true);
+    expect(mic.body.toLowerCase()).toContain("microphone");
+    expect(mic.body.toLowerCase()).toContain("browser");
   });
 
   it("distinguishes 'no key is set' from 'the key was refused'", () => {

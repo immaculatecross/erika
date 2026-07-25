@@ -24,6 +24,7 @@ export type NoticeReason =
   | "key-rejected"
   | "budget"
   | "model-transient"
+  | "mic-denied"
   | "save-failed"
   | "in-flight"
   | "nothing-to-teach"
@@ -83,6 +84,19 @@ const NOTICES: Record<NoticeReason, Notice> = {
     action: null,
     retryable: true,
     standing: false,
+  },
+  // The browser is refusing the microphone. STANDING — it survives every reload until
+  // the learner changes a browser setting Erika cannot reach, so it must not be
+  // softened, and it must not be silent: without this the conversation step would sit
+  // there offering "Start talking" into a page that cannot work, and the DAY would
+  // never complete. The remedy is genuinely outside the app, so this is the one notice
+  // whose way forward is an instruction rather than a link — naming the exact place.
+  "mic-denied": {
+    reason: "mic-denied",
+    body: "Your browser is blocking the microphone, so Erika cannot hear you. Allow microphone access for this site in your browser's address-bar permissions, then reload.",
+    action: null,
+    retryable: true,
+    standing: true,
   },
   // A grade that did not reach the server. Transient, and the retry re-sends THE SAME
   // grade rather than reloading — the old review screen swallowed this and advanced
