@@ -5,6 +5,8 @@ import { materializeSlips, listSlips } from "./slips";
 import { nextLocalDay } from "./local-day";
 import { readSettings } from "./settings";
 import type { KnowledgeStatus } from "./knowledge";
+import { UNCARDABLE_CATEGORIES } from "./cards";
+import { MAX_DRILL_REFERENCE_CHARS } from "./pronunciation/types";
 
 // The daily composer (E-31, D-19). `compose(day)` builds the learner's plan for a
 // local day from THEIR OWN recorded material first, making ZERO model calls — it is
@@ -30,6 +32,26 @@ import type { KnowledgeStatus } from "./knowledge";
 // the `planned_for = nextDay` rows each run (delete-all + reinsert), so running it
 // many times a day converges to the same queue and the plan is stable. Nothing
 // here touches money, and the whole read is a fixed number of statements.
+
+// The two rules the unspent-findings clause borrows rather than restates, so the
+// composer can never drift from the surfaces that own them: what can become a card
+// (lib/cards.ts) and what can become a drill (lib/pronunciation/types.ts). Both are
+// derived from their single source constant; the values are internal literals from
+// closed vocabularies, never user input.
+const CARDABLE_CATEGORY_SQL = `f.category NOT IN (${[...UNCARDABLE_CATEGORIES]
+  .map((c) => `'${c}'`)
+  .join(", ")})`;
+// SQLite's `trim()` strips SPACES ONLY, while JS `.trim()` strips all whitespace — so the
+// naive translation disagreed with `drillFitsShortAudio` on a correction padded with a
+// newline or a tab (one direction re-opened the forever loop, the other retired a finding
+// that did have a working drill). Trim the same ASCII whitespace set explicitly. Residual
+// caveat, stated rather than glossed: exotic Unicode whitespace (NBSP, form feed) is still
+// trimmed by JS and not by SQLite; no model output has ever carried it, and the comment on
+// `drillFitsShortAudio` names the same limit rather than claiming identity.
+const SQL_WHITESPACE = "char(32)||char(9)||char(10)||char(13)";
+const DRILLABLE_CORRECTION_SQL =
+  `(trim(f.correction, ${SQL_WHITESPACE}) <> '' ` +
+  `AND length(trim(f.correction, ${SQL_WHITESPACE})) <= ${MAX_DRILL_REFERENCE_CHARS})`;
 
 export type NewKind = "vocab" | "rule" | "pronunciation";
 export type PlanItemKind = "review" | "slip" | "finding" | NewKind;
@@ -280,8 +302,49 @@ function readReviews(db: Db): ReviewCandidate[] {
   return withR;
 }
 
-/** Included, non-tombstoned findings the user has never drilled (no graded or
- *  suspended card) — fresh corrections from their own speech, newest first. */
+/**
+ * Included, non-tombstoned findings the user has never drilled — fresh corrections
+ * from their own speech, newest first.
+ *
+ * "Drilled" depends on where the finding's practice actually lives, and the two
+ * mechanisms are deliberately kept apart:
+ *
+ *   * EVERY finding is spent by a graded or suspended CARD, exactly as before.
+ *   * A **pronunciation-category** finding gets no card at all since E-37 (a typed
+ *     cloze cannot test a mispronunciation), so a card can never retire it. It is spent
+ *     instead by working it in the studio: a **visit** (the shipped default — hear the
+ *     correct line, record, hear yourself back; no key, no score, no money) or a scored
+ *     **attempt** where a scorer happens to be configured.
+ *
+ * The studio clause is scoped to the UNCARDABLE categories on purpose — and it reads
+ * that set from `lib/cards.ts`, the same constant both card paths use, so a second
+ * uncardable category can never silently inherit "waits on a studio drill" without
+ * someone deciding it does. Studio drills also come from the `notes.pronunciation` note
+ * riding on findings of OTHER categories, so an unscoped clause would let one
+ * pronunciation take silently retire a grammar correction whose own card had never been
+ * graded. The rule is: a studio visit or attempt spends a finding only where a card
+ * cannot.
+ *
+ * The visit half is what makes this true on the shipped default. Gating on a scored
+ * attempt alone would make a pronunciation finding unspendable without an Azure key,
+ * and it would re-enter the plan every day forever, silently consuming a `dailyMax`
+ * slot ahead of fresh material.
+ *
+ * The DRILLABILITY half closes the same hole through the other door. A correction too
+ * long for the short-audio path is never offered as a drill, so no visit and no attempt
+ * can ever exist for it — waiting on one would loop it forever. Such a finding is
+ * retired here instead: there is no surface that can practise it, so it must not hold a
+ * daily slot. It remains fully present in the Phrasebook, the Archive and the report
+ * (this is the composer's plan, not the E-17 findings scope).
+ *
+ * [Known asymmetry — owed to E-39] One studio lap retires a pronunciation correction
+ * for good. Every other category's finding is retired by a card and then keeps
+ * returning on an FSRS schedule; this one is offered once and never re-scheduled. The
+ * drill stays listed in the studio so a learner can return to it deliberately, but
+ * nothing brings it back. That is a deliberate choice for now — better than looping
+ * forever — not an oversight, and re-scheduling drilled sounds belongs with the
+ * knowledge core's own scheduling work.
+ */
 function readUnspentFindings(db: Db): FindingCandidate[] {
   const rows = db
     .prepare(
@@ -290,6 +353,14 @@ function readUnspentFindings(db: Db): FindingCandidate[] {
         WHERE ${INCLUDED_FINDING_SCOPE}
           AND NOT EXISTS (SELECT 1 FROM deleted_findings d WHERE d.finding_id = f.id)
           AND NOT EXISTS (SELECT 1 FROM cards c WHERE c.finding_id = f.id AND (c.repetitions > 0 OR c.suspended = 1))
+          AND (
+            ${CARDABLE_CATEGORY_SQL}
+            OR (
+              ${DRILLABLE_CORRECTION_SQL}
+              AND NOT EXISTS (SELECT 1 FROM pronunciation_visits pv WHERE pv.finding_id = f.id)
+              AND NOT EXISTS (SELECT 1 FROM pronunciation_attempts pa WHERE pa.finding_id = f.id)
+            )
+          )
         ORDER BY f.created_at DESC, f.id`,
     )
     .all() as { id: string }[];

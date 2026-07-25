@@ -1,0 +1,201 @@
+{
+  "_synthetic": "SYNTHETIC — hand-authored by the E-37 build to the response shape documented in OBS-002 (2026-07-24). NOT a captured Azure response. Replace with a real captured it-IT response the first time an operator runs the live path (OBS-001 Part C).",
+  "_scenario": "'Non me ne sono accorto' with 'ne' skipped entirely — the EnableMiscue path: a word carries ErrorType 'Omission', accuracy 0 and no phonemes, and CompletenessScore drops below 100. Exercises the branch where a word has nothing to drill into.",
+  "RecognitionStatus": "Success",
+  "Offset": 250000,
+  "Duration": 16400000,
+  "DisplayText": "Non me sono accorto.",
+  "SNR": 27.8,
+  "NBest": [
+    {
+      "Confidence": 0.88,
+      "Lexical": "non me sono accorto",
+      "Display": "Non me sono accorto.",
+      "PronunciationAssessment": {
+        "AccuracyScore": 86,
+        "FluencyScore": 74,
+        "CompletenessScore": 80,
+        "PronScore": 81.6
+      },
+      "Words": [
+        {
+          "Word": "non",
+          "Offset": 250000,
+          "Duration": 2200000,
+          "PronunciationAssessment": { "AccuracyScore": 90, "ErrorType": "None" },
+          "Phonemes": [
+            {
+              "Phoneme": "n",
+              "Offset": 250000,
+              "Duration": 700000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 92,
+                "NBestPhonemes": [{ "Phoneme": "n", "Score": 92 }]
+              }
+            },
+            {
+              "Phoneme": "o",
+              "Offset": 950000,
+              "Duration": 800000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 89,
+                "NBestPhonemes": [{ "Phoneme": "o", "Score": 89 }, { "Phoneme": "ɔ", "Score": 55 }]
+              }
+            },
+            {
+              "Phoneme": "n",
+              "Offset": 1750000,
+              "Duration": 700000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 90,
+                "NBestPhonemes": [{ "Phoneme": "n", "Score": 90 }]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "me",
+          "Offset": 2450000,
+          "Duration": 1700000,
+          "PronunciationAssessment": { "AccuracyScore": 88, "ErrorType": "None" },
+          "Phonemes": [
+            {
+              "Phoneme": "m",
+              "Offset": 2450000,
+              "Duration": 800000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 90,
+                "NBestPhonemes": [{ "Phoneme": "m", "Score": 90 }]
+              }
+            },
+            {
+              "Phoneme": "e",
+              "Offset": 3250000,
+              "Duration": 900000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 86,
+                "NBestPhonemes": [{ "Phoneme": "e", "Score": 86 }]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "ne",
+          "Offset": 0,
+          "Duration": 0,
+          "PronunciationAssessment": { "AccuracyScore": 0, "ErrorType": "Omission" },
+          "Phonemes": []
+        },
+        {
+          "Word": "sono",
+          "Offset": 4150000,
+          "Duration": 4900000,
+          "PronunciationAssessment": { "AccuracyScore": 87, "ErrorType": "None" },
+          "Phonemes": [
+            {
+              "Phoneme": "s",
+              "Offset": 4150000,
+              "Duration": 1200000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 89,
+                "NBestPhonemes": [{ "Phoneme": "s", "Score": 89 }]
+              }
+            },
+            {
+              "Phoneme": "o",
+              "Offset": 5350000,
+              "Duration": 1200000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 86,
+                "NBestPhonemes": [{ "Phoneme": "o", "Score": 86 }]
+              }
+            },
+            {
+              "Phoneme": "n",
+              "Offset": 6550000,
+              "Duration": 1300000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 88,
+                "NBestPhonemes": [{ "Phoneme": "n", "Score": 88 }]
+              }
+            },
+            {
+              "Phoneme": "o",
+              "Offset": 7850000,
+              "Duration": 1200000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 85,
+                "NBestPhonemes": [{ "Phoneme": "o", "Score": 85 }]
+              }
+            }
+          ]
+        },
+        {
+          "Word": "accorto",
+          "Offset": 9050000,
+          "Duration": 7600000,
+          "PronunciationAssessment": { "AccuracyScore": 79, "ErrorType": "None" },
+          "Phonemes": [
+            {
+              "Phoneme": "a",
+              "Offset": 9050000,
+              "Duration": 1000000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 88,
+                "NBestPhonemes": [{ "Phoneme": "a", "Score": 88 }]
+              }
+            },
+            {
+              "Phoneme": "k",
+              "Offset": 10050000,
+              "Duration": 1900000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 58,
+                "NBestPhonemes": [
+                  { "Phoneme": "k", "Score": 58 },
+                  { "Phoneme": "g", "Score": 21 }
+                ]
+              }
+            },
+            {
+              "Phoneme": "ɔ",
+              "Offset": 11950000,
+              "Duration": 1400000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 84,
+                "NBestPhonemes": [{ "Phoneme": "ɔ", "Score": 84 }]
+              }
+            },
+            {
+              "Phoneme": "r",
+              "Offset": 13350000,
+              "Duration": 1000000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 81,
+                "NBestPhonemes": [{ "Phoneme": "r", "Score": 81 }]
+              }
+            },
+            {
+              "Phoneme": "t",
+              "Offset": 14350000,
+              "Duration": 1200000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 86,
+                "NBestPhonemes": [{ "Phoneme": "t", "Score": 86 }]
+              }
+            },
+            {
+              "Phoneme": "o",
+              "Offset": 15550000,
+              "Duration": 1100000,
+              "PronunciationAssessment": {
+                "AccuracyScore": 83,
+                "NBestPhonemes": [{ "Phoneme": "o", "Score": 83 }]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

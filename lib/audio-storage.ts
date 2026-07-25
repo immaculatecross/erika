@@ -151,6 +151,36 @@ export async function removeEnrollmentFile(filePath: string): Promise<void> {
   await rm(filePath, { force: true });
 }
 
+// Pronunciation drill takes (E-37, D-21/D-22): the learner's re-record of a scripted
+// drill, kept so an attempt stays inspectable and a single word slice can be replayed
+// from its stored offset ticks. Under a flat data/pronunciation/ dir, named by attempt
+// id — the same `data/` conventions as every other recording (gitignored, never
+// committed). A take IS sent to Azure for assessment, which is the whole point of the
+// drill and the only place drill audio leaves the machine; nothing else about it is
+// uploaded, and it is not a session (no ingest/analysis job, no findings).
+
+/** The pronunciation-takes dir: data/pronunciation/. */
+export function pronunciationDir(): string {
+  return path.join(dataDir(), "pronunciation");
+}
+
+/** On-disk path of one drill take (16 kHz mono wav), keyed by attempt id. */
+export function pronunciationTakePath(attemptId: string): string {
+  return path.join(pronunciationDir(), `${attemptId}.wav`);
+}
+
+/** Ensure data/pronunciation/ exists; returns its path. */
+export async function ensurePronunciationDir(): Promise<string> {
+  const dir = pronunciationDir();
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+/** Remove one drill take (idempotent — no error if absent). */
+export async function removePronunciationTake(filePath: string): Promise<void> {
+  await rm(filePath, { force: true });
+}
+
 /** Thrown by streamToFile when the byte cap is exceeded mid-stream. */
 export class UploadTooLargeError extends Error {}
 

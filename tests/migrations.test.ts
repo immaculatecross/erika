@@ -292,6 +292,74 @@ describe("migrations runner", () => {
     expect(rows).toEqual([{ id: "a" }, { id: "c" }]);
     migrated.close();
   });
+
+  it("v26 adds pronunciation_attempts with no prosody column and no finding FK (E-37)", () => {
+    const db = openDatabase(tmpDbPath());
+    const cols = (db.prepare("PRAGMA table_info(pronunciation_attempts)").all() as { name: string; notnull: number }[]) ;
+    const names = cols.map((c) => c.name);
+    for (const c of [
+      "id", "drill_key", "finding_id", "reference_text", "audio_path", "audio_seconds", "result",
+      "pron_score", "accuracy_score", "fluency_score", "completeness_score", "snr_db", "low_snr",
+      "scorer_id", "cost_usd", "created_at",
+    ]) {
+      expect(names).toContain(c);
+    }
+    // it-IT returns no prosody score and no syllable groups (en-US only), so there is
+    // deliberately nothing here to store one in.
+    expect(names.some((n) => /prosody|syllable/i.test(n))).toBe(false);
+    // `snr_db` and `finding_id` are nullable: the service may omit SNR, and a drill
+    // need not come from a finding.
+    expect(cols.find((c) => c.name === "snr_db")!.notnull).toBe(0);
+    expect(cols.find((c) => c.name === "finding_id")!.notnull).toBe(0);
+
+    // No FK on finding_id: an attempt is the learner's own history and outlives the
+    // finding that prompted it (the evidence.source_ref / spend_ledger precedent).
+    const fks = db.prepare("PRAGMA foreign_key_list(pronunciation_attempts)").all() as unknown[];
+    expect(fks).toEqual([]);
+
+    // A stored attempt survives the deletion of its whole session.
+    db.prepare(
+      `INSERT INTO sessions (id, original_filename, format, size_bytes, duration_seconds)
+       VALUES ('s1', 't.wav', 'wav', 1, 60)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO findings (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
+       VALUES ('f1', 's1', 'h', 'li', 'gli', 'pronunciation', 'why', 'low', 0, 100)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO pronunciation_attempts
+         (id, drill_key, finding_id, reference_text, audio_path, audio_seconds, result,
+          pron_score, accuracy_score, fluency_score, completeness_score, scorer_id, cost_usd)
+       VALUES ('a1', 'finding:f1', 'f1', 'gli', '/tmp/a1.wav', 2, '{}', 80, 80, 80, 100, 'fixture', 0.0006)`,
+    ).run();
+    db.prepare("DELETE FROM sessions WHERE id = 's1'").run();
+    expect((db.prepare("SELECT COUNT(*) AS n FROM pronunciation_attempts").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
+
+  it("v26 also adds pronunciation_visits — the no-key practice record (E-37)", () => {
+    const db = openDatabase(tmpDbPath());
+    const cols = (db.prepare("PRAGMA table_info(pronunciation_visits)").all() as { name: string }[]).map(
+      (c) => c.name,
+    );
+    expect(cols.sort()).toEqual(["created_at", "cycles", "drill_key", "finding_id", "last_at"]);
+    // A visit is an ACTIVITY record: it must carry no score-shaped column at all, so it
+    // can never be mistaken for a claim about how well the learner did (D-19/D-24).
+    expect(cols.some((n) => /score|snr|cost|result/i.test(n))).toBe(false);
+    // FK-free for the same reason as the attempts table: it outlives the finding.
+    expect(db.prepare("PRAGMA foreign_key_list(pronunciation_visits)").all()).toEqual([]);
+
+    // The PK makes repeating the loop an upsert, not a pile of rows.
+    db.prepare("INSERT INTO pronunciation_visits (drill_key, finding_id) VALUES ('finding:f1', 'f1')").run();
+    db.prepare(
+      `INSERT INTO pronunciation_visits (drill_key, finding_id) VALUES ('finding:f1', 'f1')
+       ON CONFLICT(drill_key) DO UPDATE SET cycles = cycles + 1`,
+    ).run();
+    const row = db.prepare("SELECT cycles FROM pronunciation_visits").get() as { cycles: number };
+    expect(row.cycles).toBe(2);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM pronunciation_visits").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
 });
 
 // E-17 criterion 3: docs/schema.md is bound to the migration ritual mechanically,
