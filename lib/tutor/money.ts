@@ -159,9 +159,60 @@ export function ensureTutorLeaseCovers(
 ): boolean {
   const needed = estimateTutorSessionUsd(model, minutesNeeded);
   const shortfall = needed - tutorReservedUsd(db, tutorId);
-  if (shortfall <= 1e-9) return true; // already covered — heartbeat is a no-op
+  if (shortfall <= 1e-9) {
+    // Covered — but the lease must still show that it is ALIVE. See below.
+    touchTutorLease(db, tutorId, model);
+    return true;
+  }
   const r = reserveSpend(db, { model, contentHash: tutorContentHash(tutorId), costUsd: shortfall }, budgetUsd);
   return r !== null;
+}
+
+/** How stale a lease's newest row may get before a heartbeat refreshes its liveness.
+ *  Well under `RESERVATION_STALE_MS` (15 min), and far above the 20 s heartbeat, so a
+ *  live call writes a handful of these and an abandoned one writes none. */
+export const LEASE_KEEPALIVE_MS = 4 * 60_000;
+
+/**
+ * [E-43] MARK AN OPEN LEASE AS STILL LIVE.
+ *
+ * ⚠️ THE OLD CLAIM WAS "the sweep cannot touch a live session at any TTL", AND IT WAS
+ * NOT TRUE. It rested on an accident of configuration: `ensureTutorLeaseCovers` only
+ * inserts a row when the call outlasts what is already reserved, so for the first
+ * `defaultTutorMinutes()` (10) minutes a lease's newest — and only — row is the one
+ * written at OPEN. That is younger than `RESERVATION_STALE_MS` (15 min) purely because
+ * 10 < 15, which nothing pinned. Raise `TUTOR_SESSION_MINUTES` to 20 and a perfectly
+ * live conversation is swept at minute 15, which is the 1.9× overbill again by a
+ * different door. The 10-minute minimum makes long calls the NORM, so this stopped
+ * being theoretical.
+ *
+ * The fix makes liveness an OBSERVED FACT rather than an inference from constants: a
+ * heartbeat that needs no money still writes a **zero-cost pending row**, so the
+ * lease's newest `reserved_at` is at most `LEASE_KEEPALIVE_MS` old while a client is
+ * talking to us. `sweepStaleReservations` judges staleness on `MAX(reserved_at)`, so a
+ * heart-beating session is unreachable at ANY ttl — and one that stops heart-beating
+ * goes stale on the normal TTL and commits whole, which is exactly what should happen.
+ *
+ * Three properties make a $0 row safe here, and all three are load-bearing:
+ *   * it adds nothing to `tutorReservedUsd`, so it cannot move the cap or the clamp;
+ *   * it is always the NEWEST row, so it never moves `MIN(reserved_at)` — [T2b]'s
+ *     duration ceiling and [T2c]'s under-report floor both read that minimum, and
+ *     moving it forward is precisely how the original defect disabled them;
+ *   * it carries the lease's own model, so the sweep's `MIN(model)` grouping and
+ *     `tutorLeaseModel`'s `LIMIT 1` cannot read a different model from it.
+ */
+export function touchTutorLease(db: Db, tutorId: string, model: RealtimeModelId, now: Date = new Date()): boolean {
+  const hash = tutorContentHash(tutorId);
+  const row = db
+    .prepare("SELECT MAX(reserved_at) AS newest FROM spend_ledger WHERE content_hash = ? AND state = 'pending'")
+    .get(hash) as { newest: string | null };
+  if (!row.newest) return false; // no open lease — nothing to keep alive
+  const newestMs = new Date(`${row.newest.replace(" ", "T")}Z`).getTime();
+  if (Number.isFinite(newestMs) && now.getTime() - newestMs < LEASE_KEEPALIVE_MS) return false;
+  db.prepare(
+    "INSERT INTO spend_ledger (id, month, model, content_hash, cost_usd, state) VALUES (?, ?, ?, ?, 0, 'pending')",
+  ).run(randomUUID(), monthKey(now), model, hash);
+  return true;
 }
 
 /**

@@ -247,9 +247,18 @@ export const ASSUMED_RUN_SQL = `(${ASSUMED_RUN_PREFIXES.map(
  *
  * That makes the overbill structurally impossible rather than merely fixed:
  *
- *   * A LIVE call reserves again on each minute it outlasts (`ensureTutorLeaseCovers`
- *     via a 20 s heartbeat), so its newest row is ~a minute old and the lease is never
- *     stale — the sweep cannot touch a live session at any TTL.
+ *   * A LIVE call's heartbeat keeps its newest row fresh, so the lease is never stale
+ *     and the sweep cannot touch a live session at ANY ttl.
+ *
+ *     ⚠️ An earlier version of this comment claimed that and was WRONG. It assumed a
+ *     live call reserves again every minute, but `ensureTutorLeaseCovers` only inserts
+ *     when the call outlasts what is already reserved — so for the first
+ *     `defaultTutorMinutes()` minutes the newest row is the one written at OPEN, and
+ *     the claim held only because that default (10) happened to be under this TTL (15).
+ *     Nothing pinned that, and the tutor's minimum is now 10 minutes, so long calls are
+ *     the norm. `touchTutorLease` (lib/tutor/money.ts) closes it: a heartbeat that
+ *     needs no money still writes a ZERO-COST pending row, so liveness is an observed
+ *     fact rather than an inference from two constants that were never related.
  *   * Even if extensions stop (the cap refused one, the client froze), the lease is
  *     swept WHOLE and commits ONCE. A later `/end` then finds nothing pending, and
  *     `finalizeTutorLease` clamps to the reserved amount — which is now zero — so it

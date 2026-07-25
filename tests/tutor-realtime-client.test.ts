@@ -46,9 +46,11 @@ describe("realtime event parsing + log_evidence extraction", () => {
     };
     dispatchRealtimeEvent(event, { onLogEvidence });
     expect(onLogEvidence).toHaveBeenCalledTimes(1);
+    // An event with no `call_id` still reaches the handler — the evidence is recorded
+    // either way — and passes null, so nothing downstream fabricates an id to answer on.
     expect(onLogEvidence).toHaveBeenCalledWith(
       { itemId: "rule:articoli", polarity: "incorrect", mode: "cued" },
-      event.call_id ?? null,
+      null,
     );
   });
 });
