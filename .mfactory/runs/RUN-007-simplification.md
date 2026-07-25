@@ -81,3 +81,29 @@ Pass ledger — one line per dispatched unit: `WO-<slug>: first-pass | repaired 
 ## Verdict
 
 <!-- filled at mission end -->
+
+---
+
+## E-42 — merged 2026-07-25 (PR #71, `cfb9d20`)
+
+**Outcome: `repaired` — one repair cycle, then APPROVE.** 84 files, +3,683/−858 at first submission; **1130 tests** at merge (from 1012 at v0.6 close). Worker spend $0.086; reviewer $0.117 across two passes.
+
+**Timeline.** Worker dispatched → PR #71 opened → **CI red on Tripwires** (a test fixture literal matched the API-key pattern) → fixed → spike-6's live-API bug routed in mid-flight → independent Full review returned **REQUEST-CHANGES** with 3 blocking → one repair cycle closed all of them → **delta re-review APPROVE**.
+
+**What the gates and the review caught that the worker's own green run did not:**
+
+1. **A tripwire fires in CI on `--all` that the pre-commit hook did not fire on staged files.** Recorded as a lesson below.
+2. **A test that could not fail** (B1): `tests/capture-time.test.ts` asserted migration v28's backfill against a hand-typed copy of the statement — deleting the backfill from the *real* migration left 1107/1107 green. The repair rebuilt it to run the real migrations against a v27 database, and it now also catches the subtler mutation (`datetime('now')`, which satisfies "not null" while destroying every date). **Fifth instance of this class in two versions.**
+3. **The standing-clause bar was judged, and initially failed.** The reviewer's first verdict: the mic→findings path is genuinely zero-decision, but *"nothing in the product tells a newcomer to run `npm run worker`"* — the same failure that made v0.6's cold-start gate FAIL. Promoted from a note to a required repair; now on the first paint of the empty home, rendering once when empty and **zero** times once a session exists.
+
+**Findings priced and deferred (D-15), all inside v0.7:** copy saying a run costs *"roughly twenty cents"* against a real $0.30–$0.75 → **E-46** (owns disclosure copy; D-26 says the app must not lie about cost, so this is not dropped); the upload acknowledgement has no expiry → close sweep; three unused imports → close sweep. A register slip yielding the card front `Non ____` → **E-45**, whose totality proof covers it.
+
+**Notable in the work itself.** The money change was the run's highest risk — the PR rebuilt `rates.ts` and *lowered* `gpt-audio`'s per-minute figure, this repo's explicitly dangerous direction. The reviewer did not check the arithmetic; it **measured** it, with one real `gpt-audio-1.5` call using the app's own prompt, and found real cost $0.0279 against a modelled $0.0385 (1.38× over), rising to 4.12× over on a 5 s turn. **Short calls, previously the dangerous case, are now the safest.** The prose claim "the total per call still rises" was false above ~2.08 min; it is replaced by the real per-model crossovers (3.49 / 0.96 / never) **enforced by a nine-duration × every-model floor sweep** rather than asserted in comments.
+
+**The worker found its own mirror image mid-repair** — its first upload-acknowledgement implementation identified the new row by "newest `created_at`" and picked the wrong row for same-second uploads, the exact hazard v27 needed a sequence column for. It caught this because the work order required asking what the opposite failure looks like. First evidence that the "fix invariants, not instances" rule is being applied prospectively rather than in hindsight.
+
+**Two debts carried forward, named not silently dropped:** `REALTIME_RATES` has no text-token rate and over-books 5.1× (→ E-43); `lib/knowledge/derive.ts` counts `distinctCorrectDays` from evidence *mint* time rather than capture time — the same invariant on the wrong clock, deferred because changing it changes D-19's `known` gate (→ E-45).
+
+### Lesson from this milestone
+
+- L: **"Gates green locally" is not "gates green in CI"** — the pre-commit hook tripwires *staged* files while CI runs `--all`, so a worker can believe itself clean and still turn CI red. → encoded as: the worker was asked to diagnose rather than accept the dispatcher's hypothesis; **OPEN** pending its stated cause in the exit report. Every subsequent WO in this run should require `run-tripwires.sh --all` before opening a PR.
