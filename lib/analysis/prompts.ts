@@ -113,7 +113,9 @@ export const CATEGORY_MAPPING_INSTRUCTION =
   ' "vocabulary", not "register"); "pronunciation" for a wrong sound; "idiom" for a fixed' +
   ' expression misused or translated literally; "phrasing" for wording that is grammatical and' +
   " understood but not how an Italian would put it. Use one of those five words exactly and" +
-  " lower-case: any other value is unreadable to us and loses the whole segment.";
+  " lower-case — NOT the heading of the class it came from: a finding from the class headed" +
+  ' "VOCABULARY AND WORD CHOICE" has the category "vocabulary". Any other value is unreadable' +
+  " to us and that finding is lost.";
 
 export function deepPrompt(
   targetLanguage: string,

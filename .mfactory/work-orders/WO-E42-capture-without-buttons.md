@@ -338,3 +338,105 @@ string is exactly as scannable as source carrying one, and "it is only an exampl
 sentence every leaked key is wrapped in. The text is redacted to a description of the
 shape. This also confirms, from the other direction, that the pre-commit hook is armed
 and functioning in this worktree — it simply was never invoked, because I bypassed it.
+
+---
+
+## Addendum 2 — the spike-6 repair cycle
+
+Two items folded in from `docs/research/spike-6-tutor-listening.md` (~130 live calls).
+
+### 1 · The parser invariant
+
+**Stated:** *a model reply that names a class we asked for must never cost us the rest of the segment.*
+
+**The live bug.** `gpt-audio-1.5` returned `"category": "vocabulary and word choice"` on 3 of 27 findings — the **heading of class B in `lib/mistakes.ts`**, composed into the very prompt that asks the question. `normalizeCategory` returned null, `parseDeepResponse` rejected the **whole reply**, and every other finding in those segments was destroyed. The segment was then recorded unreadable, so a later run re-billed the deep call to lose them again. The core promise failing silently, on the path this milestone makes automatic.
+
+**Enumeration — every path by which a category (or any field) could fail, and what each now costs:**
+
+| # | Failure | Before | Now |
+|---|---|---|---|
+| 1 | reply is not a JSON object | whole reply | **whole reply** — nothing is salvageable from a shape we cannot walk |
+| 2 | `findings` is not an array | whole reply | **whole reply** — same |
+| 3 | a finding is not an object | whole reply | that finding only |
+| 4 | blank/missing `quote`, `correction`, `explanation` | whole reply | that finding only |
+| 5 | **unreadable `category`** | whole reply | that finding only ← the live bug |
+| 6 | invalid `severity` | whole reply | that finding only |
+| 7 | `relStartMs` / `relEndMs` | never failed | unchanged |
+| 8 | `recurrenceId` | never failed | unchanged |
+| 9 | `notes` | never failed (sanitized) | unchanged |
+| 10 | `produced` | never failed (defensive) | unchanged |
+| 11 | **every finding unreadable** | whole reply | **whole reply** — new explicit rule, see below |
+| 12 | `findings: []` from the model | accepted | unchanged — "no errors" is a real answer |
+
+I agree with the steer and adopted it: dropping the one finding, not mapping it to a default. A default would silently mislabel, and a mislabelled finding becomes a wrong card, a wrong slip and a wrong lesson — worse than a missing one.
+
+**The opposite failure, and the guard for it.** Row 11 is mine, not the brief's. If *every* finding in a non-empty list were dropped, returning `[]` would persist a completion witness reading "analysed, no mistakes" over a segment the model actually reported mistakes in — a clean bill of health on unreadable audio, which is the E-16b criterion 5 lie in a new costume. That case throws, with a content-free `shape` of `findings=N readable=0`. An **already-empty** list is untouched, because "the speaker did fine" is a real answer and the commonest one on clean speech.
+
+**Widening: containment, not a longer list.** Enumerating `"vocabulary and word choice"` fixes that one string; the next heading, join word or plural fails identically. So `normalizeCategory` now runs exact → curated aliases → **containment over per-category marker sets**, resolving a label only when it points at **exactly one** category. `"vocabulary and word choice"` hits two markers in the same set (one category, resolved); `"grammar and vocabulary"` hits two different sets (refused — guessing would mislabel). Markers were derived from what the prompt itself teaches, per class in `lib/mistakes.ts`: grammar (`grammar`, `syntax`, `morpholog`, `agreement`, `conjugation`, `tense`, `inflection`, `word order`), vocabulary (`vocabulary`, `vocab`, `word choice`, `lexis/lexical/lexicon`, `false friend`, `calque`, `collocation`, `register`), pronunciation (`pronunciation`, `pronounciation`, `phonetic`, `phonolog`, `gemination`, `mispronounc`), idiom (`idiom`), phrasing (`phrasing`, `wording`, `naturalness`). `gender` is deliberately **absent**: the prompt puts noun-gender under class B and gender *agreement* under class A, so it is genuinely ambiguous and the table's own rule forbids guessing.
+
+**Both halves fixed, not just the tolerant one.** `CATEGORY_MAPPING_INSTRUCTION` now says explicitly that the class heading is not a category value. Widening the parser alone would leave us relying on tolerance forever.
+
+### 2 · The rate floors, reconciled against spike-6
+
+**First, the framing that matters:** §5.6's table measures the **pre-E-42** rates, and its own diagnosis is *"The cause is structural, not a wrong constant — `callCost` bills purely per audio-minute and therefore charges nothing for the text prompt."* **That structural fix is already in this PR** (product call 7): a per-call text term. The spike independently arrived at the same conclusion. Two constants still needed tightening.
+
+**Arithmetic, per leg, against the measurements.** Published per-token rates from §5.4; the 5.15 s turn is the one real `usage` sample (1,299 text-in / 51 audio-in / 5 text-out); the 10-min column is §5.6's own measured figure.
+
+| model | leg | measured | this PR | ratio |
+|---|---|---|---|---|
+| `gpt-audio-1.5` | 5.15 s turn | $0.00493 | $0.02842 | **5.77×** |
+| `gpt-audio-1.5` | 10-min segment | $0.21900 | $0.25050 | **1.14×** |
+| `gpt-audio` | 5.15 s turn | $0.00493 | $0.02842 | **5.77×** |
+| `gpt-audio` | 10-min segment | $0.21900 | $0.25050 | **1.14×** |
+| `gpt-audio-mini` | 5.15 s turn | $0.00130 | $0.00192 | **1.48×** |
+| `gpt-audio-mini` | 10-min segment | $0.06700 | $0.07132 | **1.06×** |
+
+Every leg is at or above measured reality. Two changes were needed to get there honestly:
+
+* **`AUDIO_TOKENS_PER_MINUTE` 660 → 700.** §5.4 measures **628/min, spread 505–665**. My 660 cleared the mean but sat *below the spread's maximum*, and at 660 the mini's 10-minute leg landed at **1.00×** — a 0.5% margin, on the one rate in the table that is **not published** ($10/1M is spike-6's own assumed upper bound). A floor with no margin on an assumed number is not a floor. 700 clears the measured maximum.
+* **Deep `completionTokens` 1,200 → 2,000.** §5.6's 10-minute figure implies **~1,240 output tokens** once audio and prompt are subtracted. My 1,200 sat just below that: the **output leg alone** was under-priced even though the total survived. A leg-wise floor is the claim worth making.
+
+**On "a per-minute rate cannot be a safe floor for short calls":** agreed, and that is precisely the shape of the defect. `callCost` now charges a fixed per-call text cost that does not shrink with the audio, which is why the 5.15 s turn — the case that collapses a per-minute model — comes out 1.5–5.8× above measured rather than 1.9–2.5× below. `tests/rates-text-floor.test.ts` asserts it directly against the measured turn and the measured 10-minute segment, and sweeps `gpt-audio-mini` across nine durations from 1 s to 30 min, because it triages every segment of every capture and its audio rate is the least certain figure in the table.
+
+**Not fixed here, and named:** §5.6's other two gaps are `REALTIME_RATES` — no text-token rate at all, and a 5.1× over-book from charging audio-output tokens for text that is never generated. That is E-43's table and E-43's surface; out of scope for this milestone. **Dispatcher: this is a note, not a diff.**
+
+### Gates and mutation proofs
+
+`lint · typecheck · test` (**1120 passing**, up from 1107) · `build` · **tripwires `--all`** — all green.
+
+Eight further mutations, all killed (**23/23 across the milestone**):
+
+```
+S6-A parser rejects the whole reply on one bad finding    RED | 4 failed | → bad
+S6-B all-unreadable returns [] (clean bill of health)     RED | 1 failed | → expected [Function] to throw an error
+S6-C containment fallback removed                         RED | 1 failed | → expected null to be 'vocabulary'
+S6-D ambiguity rule dropped (a 2-category label guessed)  RED | 1 failed | → expected 'grammar' to be null
+S6-E throughput back below the measured spread maximum    RED | 3 failed | → expected 628 to be greater than 665
+S6-F deep output allowance below the implied real output  RED | 1 failed | → expected 1200 to be greater than 1240
+S6-G callCost loses its per-call text term                RED | 3 failed | → expected 0.00060 to be >= 0.00130
+S6-H prompt teaches the class heading again               RED | 1 failed | → expected '…' to match /NOT the heading of the class…/
+```
+
+### Tests changed in this cycle
+
+* **`tests/mistake-coverage.test.ts`** — the assertion that an unreadable category throws `ModelParseError` for the **whole reply** encoded the behaviour spike-6 disproved. Rewritten: the bad finding is dropped, the good one survives, **and** an all-unreadable reply still throws.
+* **`tests/register-category.test.ts`** — the same obsolete assertion, rewritten the same way, plus the new `2b` block (the live label, its neighbours, the ambiguity rule, the per-fault enumeration, the structural cases, and the opposite failure).
+* **`tests/analysis-cascade.test.ts` / `tests/analysis-concurrency.test.ts`** — money arithmetic re-derived from the published per-token prices at the new throughput. Expectations still come from the research figures, never from `callCost`.
+
+**File-size note — the 500-line hook fired twice, correctly, and both splits are real seams.**
+This is also the hook working as intended on commits made WITH hooks armed, which per
+Addendum 1 only began after the tripwire fix.
+
+* `lib/analysis/findings.ts` reached 519 lines. The closed category vocabulary and the
+  whole "what did the model actually mean" coercion moved to `lib/analysis/categories.ts`
+  (134 lines), leaving the data layer at **401**. Nothing in the new module touches a
+  database.
+* `lib/analysis/audio-model.ts` reached 504. It is now three things that were always
+  three things: `lib/analysis/model-errors.ts` (44 lines — the failure vocabulary, needed
+  by both halves, which is why extracting the parsers alone would have made a circular
+  import of classes used as *values*), `lib/analysis/parse-response.ts` (161 — the pure
+  reply parsers, no network, no database, no key; the part the tests drive hardest), and
+  the client itself at **338**.
+
+Every extracted symbol is re-exported from its original module, so no importer anywhere
+changed and the diff is a move, not a rewrite. 1120 tests pass across the split.

@@ -86,12 +86,12 @@ describe("the cap is hard with the whole pool racing (criterion 2, end-to-end)",
     // Each all-clear segment costs one mini triage call, hand-computed from the
     // PUBLISHED per-token prices (docs/research/spike-1/spike-3), not from
     // `callCost`:
-    //   audio: (60 s ÷ 1.5) = 40 s = ⅔ min × 660 tok/min × $10/1M = $0.0044
+    //   audio: (60 s ÷ 1.5) = 40 s = ⅔ min × 700 tok/min × $10/1M = $0.00467
     //   text:  600 prompt tok × $0.60/1M + 400 out × $2.40/1M     = $0.00132
     // [E-42 criterion 13] The text half was $0 before this milestone, so a triage
     // call was modelled at $0.0044 and its prompt was free.
     const perTriage =
-      (40 / 60) * 660 * (10 / 1_000_000) + 600 * (0.6 / 1_000_000) + 400 * (2.4 / 1_000_000);
+      (40 / 60) * 700 * (10 / 1_000_000) + 600 * (0.6 / 1_000_000) + 400 * (2.4 / 1_000_000);
     const FITS = 5;
     // A cap that admits exactly five such calls and not a sixth; 8 workers race for them.
     writeSettings(db, { monthlyBudgetUsd: FITS * perTriage });

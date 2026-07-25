@@ -92,6 +92,81 @@ describe("the completion allowance stays inside the ceiling the code enforces", 
   });
 });
 
+describe("the rates are floors over spike-6's LIVE MEASUREMENTS", () => {
+  // `docs/research/spike-6-tutor-listening.md` §5.4/§5.6 — the first figures in this
+  // repo taken from real `usage` on a live account (~130 calls) rather than inferred.
+  // Its §5.6 table flags the PRE-E-42 rates as under-priced, and diagnoses the cause
+  // as structural: "callCost bills purely per audio-minute and therefore charges
+  // NOTHING for the text prompt". That is the defect this milestone already fixed by
+  // adding a per-call text term; these assertions are the proof, per leg.
+  //
+  // A per-minute rate can never be a safe floor for a SHORT call, because the prompt
+  // does not shrink with the audio. The 5.15 s turn below is the case that breaks it.
+
+  /** Measured audio-input throughput: 10.47 tok/s = 628/min, spread 505–665. */
+  const MEASURED_TOKENS_PER_MIN = 628;
+  const MEASURED_SPREAD_MAX = 665;
+
+  /** The one real turn spike-6 reports usage for: 5.15 s, 1299 text-in, 51 audio-in, 5 text-out. */
+  const TURN = { seconds: 5.15, textIn: 1299, audioIn: 51, textOut: 5 };
+
+  /** spike-6 §5.6's measured cost per audio-minute for a 10-minute analysis segment. */
+  const MEASURED_10MIN_PER_AUDIO_MIN = {
+    "gpt-audio-1.5": 0.0219,
+    "gpt-audio": 0.0219,
+    "gpt-audio-mini": 0.0067,
+  } as const;
+
+  it("books audio throughput above the measured MAXIMUM, not merely the mean", () => {
+    // Clearing the average still under-prices every call in the upper half.
+    expect(AUDIO_TOKENS_PER_MINUTE).toBeGreaterThan(MEASURED_SPREAD_MAX);
+    expect(MEASURED_SPREAD_MAX).toBeGreaterThan(MEASURED_TOKENS_PER_MIN); // the spread is real
+  });
+
+  it("covers the measured 5.15 s turn — the case a per-minute-only rate collapses on", () => {
+    for (const m of [MINI_MODEL, ...DEEP_MODELS] as const) {
+      const r = RATES[m];
+      // What the invoice really charged for that turn, from its own `usage`.
+      const measured =
+        TURN.textIn * r.usdPerPromptToken +
+        TURN.audioIn * r.usdPerAudioInputToken +
+        TURN.textOut * r.usdPerCompletionToken;
+      expect(callCost(m, TURN.seconds * 1000)).toBeGreaterThanOrEqual(measured);
+    }
+  });
+
+  it("covers a measured 10-minute analysis segment on every model", () => {
+    for (const [m, perMin] of Object.entries(MEASURED_10MIN_PER_AUDIO_MIN)) {
+      const measured = perMin * 10; // 10 audio-minutes at the measured per-minute cost
+      expect(callCost(m as keyof typeof MEASURED_10MIN_PER_AUDIO_MIN, 600_000)).toBeGreaterThanOrEqual(
+        measured,
+      );
+    }
+  });
+
+  it("covers gpt-audio-mini at EVERY length — the leg spike-6 found under-priced even on the analysis path", () => {
+    // MINI_MODEL triages every segment of every capture, so a systematic under-count
+    // there compounds across the whole product. Its audio rate is also the least
+    // certain figure in the table (spike-6 §5.4: the mini's audio-input price is NOT
+    // published; $10/1M is an assumed upper bound), which is exactly why this asserts
+    // across the whole range rather than at one convenient point.
+    for (const seconds of [1, 5, 15, 30, 60, 120, 240, 600, 1800]) {
+      const measured = MEASURED_10MIN_PER_AUDIO_MIN["gpt-audio-mini"] * (seconds / 60);
+      expect(callCost(MINI_MODEL, seconds * 1000)).toBeGreaterThanOrEqual(measured);
+    }
+  });
+
+  it("prices the deep OUTPUT leg above what a real segment returns", () => {
+    // spike-6's 10-min figure implies ~1,240 output tokens once audio and prompt are
+    // subtracted. Booking below that under-prices the leg on its own, even where the
+    // total happens to survive — and a leg-wise floor is the claim worth making.
+    const IMPLIED_OUTPUT_TOKENS = 1240;
+    for (const m of DEEP_MODELS) {
+      expect(RATES[m].completionTokens).toBeGreaterThan(IMPLIED_OUTPUT_TOKENS);
+    }
+  });
+});
+
 describe("the rates are floors over the researched figures", () => {
   // Cross-checked against docs/research/spike-1-speaker-throughput.md and
   // spike-3-extraction-tutor.md, which both carry these rows with citations. Two v0.6

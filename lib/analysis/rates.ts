@@ -41,12 +41,18 @@ export interface ModelRate {
  * Assumed audio tokens per minute of audio, the bridge between the published
  * per-token audio price and the per-minute figure the estimator and the ledger use.
  *
- * `docs/research/spike-1` and `spike-3` both measure ~600 tokens/minute (≈10/s).
- * This books **660** — 10% above the measured figure — because over-booking is the
- * only safe direction here (see the asymmetry note below) and the measurement is
- * from secondary sources, not from this account's real `usage`.
+ * **MEASURED, not inferred** (`docs/research/spike-6-tutor-listening.md` §5.4): real
+ * `usage` across 10 clips of 3.45–33.80 s gives **10.47 audio-input tokens/second =
+ * 628 per audio-minute**, spread **505–665**. That is the first figure in this repo
+ * taken from a live account rather than from secondary sources, and it discharges
+ * part of the standing reconciliation this file has always owed.
+ *
+ * This books **700** — above the measured MAXIMUM of the spread, not merely above
+ * its mean — because over-booking is the only safe direction here (see the asymmetry
+ * note below) and because a floor that clears the average still under-prices every
+ * call in the upper half of the distribution.
  */
-export const AUDIO_TOKENS_PER_MINUTE = 660;
+export const AUDIO_TOKENS_PER_MINUTE = 700;
 
 // ⚠️ THE ERROR DIRECTIONS ARE NOT SYMMETRIC — read before editing a number down.
 // These rates drive the pre-call estimate and the reserved lease, which is what the
@@ -113,16 +119,20 @@ export const RATES: Record<ModelId, ModelRate> = {
     promptTokens: 2600,
     // DEEP_MAX_OUTPUT_TOKENS is 4,000, deliberately far above a real reply so the
     // truncation repair stays rare. Booking the full ceiling would roughly double a
-    // day dump's modelled cost against replies that are typically 300–1,800 tokens,
-    // so 1,200 is booked: above the expected band, below the enforced ceiling.
-    completionTokens: 1200,
+    // day dump's modelled cost against replies that never approach it, so this books
+    // an over-estimate of the observed band instead — but the band is now MEASURED,
+    // not guessed: spike-6's live 10-minute analysis figure ($0.0219/audio-min)
+    // implies ~1,240 output tokens for a real segment. 1,200 sat just BELOW that, so
+    // the output leg alone was under-priced; 2,000 clears it by ~60% and is still
+    // half the enforced ceiling.
+    completionTokens: 2000,
   },
   "gpt-audio": {
     usdPerAudioInputToken: 32 / 1_000_000,
     usdPerPromptToken: 2.5 / 1_000_000,
     usdPerCompletionToken: 10 / 1_000_000,
     promptTokens: 2600,
-    completionTokens: 1200,
+    completionTokens: 2000,
   },
 };
 
