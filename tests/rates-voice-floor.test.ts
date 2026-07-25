@@ -212,8 +212,16 @@ describe("the realtime cost model is a floor over spike-6's measured legs", () =
 
   it("stays within a stated, bounded over-book of measured reality", () => {
     // Over-booking is safe, but "safe" is not a licence for any number: a cap that
-    // fires 5× early is a cap that lies in the generous direction. This pins the
-    // modelled/measured ratio into a band, so both directions of drift are caught.
+    // fires 5× early is a cap that lies in the generous direction, and that is what
+    // the old table did (5.1×). This pins the modelled/measured ratio into a BAND, so
+    // both directions of drift are caught.
+    //
+    // It currently sits at **2.47×**, and the upper bound is deliberately just above
+    // it: every leg is individually ~2–2.5× its measured mean because each constant
+    // clears a measured MAXIMUM (and the audio leg books every elapsed minute as
+    // speech, which is the honest bound since the server cannot know the split). The
+    // tightness is the point — like the mint allowlist, widening this takes a
+    // deliberate edit and a stated reason, rather than drifting one constant at a time.
     const ratio = realtimeSessionCost(REALTIME_FLAGSHIP, 10) / MEASURED_10MIN.listeningLegUsd;
     expect(ratio).toBeGreaterThan(1); // never under
     expect(ratio).toBeLessThan(2.5); // and never a 5.1×-style fiction

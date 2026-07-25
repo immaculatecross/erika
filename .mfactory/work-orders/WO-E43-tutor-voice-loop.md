@@ -160,3 +160,236 @@ This is a scope change from the operator, not a review finding. **The PR is unme
 ### Verification
 
 Drive it in a browser and **state the measured silence-to-first-audio number** in the PR body, the way this branch honestly stated 4.5–5.0 s. The claim being tested is that the revert buys ~1.7 s. Keep the proof-of-which-server discipline. Re-run the mutation proofs that still apply and say which no longer do because their code is gone.
+---
+
+## Exit report — 2026-07-25
+
+```
+RESULT: done
+PR:     https://github.com/immaculatecross/erika/pulls (branch feat/e43-tutor-voice-loop)
+```
+
+**Review tier: Full** (unchanged — money, a migration, secrets, an external contract).
+
+### Criterion by criterion
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | The loop works end to end in Italian; turns end on silence, not a button | **met — verified live in a browser.** Server VAD with `create_response`/`interrupt_response`; one button to start, one to stop, nothing in between. The tutor caught `ho andato` → `sono andato` and `faccio una decisione` → `prendo una decisione` on planted errors, in Italian, one correction per turn. |
+| 2 | A vendor seam matching the house pattern, proven by a second implementation | **met.** `lib/voice/speech.ts` (`SpeechToText` / `TextToSpeech`), OpenAI impls in `lib/voice/openai-speech.ts`, injected by the caller. `tests/tutor-speak-route.test.ts` swaps a streaming fake, a **non-streaming** fake, a failing one and an unavailable one through the same unchanged route. The boundary is bytes + mime, never a vendor object. |
+| 3 | Persona and guardrails survive verbatim in force | **met.** `tests/tutor-guardrails-wire.test.ts` asserts each one on the **mint wire body** — the last thing before the network — with expectations taken from `lib/mistakes.ts` itself rather than restated. The register line still composes first. |
+| 4 | `log_evidence` survives as a tool call on validated ids | **met, and observed live**: a browser session wrote `rule:noun-gender` and `lemma:il#DET`, polarity 0, mode spontaneous. Contract unchanged. |
+| 5 | The conversation still becomes a session | **met — and it was BROKEN before this milestone.** See "what driving found". |
+| 6 | A minimum duration, settable and visible | **met.** `tutorMinMinutes` (default 5), a Settings control, and calm progress on the surface (`3:12 of 5:00` plus a hairline). Below it the conversation is real and still logs evidence. |
+| 7 | Migration v29 `tutor_conversations` | **met**, documented in `docs/schema.md` in the same PR; contract below. |
+| 8 | Money: per-leg, reserve-before-call | **met, with one deliberate divergence** (below). |
+| 9 | Rates at or above reality, dangerous direction named | **met**, both directions fixed. |
+| 10 | The old transport is gone | **withdrawn by Amendment 4**; partially executed on merit. |
+| 11 | Streaming TTS mandatory | **built streaming-first; the measured number is below the bar and is stated plainly.** |
+| 12 | TTS repriced by SHAPE, not value | **met.** |
+
+### What this deletes — honestly less than planned
+
+Amendment 4 withdrew the ~1,000-line expectation, and the measurement is why. `lib/tutor/mint.ts` (112 lines) and `lib/tutor/realtime-client.ts` (177) **survive on merit**: spike-6 measured every `gpt-audio` model missing `"ho andato"` in 9 of 9 attempts, with the correction written verbatim in its own prompt, while both Realtime models caught it every time. Deleting them to hit a number would have cost the tutor its core job.
+
+What actually left:
+
+- **Realtime's audio-output leg** — `audio.output.voice`, `TUTOR_VOICE = "marin"`, `onRemoteAudio`, `pc.ontrack`, the downstream `MediaStreamLike` playback path. Small in lines, large in money: it was the $64/1M leg, and removing it is what makes (A) cheaper than (B).
+- **The `realtimeTier` Settings knob** — `REALTIME_TIERS`, `realtimeModelForTier`, the segmented control, its validator and its stored key. spike-6 §3.1 measured the model it offered (`gpt-realtime-2.1-mini`) producing 3 empty replies and 2 hallucinated errors on clean speech out of 9 fixtures. A choice between "works" and "invents corrections" is not a feature. Replaced by `tutorRealtimeModel()` — a code default with an env override.
+- **`realtimeAudioTokensPerMinute` and the audio-output pricing path** — the 5.1× over-book itself.
+- **A private second copy of the container→WAV conversion** in `lib/use-recorder.ts`, folded into `lib/recording.ts` as `toUploadableWav` and now shared with the tutor.
+
+Net: the diff is **positive in lines**. It is **negative in concepts a learner must hold**, and the tutor's entire audio-output half is gone. Stated plainly rather than dressed up.
+
+### The money invariant, and every path that could violate it
+
+*Every billable call reserves before the provider is touched; committed + pending never exceeds the cap; a resolved call is recorded exactly once; a refusal mints nothing; work already on the wire is still recorded.*
+
+The two legs have different shapes because they really are different, not because there are two money paths — both reserve into the one `spend_ledger` under the one cap.
+
+- **Listening (long-lived).** A Realtime session bills while it runs and the server cannot observe its usage turn by turn, so the lease survives, as Amendment 4 requires. The defects do not survive with it.
+- **Speaking (bounded).** One server-side call per reply → ordinary reserve-before-call / finalize-on-resolve, **no lease, no heartbeat, and therefore no stale window at all**. This is exactly the shape criterion 8 describes.
+
+**The 1.9× stale-lease overbill is now structurally impossible, not merely fixed.** The mechanism was a *partial* sweep: `RESERVATION_STALE_MS` (15 min) < `maxTutorSessionMinutes()` (30 min), so mid-call the sweep found a lease's oldest rows past the cutoff and its recent ones not, committed the old half, and left the live half for `/end` to bill again. It also moved `MIN(reserved_at)` forward, resetting server-elapsed 20.0 → 0.0 min and switching off **both** the duration ceiling and the under-report floor at once.
+
+Raising the TTL would have fixed the reported instance and left the invariant broken — anyone raising `TUTOR_MAX_SESSION_MINUTES` would silently re-arm it. The invariant is: **an assumed-run lease is ONE unit and is never partially resolved.** Staleness is now judged on the lease's *newest* pending row (`HAVING MAX(reserved_at) <= ?`) and, when stale, every row of that lease is swept together into exactly one committed row. Consequences, each asserted by a test:
+
+- a live call reserves again on each minute it outlasts, so its newest row is ~a minute old and **the sweep cannot touch a live session at any TTL**;
+- if extensions stop anyway (the cap refused one, the client froze), the lease is swept **whole** and commits **once**; a later `/end` then finds nothing reserved and commits nothing;
+- `tutorLeaseOpenedAtMs` can no longer move forward while a lease is open, because a lease's rows never disappear one at a time.
+
+Opposite failures checked, per "fix invariants, not instances": a charge is never **lost** (an abandoned lease still commits its full reserved sum), never **doubled** (one committed row per lease, and finalize clamps to what remains reserved), the cap is never **loosened** (the committed amount is exactly what the cap already admitted), and an ordinary crashed cascade call still **releases**.
+
+Also closed here, because it lives on the same path: `isAssumedRunLeaseHash` was exported, documented as the authority and **dead** — RETRO-004 proved that dropping its `pa:` clause passed 1012/1012, because the sweep never consulted it. The sweep's SQL is now **generated** from `ASSUMED_RUN_PREFIXES`, and every prefix gets a behavioural test, not merely a predicate test.
+
+Refusal and crash on the speaking leg, both asserted: a cap refusal returns 402 having made **no** vendor call and minted **no** ledger row; a stream that dies with bytes already delivered **still bills** for them; a failure before a single byte **releases**; and `tutor-tts:` is an assumed-run prefix, so a process death commits rather than releases.
+
+### Rates — reconciled against spike-5 and spike-6
+
+| Defect | Before | Now | Direction |
+|---|---|---|---|
+| `REALTIME_RATES` had **no text-token rates**; `realtimePerMinuteUsd` charged 1500 audio-**output** tokens/min at $64/1M for audio that is never generated | $1.440 per 10 min modelled against **$0.283 measured** — **5.1× over** | $0.5118 for the 10-min listening leg against $0.2075 measured — **2.47× over** | was safe-but-lying; now safe and bounded |
+| `TTS_RATES.usdPerCharacter` charged the audio-output-token rate per input character | **1.23×–1.76× UNDER**, voice-dependent | the **shape** changed: characters → audio seconds → audio-output tokens. Effective **$24.15 per 1M characters** (was $12.00) | **the unsafe direction, fixed** |
+| No honest post-call TTS charge | n/a — `/v1/audio/speech` returns no `usage` | the mp3 is 128 kbps CBR (all five spike-5 samples divide to exactly 16 000 B/s), so duration comes free from the byte count and the **committed** charge is the real one, clamped to the reservation | more truthful, never higher |
+
+Every constant clears a measured **maximum**, not a mean. `tests/rates-voice-floor.test.ts` pins each leg separately — audio-in, text-out, the cached re-send (which is quadratic in turns and asserted to grow super-linearly), fresh text, and the persona floor against the real `buildTutorPersona` at its own caps — across nine durations from 20 s to 30 min. `tests/rates-text-floor.test.ts` is untouched and still green; this is its companion, not its replacement.
+
+Two spike-6 findings sit **outside this milestone's surface** and are therefore reported, not diffed: `gpt-audio-mini` under-priced on the **analysis** path (E-42 already pins its floor), and `"vocabulary and word choice"` missing from `CATEGORY_ALIASES`, a live Record-path bug.
+
+### Live API results — everything below was really run
+
+The key came from `.env.local`, was never printed, and is not in the diff.
+
+**Key-gated smoke tests (OBS-001, owed since v0.5)** — `tests/live-voice-smoke.test.ts`, five tests, skipped entirely without a key, **all passed first try**:
+
+- `POST /v1/realtime/client_secrets` with the product's own allowlisted body → **HTTP 200**, an `ek_…` secret, and `output_modalities: ["text"]` **echoed back in the response**. spike-6's gating fact, re-confirmed from product code rather than a hand-written approximation.
+- TTS blocking → mp3, with a plausible duration derived from the byte count.
+- TTS **streaming** → the SSE stream decodes to audio.
+- STT parses a scripted, known-answer clip (D-21's allowance only — never free speech).
+
+**The WebRTC leg, end to end in a real browser — spike-6's stated gap, now closed.** The built server (`next start`) on a random high port with a disposable database, and Chromium with a fake microphone fed real synthesized Italian containing planted errors.
+
+- `pc:connecting → pc:connected`: a real `RTCPeerConnection`, a real SDP offer/answer against `/v1/realtime/calls`, authorized by the ephemeral secret alone.
+- **The GA text event names, measured**: `response.output_text.delta` / `response.output_text.done`. The code accepts the beta `response.text.delta` as well — a hard-coded wrong name would have left the tutor permanently silent with every test green, the same class of failure as the mint allowlist.
+- Full observed event set: `session.created`, `input_audio_buffer.speech_started` / `speech_stopped` / `committed`, `response.created`, `response.output_text.delta` / `.done`, `response.done`, `rate_limits.updated`. **Zero `error` events, zero page errors, zero console errors.**
+- Real corrections, in Italian: *"Hai detto «ieri ho andato» — si dice «ieri sono andato»."* and *"Hai detto «faccio una decisione» — si dice «prendo una decisione». È una collocazione fissa."* — one per turn, each followed by a question that kept the conversation going.
+- `POST /api/tutor/speak` returned **200** on every chunk; clips played in order.
+- The disposable database afterwards: a `tutor_conversations` row with server-measured `duration_seconds`, `met_minimum = 0` (46 s against a 300 s minimum — correct), and `session_id` linked by capture time; a `sessions` row (`Recording … .wav`, 47.28 s); `evidence` rows written by `log_evidence`; a ledger with one committed `gpt-realtime-2.1` row and one committed row per TTS chunk and **no pending remnant**; migrations at **v29**.
+
+**Keyless walk, same discipline.** `GET /api/tutor/session` reports `keyConfigured: false`; pressing Start yields *"Erika needs an OpenAI API key to hold a conversation."* with a working **Open Settings** link that lands on `/settings`; Settings shows the voice dial and the minimum, and **no** tier control. `spend_ledger` has **0 rows** and `tutor_conversations` has **0 rows** — a failed start mints nothing and leaves no phantom conversation in the day's history.
+
+### What the learner actually experiences (criterion 11, measured)
+
+Measured on the built app in a browser, timed from the server's own `input_audio_buffer.speech_stopped` — the VAD hangover included, spike-6's own definition:
+
+| | measured |
+|---|---|
+| Cold start: click → Erika's first word | **4.48 s** (mint + `getUserMedia` + SDP handshake + generation + TTS) |
+| Learner falls silent → first text of the reply | **2.1–2.6 s** |
+| Learner falls silent → **first audio of the reply** | **4.5–5.0 s** (an earlier single-turn run: 3.9 s) |
+
+**This is worse than the 2–4 s band and worse than spike-6's 2.43 s projection, and I am not going to dress it up.** The loop is built streaming-first — per-sentence chunking, synthesis pipelined so only the first chunk's round trip is on the critical path, playback strictly ordered, barge-in cancelling requests, queue and playback together — and it is emphatically not the blocking implementation criterion 11 forbids. The gap is in the two legs, not the wiring: spike-6's 1.194 s to-first-text was measured with a **1 365-token JSON-extraction prompt**, while production sends a **~2 700-token persona** and the flagship spends reasoning tokens; TTS then adds ~1.0–1.3 s. Two levers remain and both belong to a later milestone: a shorter persona (which trades directly against the guardrails), and `MediaSource` playback instead of buffering each clip (worth roughly 0.3–0.4 s).
+
+### What driving the built app found that no test could
+
+Two defects, both invisible to 1 238 passing tests.
+
+1. **The conversation never became a session.** The tutor uploaded its raw `MediaRecorder` container. A live MediaRecorder stream carries **no container duration**, so the server's ffprobe cannot read one and the finalize gate answered **422 `undecodable_audio`** — for every conversation, across two versions. Criterion 5 was quietly false. The Record tab has re-encoded to WAV since E-16b; the tutor never got it. The conversion is now **one shared helper** (`toUploadableWav` in `lib/recording.ts`) used by both, and `lib/tutor/take.ts` makes the sequence testable in Node with no DOM.
+2. **The tutor narrated its own bookkeeping out loud** — *"un momento, registro un dettaglio su ciò che hai detto"*, *"mi concentro su una correzione chiave e poi continuiamo"*. The learner heard the machinery instead of a conversation, and it cost a whole spoken sentence of latency before anything useful was said. No test could have caught it: the text was perfectly good text. The persona now forbids it and the wire test asserts the clause.
+
+### Mutation proofs — 10 of 10 killed
+
+Each guard broken, run red, restored, run green.
+
+| | mutation | broken | restored |
+|---|---|---|---|
+| M1 | sweep a tutor lease per row again (the 1.9×) | 3 failed / 11 | 11 passed |
+| M2 | let the client **raise** the credited duration | 3 failed / 20 | 20 passed |
+| M3 | read the minimum live instead of the one stored at open | 1 failed / 20 | 20 passed |
+| M4 | price TTS per input character again | 4 failed / 22 | 22 passed |
+| M5 | drop the realtime text-output leg | 1 failed / 22 | 22 passed |
+| M6 | drop `output_modalities` from the mint allowlist | 2 failed / 12 | 12 passed |
+| M7 | upload the raw recorder container instead of WAV | 1 failed / 12 | 12 passed |
+| M8 | book the persona at spike-6's smaller prompt | 1 failed / 22 | 22 passed |
+| M9 | let the tutor narrate its bookkeeping again | 1 failed / 28 | 28 passed |
+| M10 | flush a turn's tail without speaking it | 3 failed / 17 | 17 passed |
+
+**M3 and M9 SURVIVED the first pass**, and that is reported rather than quietly repaired: the "minimum copied in at open" rule was only exercised by changing the setting *after* the close, and the anti-narration clause had no test at all. Both now have one, and both kill.
+
+### Proof of which server answered
+
+Two independent proofs, both required to pass or the run aborts before touching anything.
+
+1. **Process identity** — a random high port (39 000–41 000), then `lsof -nP -iTCP:<port> -sTCP:LISTEN -t` compared against the transitive descendants of the pid this run spawned. Observed: spawned `46791`, listening `46814`, a descendant. No foreign listener.
+2. **Build identity** — `GET /api/tutor/session` must return `minSeconds`, `voice` and `keyConfigured`, three fields **only this build emits**. Observed `{ minSeconds: 300, voice: "female", keyConfigured: true, model: "gpt-realtime-2.1" }`. A leftover older server on that port would have answered without them and the run aborts.
+
+### The `tutor_conversations` contract WO-E44 consumes
+
+```sql
+CREATE TABLE tutor_conversations (
+  id               TEXT PRIMARY KEY,   -- the tutor session id == the spend lease key
+  started_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  ended_at         TEXT,               -- NULL = live, or abandoned
+  duration_seconds REAL,               -- SERVER-measured; NULL when never closed
+  min_seconds      INTEGER NOT NULL,   -- the minimum IN FORCE AT OPEN, copied in
+  met_minimum      INTEGER NOT NULL DEFAULT 0,
+  session_id       TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  local_day        TEXT                -- the LOCAL day it closed on (D-24)
+);
+```
+
+Read it through `lib/tutor/conversations.ts`, never raw:
+
+- **`metMinimumOnDay(db, day) → boolean`** — the one question E-44 asks.
+- `conversationsForDay(db, day)` — every CLOSED conversation that day, newest first.
+- `openConversation` · `closeConversation` · `closeAbandonedConversations` · `linkRecordingByCaptureTime`.
+
+Three properties E-44 can rely on. **Duration is server-measured and a client may only LOWER it** — the money path takes the opposite side, where the server floors the client, and each direction is the conservative one for its own question. **Closing is idempotent**, so a retry or the `pagehide` beacon racing the End button cannot double-credit or rewrite a recorded day. **An abandoned conversation is recorded with a NULL duration and no credit**, because the honest answer to an unknown is not a favourable guess.
+
+### Product calls
+
+Argued at length in the PR body; named here.
+
+1. **Erika greets first.** A `response.create` on channel open. Without it a first-timer meets silence and cannot tell whose turn it is.
+2. **A turn-state line** — "Listening — just talk" / "Erika is speaking" — because in a voice UI, whose turn it is, is the single most important thing on screen.
+3. **The reply text is never shown.** We have it; showing it would invite reading instead of listening and would add a surface D-26 wants removed.
+4. **The minimum is stated in Settings as well as shown on the surface**, so the rule is explained rather than left as a mysterious bar.
+5. **`nova` (female) is the default voice**, because the product is named Erika and speaks as Erika throughout its copy; either operator-chosen voice was acceptable.
+6. **The closing line follows what actually happened to the take**, and says nothing at all about falling short (D-24).
+7. **A `pagehide` beacon** closes the record honestly when a tab is closed, rather than leaving it to the abandoned-conversation sweep to write off as unknown.
+8. **`SPOKEN_OUTPUT` and the anti-narration clause** were added to the persona — the first because a model writing for a screen produces markdown a voice reads aloud as punctuation, the second because the live tutor demonstrably narrated its own tool call.
+
+### Divergences from the work order, stated
+
+1. **Criterion 8's "no lease"** is not implemented, because Amendment 4 keeps transport (A) and a Realtime session genuinely is long-lived. The lease survives; the **defects do not**, which is what D-28 actually requires. The speaking leg is precisely the lease-free shape criterion 8 describes.
+2. **Criterion 10** is withdrawn by Amendment 4. The parts of it that survive on their own merit — `realtimeTier`, the audio-output leg — were executed.
+3. **Criterion 11's latency target is not reached** — 4.5–5.0 s against a 2–4 s band. Reported rather than hidden; the implementation is streaming-first as required.
+4. **Settings gains two knobs and loses one** (net +1), where Amendment 2 wanted the voice to be the only addition. A learner cannot evaluate a model tier but can evaluate a voice and a duration, and stating the rule beats leaving it a mystery behind a progress bar. If the dispatcher disagrees, the minimum can move to a code default in one line.
+
+### Spend
+
+**≈ $0.12 of real money** against the $1.50 ceiling (~8%). Modelled from the published per-token rates, not an invoice:
+
+| item | approx USD |
+|---|---|
+| 5 key-gated smoke tests (1 mint, 3 TTS, 1 STT) | 0.002 |
+| fixture synthesis (4 Italian clips, wav) | 0.011 |
+| 3 live WebRTC browser sessions (35 s + 46 s + 20 s of `gpt-realtime-2.1`) | ~0.090 |
+| 14 TTS reply chunks across those sessions (~60 s of speech) | 0.015 |
+| **total** | **≈ 0.118** |
+
+No call was refused, rate-limited or 5xx'd; the ceiling was never the binding constraint. Modelled ≠ invoiced — the standing reconciliation is unchanged.
+
+**And the migration's cost, stated the way Amendment 4 asks.** Transport (A) measures **$0.283 per 10-minute conversation** — cheaper than (B)'s $0.340 and far cheaper than the all-audio Realtime path it replaces, but **~2.7× a pure transcript loop** ($0.10–0.11). That premium is the price of D-3 compliance and we are paying it deliberately, because `whisper-1` was measured silently repairing this project's own planted errors. This is a quality decision that happens also to cost less than the alternative that would have broken D-3 — not a cost win.
+
+### Verified
+
+```
+npm run lint · npx tsc --noEmit · npm run test · npm run build   — all green
+npm run test → 143 files passed, 1 skipped · 1252 passed, 5 skipped
+```
+
+Every verification ran against a **disposable database** (`ERIKA_DB_PATH` and `ERIKA_DATA_DIR` under `mkdtemp`). One correction mid-run, recorded rather than hidden: an early walk set only `ERIKA_DATA_DIR`, so the database went to the repo's default `data/erika.db`. That worktree-local file was deleted and the harness fixed to set both variables.
+
+### Tests changed or removed
+
+- `tests/settings.test.ts` — `realtimeTier` cases replaced by `tutorVoice` / `tutorMinMinutes`, **plus a new case** proving a database that stored the removed key still reads.
+- `tests/tutor-persona.test.ts` — config shape updated (`output_modalities`, `audio.input.turn_detection`); "follows the tier switch to mini" became "pins the flagship regardless of what Settings holds".
+- `tests/tutor-realtime-client.test.ts` — the now-dead `ontrack` fake removed.
+- `tests/tutor-mint-body.test.ts` — the allowlist literal widened by `output_modalities`, which is the deliberate edit that test exists to force.
+- `tests/tutor-money.test.ts` — **one assertion deleted**: "books at least 1200 audio-OUTPUT tokens per minute". Under D-28 no audio output is ever generated, so booking it *was* the 5.1× over-book. Replaced by the leg-wise floors in `tests/rates-voice-floor.test.ts`.
+
+### Risks
+
+- The **4.5–5.0 s** per-turn figure is the honest weak point and sits above the band.
+- The `2.5×` upper bound in the rate-band test is deliberately tight (currently 2.47×) and will trip on a small legitimate change — by design, but a reviewer should know before reading it as a flake.
+- Latency and accuracy are `n=4` turns on **one synthetic fixture**. TTS speech is unnaturally clean and real learner audio is not measured here — the same limit spike-5 and spike-6 both flag about themselves.
+- `MediaSource` playback and a shorter persona are the two remaining latency levers, both out of scope.
+- `openAiSpeechToText` ships used only by its own smoke test, kept clean and importable for E-45/E-46 exactly as the work order asks.
+
+### Not verified
+
+- Any **invoice**. Every dollar figure here is modelled from published rates.
+- Accuracy on **real** learner speech.
+- Safari and Firefox (Chromium only).
+- The two spike-6 findings on the Record path (`gpt-audio-mini`'s ledgered rate, the `"vocabulary and word choice"` alias) — reported, not diffed; another milestone's surface.
