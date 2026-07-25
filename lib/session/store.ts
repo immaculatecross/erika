@@ -96,11 +96,14 @@ export function openSession(db: Db, day: string = localDay(), plan?: SessionPlan
   return getSession(db, day)!;
 }
 
-/** Does the durable state agree that `step` is finished? Null = nothing to check
- *  (a self-reported step). */
-function verifyStep(db: Db, session: DailySession, step: StepKey): boolean | null {
+/**
+ * OBSERVE: is this step finished as a matter of durable fact, whoever did it and
+ * wherever they were? Only two steps can be, and both genuinely complete OUTSIDE the
+ * runner — a conversation happens on the tutor page, and the letter can be read from
+ * the Library. `null` means the question does not apply.
+ */
+function observeStep(db: Db, session: DailySession, step: StepKey): boolean | null {
   if (step === "conversation") return conversationCredit(db, session.localDay).met;
-  if (step === "drills") return cardsReviewedToday(db, session.localDay) >= session.plannedCards;
   if (step === "letter") {
     // The E-24 contract, unchanged: the forward-only `letterViewedWeek` marker must
     // have reached THIS week. Recomputed rather than frozen because it is the same
@@ -108,6 +111,30 @@ function verifyStep(db: Db, session: DailySession, step: StepKey): boolean | nul
     const week = latestWeekWithFindings(collectLetterSessions(db));
     const viewed = getViewedLetterWeek(db);
     return week !== null && viewed !== null && viewed >= week;
+  }
+  return null;
+}
+
+/**
+ * VERIFY: may the client's claim that `step` is finished be believed? `null` = there
+ * is nothing durable to check, so the claim stands.
+ *
+ * ⚠️ THE ASYMMETRY WITH `observeStep` IS THE WHOLE POINT, and getting it wrong is the
+ * mirror-image failure the verification brief warns about — a step that CLAIMS SUCCESS
+ * IT DID NOT ACHIEVE. Drills are gated on card state, so a client cannot skip a queue
+ * it never cleared; but "as many cards reviewed as planned" is trivially TRUE when the
+ * session planned none, which is exactly the recording-less day. Reading that as
+ * "done" would have closed the drills step — and, with only a lesson beside it, the
+ * whole DAY — the instant the learner pressed Start, having done nothing. So a
+ * trivially-satisfied bar refuses to confirm anything: it can only ever REFUSE a
+ * claim, never manufacture one.
+ */
+function verifyStep(db: Db, session: DailySession, step: StepKey): boolean | null {
+  const observed = observeStep(db, session, step);
+  if (observed !== null) return observed;
+  if (step === "drills") {
+    if (session.plannedCards === 0) return null; // nothing to check, never a pass
+    return cardsReviewedToday(db, session.localDay) >= session.plannedCards;
   }
   return null;
 }
@@ -138,11 +165,13 @@ export function markStepDone(db: Db, day: string, step: StepKey): DailySession |
 }
 
 /**
- * Re-read the steps whose truth lives elsewhere and fold them in. The conversation is
- * the case this exists for: the learner leaves for the tutor page, has the
- * conversation, and comes back — nothing POSTed a step, but the day genuinely moved.
- * Idempotent, and it can only ever ADD (a step already recorded is never withdrawn,
- * because recorded history is not rewritten).
+ * Fold in the steps that completed themselves. The conversation is the case this
+ * exists for: the learner leaves for the tutor page, has the conversation, and comes
+ * back — nothing POSTed a step, but the day genuinely moved.
+ *
+ * It reads `observeStep`, NOT `verifyStep`: only a step whose completion is a durable
+ * fact in its own right may be folded in. A step that is merely *ungated* must never
+ * be — that is how a session would tick itself off without the learner.
  */
 export function reconcileSession(db: Db, day: string = localDay()): DailySession | null {
   const session = getSession(db, day);
@@ -150,7 +179,7 @@ export function reconcileSession(db: Db, day: string = localDay()): DailySession
   let current = session;
   for (const step of current.steps) {
     if (current.doneSteps.includes(step)) continue;
-    if (verifyStep(db, current, step) === true) {
+    if (observeStep(db, current, step) === true) {
       current = markStepDone(db, day, step) ?? current;
     }
   }

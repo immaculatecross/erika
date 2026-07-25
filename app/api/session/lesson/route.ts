@@ -8,7 +8,6 @@ import { BudgetExceededError } from "@/lib/lessons/billing";
 import { buildSessionView, syllabusFallback } from "@/lib/session/view";
 import { textModelReachable } from "@/lib/session/plan";
 import type { NoticeReason } from "@/lib/session/notices";
-import type { ItemLesson } from "@/lib/lessons/item-lessons-view";
 
 // Today's lesson (E-44). ONE route serving BOTH halves of the session's teaching: the
 // explanation the lesson step reads, and the exercises the drills step runs.
@@ -28,18 +27,6 @@ import type { ItemLesson } from "@/lib/lessons/item-lessons-view";
 // lesson still bills ZERO — `generateItemLesson` returns it before reserving.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-export interface SessionLessonBody {
-  itemId: string;
-  kind: "grammar" | "vocab";
-  label: string | null;
-  /** The generated lesson (intro + exercises), or null when it could not be written. */
-  lesson: ItemLesson | null;
-  /** The syllabus's own authored content — always present for a rule. */
-  fallback: ReturnType<typeof syllabusFallback>;
-  /** Why `lesson` is null. Null when the lesson is there. */
-  notice: NoticeReason | null;
-}
 
 /**
  * Classify a failed model call. A 401/403 means a key IS configured and was refused —

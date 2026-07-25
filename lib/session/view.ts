@@ -8,6 +8,7 @@ import { currentStep, getSession, isSessionComplete, reconcileSession } from "./
 import { lessonLabelFor, planSession } from "./plan";
 import { describeSession, orderSteps, type StepKey } from "./steps";
 import type { NoticeReason } from "./notices";
+import type { LessonFallback } from "./lesson-body";
 
 // The read-model the session runner walks (E-44). One GET, no model calls, no money.
 //
@@ -15,15 +16,6 @@ import type { NoticeReason } from "./notices";
 // the home's preview and the runner's reality are the same object shape built by the
 // same code — a preview that could disagree with the session it previews would be the
 // same class of lie this milestone is deleting.
-
-/** The model-free lesson content E-26 already authored for every one of the 266 rules.
- *  This is what the lesson step degrades TO — not an apology, a lesson. */
-export interface LessonFallback {
-  title: string;
-  description: string;
-  examples: string[];
-  cefr: string;
-}
 
 /**
  * The syllabus's own content for a rule item, or null for a lemma.

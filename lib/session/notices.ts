@@ -24,6 +24,7 @@ export type NoticeReason =
   | "key-rejected"
   | "budget"
   | "model-transient"
+  | "save-failed"
   | "in-flight"
   | "nothing-to-teach"
   | "no-cards"
@@ -79,6 +80,16 @@ const NOTICES: Record<NoticeReason, Notice> = {
   "model-transient": {
     reason: "model-transient",
     body: "Erika could not reach the lesson model just now.",
+    action: null,
+    retryable: true,
+    standing: false,
+  },
+  // A grade that did not reach the server. Transient, and the retry re-sends THE SAME
+  // grade rather than reloading — the old review screen swallowed this and advanced
+  // anyway, which lost the review silently and left the learner sure they had done it.
+  "save-failed": {
+    reason: "save-failed",
+    body: "That answer could not be saved just now — nothing was lost, and it can be sent again.",
     action: null,
     retryable: true,
     standing: false,
