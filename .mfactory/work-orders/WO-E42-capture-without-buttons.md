@@ -91,7 +91,7 @@ Operator, on approving the v0.7 plan: *"aim for a really complete, usable, intui
 
 ```
 RESULT:  done
-PR:      https://github.com/immaculatecross/erika/pull/<opened after this file is pushed> · branch feat/e42-capture-without-buttons
+PR:      https://github.com/immaculatecross/erika/pull/71 · branch feat/e42-capture-without-buttons
 Changed: see "Criterion by criterion" and "What this deletes" below
 Verified: npm run lint · typecheck · test (1107 passing, 133 files) · build — all green;
           plus a browser-driven walkthrough of the built server on a disposable DB,
