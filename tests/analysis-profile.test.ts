@@ -15,7 +15,6 @@ import { deepPrompt, parseDeepResponse, RECURRENCE_INSTRUCTION, triagePrompt } f
 import { grammarLessonPrompt } from "@/lib/lessons/lesson-parse";
 import { loadSyllabus } from "@/lib/syllabus";
 import type { Category, Finding, Severity } from "@/lib/analysis/findings";
-import type { Pattern } from "@/lib/lessons/patterns";
 
 // E-19 criteria 1–2: the pure profile builder (bounded, no model call, no
 // reimplemented math — rates come straight from computeFocus) and the exact
@@ -131,26 +130,6 @@ const RULE = loadSyllabus().rules.find((r) => r.key === "ausiliare-scelta")!;
 describe("prompt injection (criterion 2)", () => {
   const profile = buildSpeakerProfile(primedInput());
   const lines = renderProfileLines(profile);
-  const pattern: Pattern = {
-    key: "category:grammar",
-    category: "grammar",
-    count: 3,
-    findings: [
-      {
-        id: "f1",
-        sessionId: "s",
-        contentHash: "h",
-        quote: "io ho 25 anni",
-        correction: "ho 25 anni",
-        category: "grammar",
-        explanation: "why",
-        severity: "high",
-        startMs: 0,
-        endMs: 0,
-      },
-    ] as Finding[],
-  };
-
   it("triage, deep-listen, and lesson prompts all carry the exact L1 and profile lines", () => {
     for (const prompt of [
       triagePrompt("Italian", profile),

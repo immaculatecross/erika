@@ -10,10 +10,10 @@ import { enqueueAnalysis } from "@/lib/analysis/cascade";
 import { generateCards } from "@/lib/cards";
 import { buildPlan, getViewedLetterWeek, markLetterViewed } from "@/lib/plan";
 import { buildFocusModel } from "@/lib/focus";
-import { listIncludedFindings } from "@/lib/findings-model";
 
-// E-18 criterion 1: /practice composes a daily plan — the due-card count, the
-// one lesson Focus's severity-weighted ranking prescribes next (the ranking is
+// E-18 criterion 1: /practice composes a daily plan — the due-card count and the
+// letter's week. [E-45] The per-category pattern lesson it used to prescribe (and
+// price) is gone with the format; today's lesson is chosen at the knowledge edge
 // REUSED from computeFocus, asserted against buildFocusModel itself, never a
 // second scoring), and the unread letter for the latest ISO week, whose viewed
 // marker persists in the existing settings kv storage (no migration).
