@@ -160,9 +160,21 @@ describe("normalizeCategory — a recognisable label lands, an unrecognisable on
   });
 
   it("returns null — never a guess — for anything it does not recognise", () => {
-    for (const raw of ["", "vibes", "register", "usage", "fluency", "42", null, undefined, {}]) {
+    for (const raw of ["", "vibes", "usage", "fluency", "42", null, undefined, {}]) {
       expect(normalizeCategory(raw)).toBeNull();
     }
+  });
+
+  // [E-42 criterion 14] `register` moved from the refused list to the accepted one,
+  // and this test moved with it. It was the ONE label the prompt actively invited —
+  // `lib/mistakes.ts` class B names a register slip as a mistake and
+  // ENRICHED_NOTES_INSTRUCTION puts the word "register" in front of the model — while
+  // the parser rejected it, and the cost of rejection was not one lost finding but
+  // the WHOLE segment. A class the model is asked to produce and the schema silently
+  // discards is exactly the defect PR #66 existed to remove.
+  it("accepts `register`, the one label the prompt invites, as the word-choice class", () => {
+    expect(normalizeCategory("register")).toBe("vocabulary");
+    expect(normalizeCategory("Register")).toBe("vocabulary");
   });
 
   it("one synonym no longer discards the OTHER findings in the same reply", () => {

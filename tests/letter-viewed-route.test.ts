@@ -49,7 +49,7 @@ afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 function seedAnalyzed(id: string, week: string) {
   const db = getDb();
   createSession(db, { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
-  db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(`${week} 09:00:00`, id);
+  db.prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(`${week} 09:00:00`, id);
   upsertSegment(db, { sessionId: id, idx: 0, startMs: 0, endMs: HOUR_MS, contentHash: `${id}-h0` });
   persistSegmentFindings(db, {
     sessionId: id,

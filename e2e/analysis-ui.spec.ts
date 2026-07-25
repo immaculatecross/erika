@@ -14,8 +14,14 @@ import { ensureSessionDir, sourcePath } from "../lib/audio-storage";
 // The analysis report UI end to end (E-4 part 2), driving the same throwaway
 // DB/data dir the dev server uses (playwright.config env). We seed sessions,
 // segments, analysis-job rows and findings directly — the worker isn't run; the
-// page only reflects state — then mutate rows to prove the pre-run estimate/budget
-// gate, the live no-reload progress, the report, and every truthful terminal state.
+// page only reflects state — then mutate rows to prove the live no-reload progress,
+// the report, and every truthful terminal state.
+//
+// [E-42 criteria 1–2, 7] The pre-run estimate/budget gate is GONE and so are its two
+// tests: there is no Analyze button, no estimate round-trip and no figure on this
+// path, because analysis is enqueued server-side the moment ingest completes. What
+// replaces them below is the assertion that matters — a session in that exact state
+// offers nothing to press.
 
 process.env.ERIKA_DATA_DIR = process.env.ERIKA_DATA_DIR ?? ".playwright/e2e-data";
 const DB_PATH = process.env.ERIKA_DB_PATH ?? ".playwright/e2e.db";
@@ -78,47 +84,54 @@ function countAnalysisJobs(id: string): number {
 }
 
 test.describe("analysis UI", () => {
-  test("Analyze shows the pre-run estimate and remaining budget, then confirming starts the run (criterion 1)", async ({
-    page,
-  }) => {
+  test("an ingested, unanalysed session offers NOTHING to press (criteria 1–2)", async ({ page }) => {
     const id = await seedSession(4);
-    addSegment(id, 0, 0, 60_000); // one pending segment → a positive estimate
+    addSegment(id, 0, 0, 60_000);
 
     await page.goto(`/sessions/${id}`);
     const panel = page.locator("[data-analysis]");
     await expect(panel).toHaveAttribute("data-analysis-state", "idle");
 
-    await page.locator("[data-analyze]").click();
-
-    // The estimate figure and remaining budget come from the estimate endpoint.
-    await expect(page.locator("[data-figure='estimate-total']")).toBeVisible();
-    await expect(page.locator("[data-figure='estimate-total']")).toContainText("$");
-    await expect(page.locator("[data-figure='remaining']")).toContainText("$");
-    expect(countAnalysisJobs(id)).toBe(0); // nothing enqueued just from estimating
-
-    await page.locator("[data-confirm-analyze]").click();
-
-    // Confirming issued the POST: a job now exists and the orb picks it up.
-    await expect(panel).toHaveAttribute("data-analysis-state", "queued", { timeout: 10_000 });
-    await expect(page.locator("[data-analysis-progress]")).toBeVisible();
-    expect(countAnalysisJobs(id)).toBe(1);
+    // No control, under any name — counted from the live DOM, not grepped.
+    await expect(panel.locator("button")).toHaveCount(0);
+    await expect(page.locator("[data-analyze]")).toHaveCount(0);
+    await expect(page.locator("[data-confirm-analyze]")).toHaveCount(0);
+    // And no money on the path (criterion 7).
+    await expect(panel).not.toContainText("$");
+    expect(countAnalysisJobs(id)).toBe(0); // the page enqueues nothing; the worker does
   });
 
-  test("a session at its budget shows a truthful 'budget reached' state and never starts a run (criterion 1)", async ({
-    page,
-  }) => {
+  test("the home follows a session through its states with no reload (criterion 4)", async ({ page }) => {
     const id = await seedSession(4);
     addSegment(id, 0, 0, 60_000);
-    writeSettings(db(), { monthlyBudgetUsd: 1 });
-    recordSpend(db(), { model: "gpt-audio-1.5", contentHash: "x", costUsd: 1 }); // month is full
+    setAnalysisJob(id, "processing", "analyzing", 0.5);
 
-    await page.goto(`/sessions/${id}`);
-    await page.locator("[data-analyze]").click();
+    await page.goto("/");
+    const row = page.locator(`[data-session-id="${id}"]`);
+    await expect(row).toHaveAttribute("data-phase", "analysing");
+    await expect(page.locator("[data-sessions]")).toHaveAttribute("data-polling", "true");
 
-    await expect(page.locator("[data-budget-reached]")).toBeVisible();
-    await expect(page.locator("[data-budget-reached]")).toContainText("budget reached");
-    await expect(page.locator("[data-confirm-analyze]")).toHaveCount(0); // no way to start
-    expect(countAnalysisJobs(id)).toBe(0); // nothing enqueued
+    // Mark the live document so a reload (which would clear it) is detectable.
+    await page.evaluate(() => ((window as unknown as { __mark: number }).__mark = 1));
+
+    // The worker would do this; we do it directly. The HOME must react by itself —
+    // before E-42 it called load() on mount and after upload, and never again.
+    db().prepare("UPDATE analysis_jobs SET state='done', stage='done', progress=1 WHERE session_id=?").run(id);
+    addFinding(id, { category: "grammar", severity: "medium", startMs: 1000, endMs: 2000 });
+
+    await expect(row).toHaveAttribute("data-phase", "analysed", { timeout: 15_000 });
+    await expect(row).toContainText("1 mistake");
+
+    // Same document — no navigation happened.
+    expect(await page.evaluate(() => (window as unknown as { __mark?: number }).__mark)).toBe(1);
+
+    // And a settled screen stops asking: polling ends and the fetch count freezes.
+    await expect(page.locator("[data-sessions]")).toHaveAttribute("data-polling", "false", {
+      timeout: 15_000,
+    });
+    const count = await page.locator("[data-sessions]").getAttribute("data-poll-count");
+    await page.waitForTimeout(4000); // > two poll intervals
+    expect(await page.locator("[data-sessions]").getAttribute("data-poll-count")).toBe(count);
   });
 
   test("live progress advances to done without a reload, then polling stops (criterion 2)", async ({ page }) => {
@@ -200,12 +213,14 @@ test.describe("analysis UI", () => {
   test("terminal states each say their truthful thing: halted, failed, and done-with-zero (criterion 4)", async ({
     page,
   }) => {
-    // halted — a truthful budget message.
+    // halted — held, not failed, with a working way forward (E-42 criterion 8).
     const halted = await seedSession(3);
     setAnalysisJob(halted, "halted", "analyzing", 0.4, "Monthly budget reached.");
     await page.goto(`/sessions/${halted}`);
     await expect(page.locator("[data-analysis]")).toHaveAttribute("data-analysis-state", "halted");
-    await expect(page.locator("[data-analysis]").getByRole("status")).toContainText("Monthly budget reached");
+    await expect(page.locator("[data-analysis]").getByRole("status")).toContainText("budget is spent");
+    // The link the old copy promised and never provided ("raise the cap in Settings").
+    await expect(page.locator('[data-analysis] a[href="/settings"]')).toBeVisible();
 
     // failed — its stored error, not a fake success.
     const failed = await seedSession(3);
@@ -213,6 +228,8 @@ test.describe("analysis UI", () => {
     await page.goto(`/sessions/${failed}`);
     await expect(page.locator("[data-analysis]")).toHaveAttribute("data-analysis-state", "failed");
     await expect(page.locator("[data-analysis]").getByRole("alert")).toContainText("gpt-audio call failed: 500");
+    // A repair affordance, not a step in the flow (E-42 criterion 10).
+    await expect(page.locator("[data-retry-analysis]")).toBeVisible();
 
     // done with zero findings — a quiet, specific line (never "Great!").
     const clean = await seedSession(3);

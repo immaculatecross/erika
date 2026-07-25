@@ -23,7 +23,7 @@ describe("Archive row — correction-forward, error hidden until revealed (P1, D
   const entry: ArchiveEntry = {
     findingId: "f1",
     sessionId: "s1",
-    sessionCreatedAt: "2026-07-10 09:00:00",
+    sessionCapturedAt: "2026-07-10 09:00:00",
     sessionFilename: "day.wav",
     quote: QUOTE,
     correction: CORRECTION,

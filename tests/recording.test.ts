@@ -163,13 +163,19 @@ describe("takeOutcome (E-16b criterion 6)", () => {
   // slid quietly back to idle, so the person never learned their recording had
   // been discarded — the worst failure this app can have.
   it("reports a lost take rather than returning nothing quietly", () => {
-    expect(takeOutcome(null)).toEqual({ take: null, lost: true });
+    expect(takeOutcome(null, 1_700_000_000_000, 5_000)).toEqual({ take: null, lost: true });
     expect(TAKE_LOST_MESSAGE).toMatch(/lost/i);
     expect(TAKE_LOST_MESSAGE).toMatch(/record again/i);
   });
 
-  it("passes a good take through as an uploadable wav", () => {
+  it("passes a good take through as an uploadable wav, carrying when it started", () => {
     const blob = new Blob([new Uint8Array([1, 2, 3])]);
-    expect(takeOutcome(blob)).toEqual({ take: { blob, extension: "wav" }, lost: false });
+    // [E-42 criterion 5] The take carries the instant recording BEGAN and how long
+    // it ran: the first becomes `sessions.captured_at`, the second is what the
+    // keep/discard confirmation states.
+    expect(takeOutcome(blob, 1_700_000_000_000, 5_000)).toEqual({
+      take: { blob, extension: "wav", startedAt: 1_700_000_000_000, durationMs: 5_000 },
+      lost: false,
+    });
   });
 });

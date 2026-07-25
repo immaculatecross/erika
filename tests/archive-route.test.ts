@@ -37,7 +37,7 @@ let seq = 0;
 function seed(sessionId: string, createdAt: string, starts: number[]) {
   createSession(getDb(), { id: sessionId, originalFilename: `${sessionId}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 60 });
   // createSession stamps created_at with datetime('now'); pin it for deterministic order.
-  getDb().prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(createdAt, sessionId);
+  getDb().prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(createdAt, sessionId);
   for (const startMs of starts) {
     persistSegmentFindings(getDb(), {
       sessionId,
@@ -60,7 +60,7 @@ describe("listIncludedFindingsWithSession", () => {
     seed("s1", "2026-07-10 09:00:00", [1000]);
     const rows = listIncludedFindingsWithSession(getDb());
     expect(rows).toHaveLength(1);
-    expect(rows[0].sessionCreatedAt).toBe("2026-07-10 09:00:00");
+    expect(rows[0].sessionCapturedAt).toBe("2026-07-10 09:00:00");
     expect(rows[0].sessionFilename).toBe("s1.wav");
     expect(rows[0].startMs).toBe(1000);
   });

@@ -87,6 +87,15 @@ export function loadEnvLocal(
   cwd: string = process.cwd(),
   env: Record<string, string | undefined> = process.env,
 ): string[] {
+  // [E-42 criterion 11] An explicit opt-out, honoured here. A cold-start test must
+  // CONSTRUCT its cold start rather than inherit the host's: `tests/coldstart-
+  // keyless-worker.test.ts` used to spawn the worker with the repo root as its cwd
+  // and merely delete OPENAI_API_KEY from the child env — which this function then
+  // put straight back from `.env.local`, so on a configured machine the "keyless"
+  // worker ran WITH a key and made a live, billed model call. The test's real fix is
+  // an isolated working directory; this flag is the belt to that pair of braces, and
+  // it is deliberately opt-IN so nothing in normal use can silently lose its secrets.
+  if ((env.ERIKA_NO_ENV_FILE ?? "") === "1") return [];
   let text: string;
   try {
     text = readFileSync(path.join(cwd, ENV_LOCAL), "utf8");

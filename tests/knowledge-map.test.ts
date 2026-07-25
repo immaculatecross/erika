@@ -78,7 +78,7 @@ describe("buildKnowledgeMap — the data path, over the SHARED slip standing", (
     findings: { correction: string; category: "grammar" | "vocabulary" }[],
   ): void {
     createSession(db, { id, originalFilename: "t.wav", format: "wav", sizeBytes: 1, durationSeconds: 600 });
-    db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(createdAt, id);
+    db.prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(createdAt, id);
     upsertSegment(db, { sessionId: id, idx: 0, startMs: 0, endMs: 600_000, contentHash: `${id}-h` });
     persistSegmentFindings(db, {
       sessionId: id,

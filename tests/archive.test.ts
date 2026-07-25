@@ -17,7 +17,7 @@ function source(over: Partial<ArchiveSource> = {}): ArchiveSource {
   return {
     id,
     sessionId: "s1",
-    sessionCreatedAt: "2026-07-10 09:00:00",
+    sessionCapturedAt: "2026-07-10 09:00:00",
     sessionFilename: "s1.wav",
     quote: "he go to work",
     correction: "he goes to work",
@@ -37,8 +37,8 @@ const entry = (over: Partial<ArchiveEntry> = {}): ArchiveEntry => ({
 describe("buildEntries — chronological timeline", () => {
   it("orders by session date newest-first, then startMs ascending within a session", () => {
     // Session A is older; session B is newer. A carries two moments out of order.
-    const older = { sessionId: "A", sessionCreatedAt: "2026-07-10 09:00:00", sessionFilename: "a.wav" };
-    const newer = { sessionId: "B", sessionCreatedAt: "2026-07-12 09:00:00", sessionFilename: "b.wav" };
+    const older = { sessionId: "A", sessionCapturedAt: "2026-07-10 09:00:00", sessionFilename: "a.wav" };
+    const newer = { sessionId: "B", sessionCapturedAt: "2026-07-12 09:00:00", sessionFilename: "b.wav" };
     const built = buildEntries([
       source({ id: "a-late", ...older, startMs: 3000 }),
       source({ id: "a-early", ...older, startMs: 1000 }),
@@ -49,7 +49,7 @@ describe("buildEntries — chronological timeline", () => {
   });
 
   it("breaks ties deterministically by findingId at the same session and timestamp", () => {
-    const same = { sessionId: "S", sessionCreatedAt: "2026-07-10 09:00:00", startMs: 500 };
+    const same = { sessionId: "S", sessionCapturedAt: "2026-07-10 09:00:00", startMs: 500 };
     const built = buildEntries([source({ id: "z", ...same }), source({ id: "a", ...same })]);
     expect(built.map((e) => e.findingId)).toEqual(["a", "z"]);
   });
@@ -60,16 +60,16 @@ describe("buildEntries — chronological timeline", () => {
     expect(e.quote).toBe("I have 20 years");
     expect(e.correction).toBe("I am 20");
     expect(e.startMs).toBe(4200);
-    expect(e.sessionCreatedAt).toBe("2026-07-10 09:00:00");
+    expect(e.sessionCapturedAt).toBe("2026-07-10 09:00:00");
   });
 });
 
 describe("groupBySession — legible groups, order preserved", () => {
   it("collects each session's contiguous run into one group, newest session first", () => {
     const built = buildEntries([
-      source({ id: "a1", sessionId: "A", sessionCreatedAt: "2026-07-10 09:00:00", startMs: 1000 }),
-      source({ id: "a2", sessionId: "A", sessionCreatedAt: "2026-07-10 09:00:00", startMs: 2000 }),
-      source({ id: "b1", sessionId: "B", sessionCreatedAt: "2026-07-12 09:00:00", startMs: 500 }),
+      source({ id: "a1", sessionId: "A", sessionCapturedAt: "2026-07-10 09:00:00", startMs: 1000 }),
+      source({ id: "a2", sessionId: "A", sessionCapturedAt: "2026-07-10 09:00:00", startMs: 2000 }),
+      source({ id: "b1", sessionId: "B", sessionCapturedAt: "2026-07-12 09:00:00", startMs: 500 }),
     ]);
     const groups = groupBySession(built);
     expect(groups.map((g) => g.sessionId)).toEqual(["B", "A"]);

@@ -7,13 +7,19 @@ import { createSession } from "@/lib/sessions";
 import { upsertSegment } from "@/lib/segments";
 import { persistSegmentFindings, type Category } from "@/lib/analysis/findings";
 import { enqueueAnalysis } from "@/lib/analysis/cascade";
+import { analysisUnavailableMessage } from "@/lib/analysis-key";
 import { listSessionItems } from "@/lib/session-yield";
-import { analyzeGate } from "@/lib/sessions-list-view";
+import { sessionPhase } from "@/lib/sessions-list-view";
 
-// E-18 criteria 2–3: the sessions list reads each session's yield through the
-// canonical read-model (analysed speech, findings count, dominant category), and
-// the inline-Analyze gate mirrors the analysis POST route's own refusals exactly
-// — a session the server would 409 never shows the affordance.
+// E-18 criterion 2 / E-42 criterion 2: the sessions list reads each session's yield
+// through the canonical read-model, and `sessionPhase` says truthfully where a
+// recording is up to.
+//
+// The gate this file used to test — `analyzeGate`, which decided whether to OFFER an
+// Analyze button — is gone with the button (E-42). What replaces it is not an
+// affordance question but a state question, and the same discipline applies: every
+// pipeline position has exactly one phase, and no phase claims work that is not
+// happening.
 
 const HOUR = 3_600_000;
 
@@ -78,9 +84,12 @@ describe("listSessionItems — session yield (criterion 2)", () => {
     expect(it_.analysed).toBe(true);
     // Only the 2 witnessed segments denominate — the 3rd was never heard.
     expect(it_.sessionYield).toEqual({
-      analysedSpeechMs: 2 * HOUR,
       findingsCount: 4,
       dominantCategory: "grammar",
+      // Only the 2 witnessed segments were heard — the qualifier that stops "no
+      // mistakes found" reading as a clean bill of health on unheard audio.
+      segmentCount: 3,
+      analysedSegmentCount: 2,
     });
     expect(it_.segmentCount).toBe(3);
   });
@@ -102,9 +111,10 @@ describe("listSessionItems — session yield (criterion 2)", () => {
     analyseSegment(db, "z", 0, []);
     runJob(db, "z", "done");
     expect(item(db, "z").sessionYield).toEqual({
-      analysedSpeechMs: HOUR,
       findingsCount: 0,
       dominantCategory: null,
+      segmentCount: 1,
+      analysedSegmentCount: 1,
     });
   });
 
@@ -116,49 +126,94 @@ describe("listSessionItems — session yield (criterion 2)", () => {
     runJob(db, "h", "halted");
     const it_ = item(db, "h");
     expect(it_.analysed).toBe(true);
-    expect(it_.sessionYield).toEqual({ analysedSpeechMs: HOUR, findingsCount: 1, dominantCategory: "idiom" });
+    expect(it_.sessionYield).toEqual({
+      findingsCount: 1,
+      dominantCategory: "idiom",
+      segmentCount: 4,
+      analysedSegmentCount: 1,
+    });
   });
 });
 
-describe("analyzeGate — no false affordance (criterion 3)", () => {
-  it("offers Analyze exactly when the POST route would accept it", () => {
+describe("sessionPhase — one truthful position, never a false affordance (E-42 criterion 2)", () => {
+  it("an ingested session with speech and no run yet is WAITING, not idle-looking", () => {
     const db = freshDb();
     addSession(db, "ok");
     addSegments(db, "ok", 2);
-    expect(analyzeGate(item(db, "ok"))).toBe("analyze");
+    // No analysis job exists yet — the worker's sweep queues one within a tick, so
+    // "waiting to be listened to" is the honest word for both `idle` and `queued`.
+    expect(sessionPhase(item(db, "ok"))).toBe("analysis-queued");
   });
 
-  it("gates a session with no segments exactly as the route's 409 does", () => {
+  it("a session with no segments says so — a $0 run would report a clean bill of health", () => {
     const db = freshDb();
     addSession(db, "empty"); // ingest done, zero speech found
-    expect(analyzeGate(item(db, "empty"))).toBe("no-segments");
+    expect(sessionPhase(item(db, "empty"))).toBe("no-speech");
   });
 
-  it("gates a failed or still-running ingest — nothing to analyze", () => {
+  it("distinguishes a failed ingest from one still queued and one in flight", () => {
     const db = freshDb();
     addSession(db, "failed", "failed");
     addSession(db, "queued", "queued");
     addSession(db, "processing", "processing");
-    expect(analyzeGate(item(db, "failed"))).toBe("ingest-failed");
-    expect(analyzeGate(item(db, "queued"))).toBe("ingest-pending");
-    expect(analyzeGate(item(db, "processing"))).toBe("ingest-pending");
+    expect(sessionPhase(item(db, "failed"))).toBe("ingest-failed");
+    expect(sessionPhase(item(db, "queued"))).toBe("ingest-queued");
+    expect(sessionPhase(item(db, "processing"))).toBe("ingesting");
   });
 
-  it("says a queued or processing run is running rather than offering a second press", () => {
+  it("a run in flight reads as listening, and carries its real completion ratio", () => {
     const db = freshDb();
     addSession(db, "r");
-    addSegments(db, "r", 1);
-    enqueueAnalysis(db, "r");
-    expect(item(db, "r").analysisPending).toBe(true);
-    expect(analyzeGate(item(db, "r"))).toBe("running");
+    addSegments(db, "r", 4);
+    const job = enqueueAnalysis(db, "r");
+    db.prepare("UPDATE analysis_jobs SET state='processing', progress=0.5 WHERE id=?").run(job.id);
+    const it_ = item(db, "r");
+    expect(sessionPhase(it_)).toBe("analysing");
+    expect(it_.analysisProgress).toBe(0.5);
   });
 
-  it("an analysed session reports yield, not an affordance", () => {
+  it("a run the cap halted is HELD, not failed — a distinct phase with its own way out", () => {
+    const db = freshDb();
+    addSession(db, "cap");
+    addSegments(db, "cap", 2);
+    runJob(db, "cap", "halted");
+    expect(sessionPhase(item(db, "cap"))).toBe("budget-reached");
+  });
+
+  it("a run refused for want of a key is its own phase — permanent, not 'failed'", () => {
+    const db = freshDb();
+    addSession(db, "nokey");
+    addSegments(db, "nokey", 1);
+    const job = enqueueAnalysis(db, "nokey");
+    db.prepare("UPDATE analysis_jobs SET state='failed', error=? WHERE id=?").run(
+      analysisUnavailableMessage(),
+      job.id,
+    );
+    const it_ = item(db, "nokey");
+    expect(it_.analysisNeedsKey).toBe(true);
+    expect(sessionPhase(it_)).toBe("needs-key");
+  });
+
+  it("any OTHER failure stays a plain failure, so the two are never conflated", () => {
+    const db = freshDb();
+    addSession(db, "boom");
+    addSegments(db, "boom", 1);
+    const job = enqueueAnalysis(db, "boom");
+    db.prepare("UPDATE analysis_jobs SET state='failed', error=? WHERE id=?").run(
+      "gpt-audio call failed: 500",
+      job.id,
+    );
+    const it_ = item(db, "boom");
+    expect(it_.analysisNeedsKey).toBe(false);
+    expect(sessionPhase(it_)).toBe("analysis-failed");
+  });
+
+  it("an analysed session reports its yield", () => {
     const db = freshDb();
     addSession(db, "a");
     addSegments(db, "a", 1);
     analyseSegment(db, "a", 0, ["grammar"]);
     runJob(db, "a", "done");
-    expect(analyzeGate(item(db, "a"))).toBe("analysed");
+    expect(sessionPhase(item(db, "a"))).toBe("analysed");
   });
 });

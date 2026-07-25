@@ -83,9 +83,18 @@ describe("the cap is hard with the whole pool racing (criterion 2, end-to-end)",
   it("admits exactly what fits, halts, and never commits past the cap", async () => {
     const db = ws();
     seed(db, "s1", 20);
-    // Each all-clear segment costs one mini call: 60s / 1.5 = 40s compressed at
-    // $0.006/min = $0.004. A $0.02 cap fits exactly 5; 8 workers race for them.
-    writeSettings(db, { monthlyBudgetUsd: 0.02 });
+    // Each all-clear segment costs one mini triage call, hand-computed from the
+    // PUBLISHED per-token prices (docs/research/spike-1/spike-3), not from
+    // `callCost`:
+    //   audio: (60 s ÷ 1.5) = 40 s = ⅔ min × 660 tok/min × $10/1M = $0.0044
+    //   text:  600 prompt tok × $0.60/1M + 400 out × $2.40/1M     = $0.00132
+    // [E-42 criterion 13] The text half was $0 before this milestone, so a triage
+    // call was modelled at $0.0044 and its prompt was free.
+    const perTriage =
+      (40 / 60) * 660 * (10 / 1_000_000) + 600 * (0.6 / 1_000_000) + 400 * (2.4 / 1_000_000);
+    const FITS = 5;
+    // A cap that admits exactly five such calls and not a sixth; 8 workers race for them.
+    writeSettings(db, { monthlyBudgetUsd: FITS * perTriage });
     let triageCalls = 0;
     const client: AudioModelClient = {
       async triage() {
@@ -104,9 +113,9 @@ describe("the cap is hard with the whole pool racing (criterion 2, end-to-end)",
     // full-deep path (no triage) under E-28. The reservation gate it proves is the same.
     const done = await runAnalysisJob(db, job.id, client, { tempo: TEMPO, concurrency: 8, deepFullMaxMinutes: 0 });
     expect(done.state).toBe("halted");
-    expect(triageCalls).toBe(5); // only the 5 that reserved ever called the model
-    expect(monthToDateSpend(db)).toBeCloseTo(0.02, 9); // exactly the cap...
-    expect(monthToDateSpend(db)).toBeLessThanOrEqual(0.02 + 1e-9); // ...never a cent over
+    expect(triageCalls).toBe(FITS); // only the 5 that reserved ever called the model
+    expect(monthToDateSpend(db)).toBeCloseTo(FITS * perTriage, 9); // exactly the cap...
+    expect(monthToDateSpend(db)).toBeLessThanOrEqual(FITS * perTriage + 1e-9); // ...never over
     // No pending reservation lingers: winners finalized, the refused made no row.
     expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger WHERE state='pending'").get() as { n: number }).n).toBe(0);
     db.close();

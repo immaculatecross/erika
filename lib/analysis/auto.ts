@@ -33,8 +33,14 @@ const PENDING_SQL = `
     JOIN ingest_jobs j ON j.session_id = s.id AND j.state = 'done'
    WHERE EXISTS (SELECT 1 FROM segments sg WHERE sg.session_id = s.id)
      AND NOT EXISTS (SELECT 1 FROM analysis_jobs a WHERE a.session_id = s.id)
-   ORDER BY s.created_at, s.id
+   ORDER BY j.created_at, s.id
 `;
+// Ordered by the INGEST JOB's age — the order work became ready — and deliberately
+// not by anything about the session's own timeline. This is a queue, so "oldest
+// pending work first" is the rule; neither when the learner spoke nor when the row
+// was written is the question being asked (E-42 criterion 6's opposite failure:
+// swapping every timestamp for the capture instant would be just as wrong as
+// reading the upload instant for a capture claim).
 
 /** Does this session have speech AND no analysis job at all? */
 function needsAutomaticRun(db: Db, sessionId: string): boolean {

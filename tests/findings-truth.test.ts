@@ -78,7 +78,7 @@ function seed(
   opts: { segments: number; analysed: number; state: AnalysisState; extraJob?: AnalysisState },
 ): void {
   createSession(db, { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
-  db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(`${WEEK} 09:00:00`, id);
+  db.prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(`${WEEK} 09:00:00`, id);
   for (let i = 0; i < opts.segments; i++) {
     upsertSegment(db, {
       sessionId: id,
@@ -197,7 +197,7 @@ describe("PR #24 repair — a shared witness is not an analysis of the session",
 
   function seedCopy(db: Db, id: string, day: string): void {
     createSession(db, { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 3600 });
-    db.prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(`${day} 09:00:00`, id);
+    db.prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(`${day} 09:00:00`, id);
     upsertSegment(db, { sessionId: id, idx: 0, startMs: 0, endMs: HOUR, contentHash: DUP });
   }
 

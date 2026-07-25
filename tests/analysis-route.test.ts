@@ -3,13 +3,19 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { tmpDir } from "./helpers";
 
-// The two analysis routes. GET estimate prices the pending segments and reports
-// budget headroom; POST re-checks the budget server-side and enqueues a run —
-// refusing (402) when the month's cap is already reached. Real DB under a
-// throwaway dir; env is set before the lazy getDb() binds.
+// The analysis route. GET is the read-only report surface; POST re-checks the
+// budget server-side and enqueues a run — refusing (402) when the month's cap is
+// already reached. Real DB under a throwaway dir; env is set before the lazy
+// getDb() binds.
+//
+// [E-42 criterion 7] The GET-estimate route is GONE, along with the tests that
+// drove it. Nothing on the capture path shows a price any more: analysis starts by
+// itself, so there is no moment at which a figure could be presented for approval,
+// and presenting one anyway would be decoration. POST survives as the detail page's
+// repair affordance for a FAILED run (criterion 10), which is why its own budget
+// refusal is still tested below.
 
 let root: string;
-let estimateGET: typeof import("@/app/api/sessions/[id]/analysis/estimate/route").GET;
 let reportGET: typeof import("@/app/api/sessions/[id]/analysis/route").GET;
 let startPOST: typeof import("@/app/api/sessions/[id]/analysis/route").POST;
 let getDb: typeof import("@/lib/db").getDb;
@@ -24,7 +30,6 @@ beforeAll(async () => {
   root = tmpDir("erika-analysis-route-");
   process.env.ERIKA_DB_PATH = path.join(root, "erika.db");
   process.env.ERIKA_DATA_DIR = root;
-  estimateGET = (await import("@/app/api/sessions/[id]/analysis/estimate/route")).GET;
   reportGET = (await import("@/app/api/sessions/[id]/analysis/route")).GET;
   startPOST = (await import("@/app/api/sessions/[id]/analysis/route")).POST;
   getDb = (await import("@/lib/db")).getDb;
@@ -46,21 +51,6 @@ function seed(id: string) {
   createSession(getDb(), { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes: 1, durationSeconds: 600 });
   upsertSegment(getDb(), { sessionId: id, idx: 0, startMs: 0, endMs: 60_000, contentHash: `${id}-h0` });
 }
-
-describe("GET analysis estimate", () => {
-  it("404s for an unknown session", async () => {
-    expect((await estimateGET(req(), ctx("nope"))).status).toBe(404);
-  });
-
-  it("returns a positive estimate and budget headroom for pending segments", async () => {
-    seed("est");
-    const body = await (await estimateGET(req(), ctx("est"))).json();
-    expect(body.estimate.pendingCount).toBe(1);
-    expect(body.estimate.totalUsd).toBeGreaterThan(0);
-    expect(body.budgetUsd).toBe(50); // E-28 raised the default cap 25 → 50 (D-20)
-    expect(body.remainingUsd).toBeGreaterThan(0);
-  });
-});
 
 describe("POST start analysis", () => {
   it("enqueues a queued job (202) when budget allows", async () => {

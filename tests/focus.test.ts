@@ -30,7 +30,7 @@ function fnd(category: Category, severity: Severity = "medium") {
 }
 
 function session(over: Partial<AnalyzedSession> = {}): AnalyzedSession {
-  return { id: "s", createdAt: "2026-01-01 00:00:00", speechMs: HOUR, findings: [], ...over };
+  return { id: "s", capturedAt: "2026-01-01 00:00:00", speechMs: HOUR, findings: [], ...over };
 }
 
 function byCat(model: ReturnType<typeof computeFocus>) {
@@ -94,8 +94,8 @@ describe("[P1] the per-hour rate is gated below the analyzed-speech floor (D-14)
 
 describe("computeFocus — trend across sessions (criterion 2)", () => {
   it("reflects a falling rate as improving, regardless of input order", () => {
-    const early = session({ id: "early", createdAt: "2026-01-01 00:00:00", speechMs: HOUR, findings: [fnd("grammar"), fnd("grammar"), fnd("grammar"), fnd("grammar")] });
-    const late = session({ id: "late", createdAt: "2026-03-01 00:00:00", speechMs: HOUR, findings: [fnd("grammar")] });
+    const early = session({ id: "early", capturedAt: "2026-01-01 00:00:00", speechMs: HOUR, findings: [fnd("grammar"), fnd("grammar"), fnd("grammar"), fnd("grammar")] });
+    const late = session({ id: "late", capturedAt: "2026-03-01 00:00:00", speechMs: HOUR, findings: [fnd("grammar")] });
     // Pass the later bucket first — chronological ordering must still hold.
     const model = computeFocus([late, early]);
     expect(model.trend.map((t) => t.sessionId)).toEqual(["early", "late"]);
@@ -106,8 +106,8 @@ describe("computeFocus — trend across sessions (criterion 2)", () => {
   });
 
   it("reads a rising rate as worsening and a single bucket as flat", () => {
-    const a = session({ id: "a", createdAt: "2026-01-01 00:00:00", speechMs: HOUR, findings: [fnd("idiom")] });
-    const b = session({ id: "b", createdAt: "2026-02-01 00:00:00", speechMs: HOUR, findings: [fnd("idiom"), fnd("idiom"), fnd("idiom")] });
+    const a = session({ id: "a", capturedAt: "2026-01-01 00:00:00", speechMs: HOUR, findings: [fnd("idiom")] });
+    const b = session({ id: "b", capturedAt: "2026-02-01 00:00:00", speechMs: HOUR, findings: [fnd("idiom"), fnd("idiom"), fnd("idiom")] });
     expect(computeFocus([a, b]).overallTrend).toBe("worsening");
     expect(computeFocus([a]).overallTrend).toBe("flat");
   });

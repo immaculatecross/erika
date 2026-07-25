@@ -199,7 +199,7 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
     setSegmentAttribution(db, listSegments(db, "s")[0].id, 0.95, 1);
     // Capture on Tuesday morning; the deep pass runs now (Friday evening, whenever
     // "now" is) — Erika's normal day-scale async case: dump today, Analyze later.
-    db.prepare("UPDATE sessions SET created_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
+    db.prepare("UPDATE sessions SET captured_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
     await analyse(db, "s");
     // Sanity: the two instants really do differ, so this test can fail.
     const mintDay = localDay(
@@ -227,7 +227,7 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
       const db = ws();
       seed(db, "s", ["userhash"]);
       setSegmentAttribution(db, listSegments(db, "s")[0].id, 0.95, 1);
-      db.prepare("UPDATE sessions SET created_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
+      db.prepare("UPDATE sessions SET captured_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
       await analyse(db, "s");
       expect(buildTodayThread(db, "2026-07-21", [ITEM])!.partOfDay).toBe("this morning");
       db.close();
@@ -247,7 +247,7 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
       seed(db, "s", ["userhash"]);
       const seg = listSegments(db, "s")[0];
       setSegmentAttribution(db, seg.id, 0.95, 1);
-      db.prepare("UPDATE sessions SET created_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
+      db.prepare("UPDATE sessions SET captured_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
       await analyse(db, "s");
       db.prepare("UPDATE segments SET start_ms = ? WHERE id = ?").run(13 * 3_600_000, seg.id);
       expect(buildTodayThread(db, "2026-07-21", [ITEM])!.partOfDay).toBe("this evening");
@@ -273,7 +273,7 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
     await analyse(db, "s");
     const day = localDay();
     expect(buildTodayThread(db, day, [ITEM])).not.toBeNull();
-    db.prepare("UPDATE sessions SET created_at = 'not-a-date' WHERE id = 's'").run();
+    db.prepare("UPDATE sessions SET captured_at = 'not-a-date' WHERE id = 's'").run();
     expect(buildTodayThread(db, day, [ITEM])).toBeNull();
     db.close();
   });
@@ -290,10 +290,10 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
     expect(buildTodayThread(db, day, [ITEM])).not.toBeNull();
 
     const bogus = `${day} 25:99:99`; // in text range, impossible clock time
-    db.prepare("UPDATE sessions SET created_at = ? WHERE id = 's'").run(bogus);
+    db.prepare("UPDATE sessions SET captured_at = ? WHERE id = 's'").run(bogus);
     // Prove the premise: SQL really does hand this row through.
     const survived = db
-      .prepare("SELECT COUNT(*) AS n FROM sessions WHERE created_at >= ? AND created_at < ?")
+      .prepare("SELECT COUNT(*) AS n FROM sessions WHERE captured_at >= ? AND captured_at < ?")
       .get(`${day} 00:00:00`, `${day} 99:99:99`) as { n: number };
     expect(survived.n).toBe(1);
     expect(Number.isNaN(Date.parse(bogus.replace(" ", "T") + "Z"))).toBe(true);
@@ -346,7 +346,7 @@ describe("today's thread — the beat exists only when it is TRUE", () => {
       seed(db, "s", ["userhash"]);
       const seg = listSegments(db, "s")[0];
       setSegmentAttribution(db, seg.id, 0.95, 1);
-      db.prepare("UPDATE sessions SET created_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
+      db.prepare("UPDATE sessions SET captured_at = '2026-07-21 05:00:00' WHERE id = 's'").run();
       await analyse(db, "s");
 
       // A second occurrence of the SAME audio, 1 h later — still the morning. Agreeing

@@ -51,7 +51,7 @@ async function seedSession(createdAt: string, rows: Row[], withAudio = false): P
     sizeBytes = fs.statSync(sourcePath(id, "wav")).size;
   }
   createSession(db(), { id, originalFilename: `${id}.wav`, format: "wav", sizeBytes, durationSeconds: 8 });
-  db().prepare("UPDATE sessions SET created_at = ? WHERE id = ?").run(createdAt, id);
+  db().prepare("UPDATE sessions SET captured_at = ? WHERE id = ?").run(createdAt, id);
   for (const r of rows) {
     persistSegmentFindings(db(), {
       sessionId: id,
