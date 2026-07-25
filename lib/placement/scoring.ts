@@ -43,17 +43,39 @@ export interface BandScore {
   corrected: number;
 }
 
+/**
+ * Why an estimate is not trustworthy, or null when it is. `calibrated` is exactly
+ * `caveat === null`, so the UI's rough-placement line is driven by real confidence and
+ * not by sample size alone (RETRO-004 §DE-2 — see `scorePlacement`).
+ */
+export type PlacementCaveat =
+  /** Too many non-words claimed as known: the answers do not separate known from unknown. */
+  | "response-style"
+  /** A band above the claimed level cleared while a band below it failed — noise, not a level. */
+  | "inconsistent"
+  /** Too few items to estimate from. */
+  | "thin-sample";
+
 export interface PlacementResult {
   /** Non-words marked "known" ÷ non-words presented — the response-style measure. */
   falseAlarmRate: number;
   pseudoPresented: number;
   bands: BandScore[];
-  /** Highest band still reliably recognized (corrected ≥ threshold), or null when
-   *  even A1 is not reliably recognized (a true beginner). */
+  /** The level claimed: the top of the CONTIGUOUS run of cleared bands starting at A1,
+   *  or null when A1 itself is not reliably recognized. Never a high band floating above
+   *  failed lower ones (§DE-2). */
   level: Band | null;
-  /** False → the sample was too thin for a trustworthy estimate; the caller degrades
-   *  truthfully ("a rough placement"). The band labels are always a frequency proxy,
-   *  never a measured CEFR, regardless of this flag. */
+  /** The highest band clearing the threshold whether or not the run below it holds —
+   *  DIAGNOSTIC ONLY. Kept because the gap between this and `level` is precisely what
+   *  the old scorer mistook for a level. */
+  highestCleared: Band | null;
+  /** True when `level` and `highestCleared` agree — no cleared band above a failed one. */
+  contiguous: boolean;
+  /** Why the estimate is rough, or null when it is trustworthy. */
+  caveat: PlacementCaveat | null;
+  /** False → the caller MUST degrade truthfully ("a rough placement" plus the reason).
+   *  Equal to `caveat === null`. The band labels are always a frequency proxy, never a
+   *  measured CEFR, regardless of this flag. */
   calibrated: boolean;
 }
 
@@ -65,6 +87,20 @@ export const RECOGNITION_THRESHOLD = 0.5;
 export const MIN_PSEUDO = 8;
 export const MIN_PER_BAND = 4;
 
+/**
+ * Above this false-alarm rate the answers are not a measurement.
+ *
+ * [RETRO-004 §DE-2] `calibrated` used to check sample sizes ONLY, so the reviewer's
+ * measured fa of 0.5625 — better than half the invented words claimed as known —
+ * returned `calibrated: true` and the UI showed a bare "Placed around C2." with no
+ * caveat. The most wrong placements were shown the most confidently. A learner
+ * discriminating properly sits near 0; 0.25 (4 of 16 non-words) is already careless,
+ * and past it the yes-bias correction is extrapolating from a response style rather
+ * than measuring vocabulary. The correction still applies below the threshold — this
+ * only decides whether the result may be presented as confident.
+ */
+export const MAX_FALSE_ALARM_RATE = 0.25;
+
 function clamp01(x: number): number {
   return x < 0 ? 0 : x > 1 ? 1 : x;
 }
@@ -75,7 +111,9 @@ function clamp01(x: number): number {
  * (hitRate − fa)/(1 − fa), clamped — the guessing-corrected proportion. A learner
  * who says yes to everything has fa = 1, so every corrected value collapses to 0
  * (they read as a true beginner, not advanced — the whole point of the non-words).
- * The level is the highest band whose corrected recognition clears the threshold.
+ *
+ * The level is the top of the CONTIGUOUS run of cleared bands starting at A1, and the
+ * result carries a `caveat` whenever it must not be presented as confident.
  */
 export function scorePlacement(answers: PlacementAnswer[]): PlacementResult {
   const pseudo = answers.filter((a) => a.kind === "pseudo");
@@ -93,21 +131,53 @@ export function scorePlacement(answers: PlacementAnswer[]): PlacementResult {
     return { band, presented, hits, hitRate, corrected };
   });
 
-  // Level = the highest band that clears the threshold. Not required to be
-  // contiguous — a dip at one band does not veto a clear higher band, but because
-  // recognition tracks frequency this is almost always the top of a contiguous run.
+  const clears = (b: BandScore) => b.presented >= 1 && b.corrected >= RECOGNITION_THRESHOLD;
+
+  // [RETRO-004 §DE-2] Level = the top of the CONTIGUOUS run of cleared bands, walking
+  // up from A1. It used to be "the highest band that clears, not required to be
+  // contiguous", justified by the claim that recognition tracks frequency so this is
+  // almost always the top of a contiguous run. Over 8 words per band that claim is
+  // false often enough to be dangerous: the reviewer's careless run FAILED A1 (0.43),
+  // FAILED A2 (0.14) and FAILED C1 (0.43) yet was placed at C2 because C2 alone came
+  // up 1.00 — one band of sampling noise deciding everything, and the scorer never
+  // noticed it was placing a learner who cannot recognize the thousand commonest words
+  // at the top of the scale. Requiring the run to hold from A1 means a false pass now
+  // needs EVERY lower band to pass too, which noise does not do; a band that was
+  // genuinely not sampled (presented 0) is skipped rather than breaking the run.
   let level: Band | null = null;
   for (const b of bands) {
-    if (b.presented >= 1 && b.corrected >= RECOGNITION_THRESHOLD) level = b.band;
+    if (b.presented === 0) continue;
+    if (!clears(b)) break;
+    level = b.band;
   }
 
+  // Diagnostic: the old, credulous answer. Where it exceeds `level`, a cleared band is
+  // floating above a failed one — an incoherent result, reported as such.
+  let highestCleared: Band | null = null;
+  for (const b of bands) if (clears(b)) highestCleared = b.band;
+  const contiguous = level === highestCleared;
+
   const countedBands = bands.filter((b) => b.presented > 0);
-  const calibrated =
+  const sampleOk =
     pseudoPresented >= MIN_PSEUDO &&
     countedBands.length > 0 &&
     countedBands.every((b) => b.presented >= MIN_PER_BAND);
 
-  return { falseAlarmRate: fa, pseudoPresented, bands, level, calibrated };
+  // Ordered by how much each undermines the estimate. Response style comes first: if
+  // the non-word control failed there is no measurement to caveat, only answers.
+  const caveat: PlacementCaveat | null =
+    fa > MAX_FALSE_ALARM_RATE ? "response-style" : !contiguous ? "inconsistent" : !sampleOk ? "thin-sample" : null;
+
+  return {
+    falseAlarmRate: fa,
+    pseudoPresented,
+    bands,
+    level,
+    highestCleared,
+    contiguous,
+    caveat,
+    calibrated: caveat === null,
+  };
 }
 
 /** The lemma item ids of real words the learner genuinely recognized (marked known)

@@ -25,6 +25,14 @@ export {
   type SeedPlacementResult,
 } from "./seed-placement";
 export {
+  currentPlacementRun,
+  listPlacementRuns,
+  placementSeedRef,
+  recordPlacementRun,
+  VISIBLE_PLACEMENT_EVIDENCE,
+  type PlacementRun,
+} from "./placement-runs";
+export {
   evidenceToGrade,
   deriveStatus,
   deriveRecordingAttested,

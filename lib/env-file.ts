@@ -18,8 +18,11 @@ import path from "node:path";
 // directly unit-testable, which a runtime flag is not. Documented in the README.
 //
 // (The original rationale here — "ingest-only runs legitimately have no key file" —
-// stopped being true in the same PR that wrote it: `startupEnvError` below now
-// exits the worker non-zero without a key, so there is no keyless run to protect.)
+// was true all along, and RETRO-004 §DE-1 restored it. A version of this file briefly
+// claimed the opposite because `startupEnvError` exited the worker non-zero without a
+// key; that gate is gone. Ingest — normalisation, VAD, hashing, segmenting, duration,
+// the timeline — makes ZERO model calls, so a keyless run is the shipped default's
+// most important run, not an edge case.)
 
 /** The file the app and the worker both take their secrets from (never committed). */
 export const ENV_LOCAL = ".env.local";
@@ -38,7 +41,7 @@ export const ENV_LOCAL = ".env.local";
  * `KEY=sk-abc # note` is `sk-abc`, `KEY= # note` is empty — while a `#` inside a
  * token is data (`sk-ab#cd`; a secret may legitimately contain one). Anything
  * less yields a silently corrupted secret from a common dotenv habit, which
- * `startupEnvError` waves through as non-empty and OpenAI rejects as a 401 at the
+ * `hasAnalysisKey` waves through as non-empty and OpenAI rejects as a 401 at the
  * first model call.
  */
 export function parseEnvFile(text: string): Record<string, string> {
@@ -98,18 +101,44 @@ export function loadEnvLocal(
 /** The variable the analysis cascade cannot run without (lib/analysis/audio-model). */
 export const REQUIRED_KEY = "OPENAI_API_KEY";
 
+/** Is a usable analysis key present? Blank counts as absent. */
+export function hasAnalysisKey(env: Record<string, string | undefined> = process.env): boolean {
+  return (env[REQUIRED_KEY] ?? "").trim() !== "";
+}
+
 /**
- * The startup complaint, or null when the environment is usable. Returned rather
- * than thrown so it is testable without a process exit; the worker prints it and
- * exits non-zero, which is the whole point — failing at boot with the fix in the
- * message beats failing later inside a job with "OPENAI_API_KEY is not set".
+ * The startup NOTICE about a missing key, or null when one is present.
+ *
+ * [RETRO-004 §DE-1] This used to be `startupEnvError`, and the worker exited 1 on it.
+ * That made the app's own instruction a closed loop: an upload sat at `Queued 0%`, the
+ * session page correctly said "start the worker with `npm run worker`", the user ran
+ * it, it printed two lines and quit, and nothing changed — with no way out from inside
+ * the product. The gate was also aimed at the wrong stage: ingest makes zero model
+ * calls, so it was a blanket startup check protecting work that runs much later.
+ *
+ * So this is a notice, not an error. The worker prints it and carries on draining the
+ * ingest queue; only an ANALYSIS job is refused, terminally and per-job, at the point
+ * a model call is actually required (`analysisUnavailableMessage`). It is returned
+ * rather than printed so it stays testable.
  */
-export function startupEnvError(
+export function startupKeyNotice(
   env: Record<string, string | undefined> = process.env,
 ): string | null {
-  if ((env[REQUIRED_KEY] ?? "").trim() !== "") return null;
+  if (hasAnalysisKey(env)) return null;
   return [
-    `[worker] ${REQUIRED_KEY} is not set — analysis jobs would fail at the first model call.`,
-    `[worker] Put it in ${ENV_LOCAL} at the repo root (see .env.example), then run \`npm run worker\` again.`,
+    `[worker] ${REQUIRED_KEY} is not set — ingest will run normally; analysis is unavailable.`,
+    `[worker] Recordings will be segmented and their timeline built. To analyze them, put the key in`,
+    `[worker] ${ENV_LOCAL} at the repo root (see .env.example) and restart the worker.`,
   ].join("\n");
+}
+
+/**
+ * The message an analysis job carries when it is refused for want of a key. Stored on
+ * the job and rendered verbatim by the session page ("Analysis failed — …"), so it is
+ * written for the person reading it: what is wrong, that it is permanent until they
+ * act, and the exact fix. Never "unavailable right now" — nothing about this server
+ * changes on its own, and promising transience makes people retry forever (§DE-3).
+ */
+export function analysisUnavailableMessage(): string {
+  return `no ${REQUIRED_KEY} is set, so analysis cannot run. Add it to ${ENV_LOCAL} at the repo root (see .env.example), restart the worker, and analyze again. Your recording, its segments and its timeline are already saved.`;
 }

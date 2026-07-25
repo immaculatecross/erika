@@ -17,23 +17,52 @@ import type { PlacementAnswer } from "@/lib/placement/scoring";
 // captures — a short speaking sample that runs through the NORMAL capture→analysis
 // path, and a ~45 s enrollment take stored on-device for E-36. One factual line when
 // the check lands the level; no confetti, no score theatrics (D-24).
+//
+// "Re-runnable" is now true rather than aspirational (RETRO-004 §DE-2): a later run
+// SUPERSEDES the earlier one, so re-taking the check visibly changes the daily plan.
+// That is why a rough result offers "Take the check again" right here — it is the way
+// out of a careless placement, and until v0.6 there wasn't one.
 
 type Step = "intro" | "check" | "result";
 
 interface PlacementResult {
   level: string | null;
   calibrated: boolean;
+  /** Why the estimate is rough — see lib/placement/scoring PlacementCaveat. */
+  caveat?: "response-style" | "inconsistent" | "thin-sample" | null;
   seededWords: number;
   seededRules: number;
 }
 
 const CAPTION = "text-[13px] font-medium uppercase tracking-[0.06em] text-secondary";
 
+// [RETRO-004 §DE-2] The result line used to be "Placed around C2." with the single
+// sentence "This is a rough placement." appended when `!calibrated` — and `calibrated`
+// only checked sample sizes, so a run that FAILED A1 and A2 was shown as a confident C2
+// with no caveat at all. The scorer now refuses to claim a level whose lower bands fail
+// and reports WHY confidence is low; this states both, plainly, and never implies more
+// than was measured. Calm and factual, no alarm and no cheerleading (D-24).
+const CAVEAT_REASON: Record<NonNullable<PlacementResult["caveat"]>, string> = {
+  "response-style": "Several invented words were marked known, so the answers cannot separate the words you know from the ones you do not.",
+  inconsistent: "Recognition was uneven — some less common words were marked known while more common ones were not — so only the run from the most common words up is counted.",
+  "thin-sample": "The check was short.",
+};
+
+/** The honest line when no level can be claimed and the answers say why. */
+function unplaceableLine(r: PlacementResult): string {
+  const reason = r.caveat ? ` ${CAVEAT_REASON[r.caveat]}` : "";
+  return `The check could not place you.${reason} Nothing has been assumed about your level — your daily plan is unchanged. You can take the check again whenever you like.`;
+}
+
 function levelLine(r: PlacementResult): string {
+  // No level AND a reason to distrust the answers: say so, rather than reporting a
+  // beginner who never said they were one.
+  if (r.level === null && r.caveat && r.caveat !== "thin-sample") return unplaceableLine(r);
+
   const where = r.level ? `around ${r.level}` : "at the very start";
-  const rough = r.calibrated ? "" : " This is a rough placement.";
-  const rules = r.seededRules > 0 ? ` ${r.seededRules} grammar ${r.seededRules === 1 ? "point" : "points"} below it are marked seen.` : "";
   const words = r.seededWords > 0 ? ` ${r.seededWords} ${r.seededWords === 1 ? "word" : "words"} you knew are now in your model.` : "";
+  const rules = r.seededRules > 0 ? ` ${r.seededRules} grammar ${r.seededRules === 1 ? "point" : "points"} below it are marked seen.` : "";
+  const rough = r.calibrated ? "" : ` This is a rough placement.${r.caveat ? ` ${CAVEAT_REASON[r.caveat]}` : ""}`;
   return `Placed ${where}.${words}${rules}${rough}`;
 }
 
@@ -58,6 +87,21 @@ export default function PlacementPage() {
       alive = false;
     };
   }, []);
+
+  // The in-product way out (§DE-2). A re-take supersedes this run: the previous
+  // placement's seeded grammar stops counting, so the daily plan actually changes. A
+  // FRESH check is fetched so the second run is not the same 64 words.
+  async function retake() {
+    setResult(null);
+    setItems([]);
+    setStep("check");
+    try {
+      const body = (await (await fetch("/api/placement")).json()) as { check: PlacementCheckItem[] };
+      setItems(body.check);
+    } catch {
+      setStep("intro");
+    }
+  }
 
   async function submit(answers: PlacementAnswer[]) {
     setLoading(true);
@@ -97,6 +141,16 @@ export default function PlacementPage() {
             <p data-level-line className="mt-2 text-[17px] text-ink">
               {loading ? "Scoring…" : result ? levelLine(result) : ""}
             </p>
+            {!loading && result && !result.calibrated && (
+              <button
+                type="button"
+                data-retake
+                onClick={retake}
+                className="mt-3 inline-flex rounded-full bg-card px-4 py-2 text-[15px] font-medium text-ink shadow-card transition-transform active:scale-[0.98]"
+              >
+                Take the check again
+              </button>
+            )}
           </motion.header>
 
           {/* Optional speaking sample — the NORMAL capture→analysis path (E-17). */}
@@ -156,6 +210,7 @@ export default function PlacementPage() {
           <p className="mt-2 text-[17px] text-secondary">
             A few minutes of quick yes/no on Italian words tells Erika where to start you — so your daily lessons begin
             near your level, not at the alphabet. Some of the words are invented; say so when one looks made up.
+            You can re-take this any time: the most recent run is the one that counts, and it replaces the last one.
           </p>
         </motion.header>
         <motion.div variants={staggerItem(reduced)}>

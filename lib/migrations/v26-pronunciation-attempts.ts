@@ -6,9 +6,19 @@ import type { Migration } from "./index";
 // two are functionally independent (pronunciation tables vs the repair ledger), but the
 // runner and `tests/migrations.test.ts` are built on versions only ever increasing, and
 // a latent ordering oddity is exactly what bites a future migration that DOES depend on
-// order. Renumbering is legitimate here precisely because v24 was never merged and never
-// shipped — the "never edit a shipped migration" rule does not apply to one that existed
-// only on this branch.
+// order.
+//
+// **CORRECTION (RETRO-004 technical lens §C1).** This comment used to say the renumber
+// was safe "precisely because v24 was never merged and never shipped". That was false
+// where it counts — in a database. v24 was never merged to master, but it WAS applied:
+// it ran on `feat/pronunciation-studio` (commit 5c32ac6, then 2bcc810), so every machine
+// that started the app from that branch holds the `_migrations` row
+// `(24, 'pronunciation_attempts')` and these tables. The renumber shipped with no repair
+// step, and v26's bare `CREATE TABLE` below then threw `table pronunciation_visits
+// already exists` on every boot, permanently bricking those databases. "Never merged" is
+// not the same as "never applied", and only the second one makes a renumber free.
+// The repair is `lib/migrations/reconcile.ts`, which runs before the migration loop and
+// rewrites that stale ledger row to 26. This migration itself is deliberately unchanged.
 //
 // A scripted Italian drill is heard in a native
 // rendition, re-recorded by the learner, and scored by Azure Pronunciation Assessment

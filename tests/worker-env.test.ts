@@ -1,13 +1,26 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ENV_LOCAL, loadEnvLocal, parseEnvFile, REQUIRED_KEY, startupEnvError } from "@/lib/env-file";
+import {
+  analysisUnavailableMessage,
+  ENV_LOCAL,
+  hasAnalysisKey,
+  loadEnvLocal,
+  parseEnvFile,
+  REQUIRED_KEY,
+  startupKeyNotice,
+} from "@/lib/env-file";
 import { tmpDir } from "./helpers";
 
 // E-16b criterion 1. `npm run worker` is a plain Node process — Next never runs,
 // so nothing loaded `.env.local` and the cascade's key was undefined in the ONE
 // process that makes the model calls. These cover both halves: the loader
-// resolves the key, and a missing key produces the truthful startup error.
+// resolves the key, and a missing key produces a truthful startup NOTICE.
+//
+// [RETRO-004 §DE-1] The notice used to be an ERROR the worker exited 1 on, which
+// made a keyless install unable to ingest anything, ever. Ingest makes zero model
+// calls, so the tests below now assert the opposite of what they once did: a missing
+// key must NOT read as a fatal condition, and the message must promise ingest.
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -47,7 +60,7 @@ describe("parseEnvFile", () => {
   });
 
   // E-16 review, advisory 4: `KEY=sk-abc # note` yielded the literal "sk-abc # note".
-  // `startupEnvError` saw a non-empty string and let the worker boot, and OpenAI
+  // `hasAnalysisKey` saw a non-empty string and let the cascade run, and OpenAI
   // then rejected it as a 401 at the first model call — a silently corrupted secret
   // from a common dotenv habit, waved through by the check that exists to catch it.
   it("strips a trailing comment from an unquoted value", () => {
@@ -86,7 +99,7 @@ describe("loadEnvLocal", () => {
     const applied = loadEnvLocal(envDir("OPENAI_API_KEY=sk-from-file\n"), env);
     expect(applied).toEqual([REQUIRED_KEY]);
     expect(env[REQUIRED_KEY]).toBe("sk-from-file");
-    expect(startupEnvError(env)).toBeNull();
+    expect(startupKeyNotice(env)).toBeNull();
   });
 
   it("never overrides a variable already in the environment", () => {
@@ -102,15 +115,44 @@ describe("loadEnvLocal", () => {
   });
 });
 
-describe("startupEnvError", () => {
+describe("hasAnalysisKey", () => {
+  it("is false when absent or blank, true for a real value", () => {
+    expect(hasAnalysisKey({})).toBe(false);
+    expect(hasAnalysisKey({ OPENAI_API_KEY: "   " })).toBe(false);
+    expect(hasAnalysisKey({ OPENAI_API_KEY: "sk-abc" })).toBe(true);
+  });
+});
+
+describe("startupKeyNotice (RETRO-004 \u00a7DE-1)", () => {
   it("names the missing variable and the fix", () => {
-    const message = startupEnvError({});
+    const message = startupKeyNotice({});
     expect(message).toContain(REQUIRED_KEY);
     expect(message).toContain(ENV_LOCAL);
-    expect(message).toContain("first model call");
   });
 
-  it("treats a blank key as missing", () => {
-    expect(startupEnvError({ OPENAI_API_KEY: "   " })).not.toBeNull();
+  it("promises that ingest still runs, and never claims the worker is stopping", () => {
+    const message = startupKeyNotice({})!;
+    // The founding loop must be reachable keyless; the notice has to say so, because
+    // the previous message ("analysis jobs would fail at the first model call", then
+    // exit 1) told the user the opposite of what is now true.
+    expect(message).toMatch(/ingest will run/i);
+    expect(message).toMatch(/analysis is unavailable/i);
+    expect(message).not.toMatch(/exit|abort|stopping/i);
+  });
+
+  it("is null when a key is present", () => {
+    expect(startupKeyNotice({ OPENAI_API_KEY: "sk-abc" })).toBeNull();
+  });
+});
+
+describe("analysisUnavailableMessage \u2014 the per-job wall", () => {
+  it("states the permanent cause, the exact fix, and that the recording is safe", () => {
+    const m = analysisUnavailableMessage();
+    expect(m).toContain(REQUIRED_KEY);
+    expect(m).toContain(ENV_LOCAL);
+    expect(m).toMatch(/segments/i);
+    // Never "right now": nothing about this server changes on its own, and promising
+    // transience for a permanent, user-fixable condition makes people retry forever.
+    expect(m).not.toMatch(/right now|just now|temporar/i);
   });
 });

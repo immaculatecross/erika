@@ -29,6 +29,14 @@ import { BudgetHalt, withRepair } from "./reserved-call";
 import { recordProducedLemmas } from "./produced-lemmas";
 import { collectSpeakerProfile, resolveRecurrence, type SpeakerProfile } from "./profile";
 import { coerceRegister, type Register } from "../register";
+import {
+  getAnalysisJob,
+  patchJob,
+  SELECT_JOB,
+  toJob,
+  type AnalysisJob,
+  type JobRow,
+} from "./job-state";
 
 /**
  * Bounded per-segment concurrency (E-27). The pool runs at most this many model
@@ -61,36 +69,15 @@ export const HEARTBEAT_INTERVAL_MS = Math.max(1000, Math.floor(JOB_LEASE_STALE_M
 // budget cap halts the run before any over-cap call. The model itself is injected
 // as `AudioModelClient`, so this whole orchestration is unit-tested against a mock.
 
-export type AnalysisState = "queued" | "processing" | "done" | "failed" | "halted";
-
-export interface AnalysisJob {
-  id: string;
-  sessionId: string;
-  state: AnalysisState;
-  stage: string | null;
-  progress: number;
-  error: string | null;
-}
-
-interface JobRow {
-  id: string;
-  session_id: string;
-  state: AnalysisState;
-  stage: string | null;
-  progress: number;
-  error: string | null;
-}
-
-const SELECT_JOB = "SELECT id, session_id, state, stage, progress, error FROM analysis_jobs";
-
-function toJob(r: JobRow): AnalysisJob {
-  return { id: r.id, sessionId: r.session_id, state: r.state, stage: r.stage, progress: r.progress, error: r.error };
-}
-
-export function getAnalysisJob(db: Db, id: string): AnalysisJob | null {
-  const r = db.prepare(`${SELECT_JOB} WHERE id = ?`).get(id) as JobRow | undefined;
-  return r ? toJob(r) : null;
-}
+// The job row vocabulary + the one write primitive live in ./job-state (the
+// 500-line cap); re-exported here so every existing importer of the cascade keeps
+// working unchanged.
+export {
+  failAnalysisJob,
+  getAnalysisJob,
+  type AnalysisJob,
+  type AnalysisState,
+} from "./job-state";
 
 /** The most recent analysis job for a session (the run the UI reflects). */
 export function getAnalysisJobBySession(db: Db, sessionId: string): AnalysisJob | null {
@@ -115,17 +102,6 @@ export function enqueueAnalysis(db: Db, sessionId: string): AnalysisJob {
   const id = randomUUID();
   db.prepare("INSERT INTO analysis_jobs (id, session_id, state) VALUES (?, ?, 'queued')").run(id, sessionId);
   return getAnalysisJob(db, id)!;
-}
-
-function patchJob(db: Db, id: string, p: Partial<Pick<JobRow, "state" | "stage" | "progress" | "error">>): void {
-  const cols: string[] = [];
-  const vals: unknown[] = [];
-  for (const [k, v] of Object.entries(p)) {
-    cols.push(`${k} = ?`);
-    vals.push(v);
-  }
-  cols.push("updated_at = datetime('now')");
-  db.prepare(`UPDATE analysis_jobs SET ${cols.join(", ")} WHERE id = ?`).run(...vals, id);
 }
 
 /** Atomically claim the oldest queued analysis job under a heartbeat lease, or null. */

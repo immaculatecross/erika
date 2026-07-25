@@ -1,8 +1,14 @@
-import { loadEnvLocal, startupEnvError } from "../lib/env-file";
+import {
+  analysisUnavailableMessage,
+  hasAnalysisKey,
+  loadEnvLocal,
+  startupKeyNotice,
+} from "../lib/env-file";
 import { getDb } from "../lib/db";
 import { claimNextJob, processJob, reclaimStuckJobs } from "../lib/ingest/pipeline";
 import {
   claimNextAnalysisJob,
+  failAnalysisJob,
   reclaimStuckAnalysisJobs,
   runAnalysisJob,
 } from "../lib/analysis/cascade";
@@ -21,9 +27,17 @@ import { resolveEmbedder, type SpeakerEmbedder } from "../lib/speaker";
 // to stderr — stdout clean.
 //
 // This is a plain Node process, not Next, so nothing loads `.env.local` for it
-// (E-16b criterion 1): the loader runs FIRST, before any module reads a secret,
-// and a missing OPENAI_API_KEY stops the worker at boot with the fix in the
-// message rather than failing obscurely at the first model call.
+// (E-16b criterion 1): the loader runs FIRST, before any module reads a secret.
+//
+// [RETRO-004 §DE-1] A missing OPENAI_API_KEY used to stop the worker at boot (exit 1).
+// It no longer does. The whole record→analyse spine begins with ingest, and ingest —
+// normalisation, VAD, hashing, segmenting, duration, the timeline — makes ZERO model
+// calls, so that gate stopped a keyless learner from ever seeing their own speech and
+// turned the app's own instruction ("start the worker with `npm run worker`") into a
+// closed loop: run it, two lines, exit, `Queued 0%` forever, no way out from inside
+// the product. Now the worker prints a NOTICE and drains the ingest queue; a claimed
+// ANALYSIS job is refused terminally and individually at the point a model call would
+// actually be needed, which is the honest place for that wall.
 
 const POLL_MS = Number(process.env.ERIKA_WORKER_POLL_MS ?? 1000);
 const ONCE = process.env.ERIKA_WORKER_ONCE === "1";
@@ -39,6 +53,16 @@ async function runOne(db: ReturnType<typeof getDb>, id: string, embedder: Speake
 
 async function runAnalysis(db: ReturnType<typeof getDb>, id: string): Promise<void> {
   console.error(`[worker] analysis job ${id}`);
+  // The key wall, at the only point it is true: this job needs a model call and there
+  // is no key. Failing it here is terminal FOR THIS JOB — the worker stays up and the
+  // ingest queue keeps draining — and `failed` is never re-claimed, so nothing loops.
+  // Re-checked per job, not cached at startup, so adding the key and re-analyzing works
+  // without the worker having to be right about the environment it booted into.
+  if (!hasAnalysisKey()) {
+    failAnalysisJob(db, id, analysisUnavailableMessage());
+    console.error(`[worker] analysis ${id} refused: ${analysisUnavailableMessage()}`);
+    return;
+  }
   const job = await runAnalysisJob(db, id, openAiAudioModel);
   if (job.state === "failed" || job.state === "halted") {
     console.error(`[worker] analysis ${id} ${job.state}: ${job.error}`);
@@ -65,11 +89,8 @@ async function tick(db: ReturnType<typeof getDb>, embedder: SpeakerEmbedder): Pr
 
 async function main(): Promise<void> {
   const applied = loadEnvLocal();
-  const envError = startupEnvError();
-  if (envError) {
-    console.error(envError);
-    process.exit(1);
-  }
+  const notice = startupKeyNotice();
+  if (notice) console.error(notice); // a notice, NOT an exit — ingest needs no key
   const db = getDb();
   // Startup sweep (E-27 criterion 3): release spend reservations a crashed run
   // abandoned between reserve and finalize, so stale pending rows stop counting
@@ -79,7 +100,11 @@ async function main(): Promise<void> {
   // Resolve the speaker embedder once at startup (E-36): the sherpa-onnx model if its
   // runtime + asset are installed, else the deterministic in-sandbox spectral feature.
   const embedder = await resolveEmbedder();
-  console.error(`[worker] started (${applied.length} var(s) from .env.local; speaker=${embedder.id})`);
+  console.error(
+    `[worker] started (${applied.length} var(s) from .env.local; speaker=${embedder.id}; analysis=${
+      hasAnalysisKey() ? "available" : "unavailable (no key)"
+    })`,
+  );
   for (;;) {
     const didWork = await tick(db, embedder);
     if (!didWork) {

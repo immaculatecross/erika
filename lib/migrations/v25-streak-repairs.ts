@@ -30,9 +30,17 @@ import type { Migration } from "./index";
 // PARALLEL BATCH: E-37 (the pronunciation studio) was in flight alongside this one and
 // held v24 at the time; this migration took v25 as assigned up front, the v18-syllabus
 // precedent (lib/migrations/v18-syllabus.ts:20-23). E-38 merged FIRST, so E-37 then
-// renumbered its own (never-merged, never-shipped) migration v24 → v26: the applied
-// sequence is v25 then v26, and a database never runs a lower version after a higher
-// one. Additive; no shipped migration is edited; no money path is touched.
+// renumbered its own migration v24 → v26: the applied sequence is v25 then v26, and a
+// database never runs a lower version after a higher one.
+//
+// **CORRECTION (RETRO-004 technical lens §C1).** This comment used to call E-37's v24
+// "never-merged, never-shipped". Never merged to master, yes — but it was APPLIED, on
+// `feat/pronunciation-studio`, so databases exist that record version 24 for it. The
+// renumber shipped with no repair, and those databases then failed to boot forever
+// (v26 re-creating tables that were already there). `lib/migrations/reconcile.ts` is
+// the repair; see v26-pronunciation-attempts.ts for the full account.
+//
+// Additive; no shipped migration is edited; no money path is touched.
 export const streakRepairsMigration: Migration = {
   version: 25,
   name: "streak_repairs",
