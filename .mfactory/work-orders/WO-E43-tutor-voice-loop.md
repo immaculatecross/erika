@@ -641,3 +641,25 @@ ESLint resolves `@next/next` from two `node_modules` and aborts, and the wrapper
 it. The real signal came from `npx eslint . --ext .ts,.tsx` run against a copy of the
 worktree placed outside the nest. Worth fixing repo-side with `"root": true` in
 `.eslintrc.json`; left undone here as another milestone's surface.
+
+### Mutation proof on the new guard
+
+Dropped the `functionCallOutput` send from `connectTutor` — the one line that answers the
+model's tool call:
+
+```
+× the tool call is ANSWERED … > sends function_call_output carrying the model's own call_id
+  AssertionError: expected undefined to be defined
+× the tool call is ANSWERED … > asks for the held turn only AFTER the holding response finishes
+  AssertionError: expected [ 'response.create' ] to deeply equal [ 'conversation.item.create', …(1) ]
+  Tests  2 failed | 15 passed (17)
+```
+
+Restored → `Tests 17 passed (17)`. The expectations come from the wire, which is the only
+place the original defect was visible: the old code called the app's handler perfectly.
+
+The keep-alive guard's proof is in the suite itself rather than as a manual mutation:
+`tests/tutor-lease-sweep.test.ts` opens with a ground-truth case showing an unextended
+live lease **is** swept without it, before asserting that a heartbeat prevents it. And it
+already earned its keep — it caught a bug in the fix (`reserved_at` has no column
+`DEFAULT`, so the keep-alive wrote NULL and `MAX(reserved_at)` ignored it).
