@@ -28,10 +28,14 @@ const LESSON: NewItemLesson = {
   kind: "vocab",
   register: "colto",
   intro: "«casa» means home.",
+  examples: ["Torno a casa."],
+  newWords: [{ lemma: "casa", gloss: "house" }],
   glossEn: "house",
+  // [E-45] ONE exercise shape, and `options` is mandatory on both invites — a
+  // spoken drill's options ARE its fallback when speech recognition fails.
   exercises: [
-    { type: "multiple_choice", prompt: "home?", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", rationale: "home" },
-    { type: "cloze", prompt: "Torno a ____.", answer: "casa", derivable: true, rationale: "home", gloss: "house" },
+    { type: "choice", prompt: "home?", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "home" },
+    { type: "choice", prompt: "Torno a ____.", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "speak", rationale: "home", gloss: "house" },
   ],
 };
 
@@ -60,7 +64,7 @@ describe("migration v20 schema", () => {
     expect(stored.exercises).toEqual(LESSON.exercises);
 
     const read = getItemLesson(db, LESSON.itemId)!;
-    expect(read.exercises[1]).toMatchObject({ type: "cloze", answer: "casa", gloss: "house" });
+    expect(read.exercises[1]).toMatchObject({ type: "choice", answer: "casa", invite: "speak", gloss: "house" });
 
     // The PK makes a second CLAIM for the same item return false (cache once, one row).
     expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBe(false);

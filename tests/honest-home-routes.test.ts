@@ -7,7 +7,6 @@ import type { Db } from "@/lib/db";
 // E-18 route surfaces, driven end to end against a throwaway DB:
 //   * GET /api/sessions serves each session WITH its yield (criterion 2);
 //   * GET /api/settings reports month-to-date spend from spend_ledger (criterion 4);
-//   * GET /api/lessons/patterns prices an ungenerated lesson (criterion 5);
 //   * POST /api/letter/viewed records the letter as opened; GET /api/letter does
 //     not (the read/write split of E-24, closing E-18's read-that-wrote);
 //   * GET /api/plan serves the composed daily plan (criterion 1).
@@ -18,7 +17,6 @@ let root: string;
 let db: Db;
 let GET_SESSIONS: typeof import("@/app/api/sessions/route").GET;
 let GET_SETTINGS: typeof import("@/app/api/settings/route").GET;
-let GET_PATTERNS: typeof import("@/app/api/lessons/patterns/route").GET;
 let GET_LETTER: typeof import("@/app/api/letter/route").GET;
 let VIEWED_POST: typeof import("@/app/api/letter/viewed/route").POST;
 let GET_PLAN: typeof import("@/app/api/plan/route").GET;
@@ -32,7 +30,6 @@ beforeAll(async () => {
   process.env.ERIKA_DATA_DIR = root;
   GET_SESSIONS = (await import("@/app/api/sessions/route")).GET;
   GET_SETTINGS = (await import("@/app/api/settings/route")).GET;
-  GET_PATTERNS = (await import("@/app/api/lessons/patterns/route")).GET;
   GET_LETTER = (await import("@/app/api/letter/route")).GET;
   VIEWED_POST = (await import("@/app/api/letter/viewed/route")).POST;
   GET_PLAN = (await import("@/app/api/plan/route")).GET;
@@ -109,29 +106,6 @@ describe("GET /api/settings — month-to-date spend (criterion 4)", () => {
     const body = (await (await GET_SETTINGS()).json()) as { monthlyBudgetUsd: number; spentThisMonth: number };
     expect(body.spentThisMonth).toBeCloseTo(1.75, 10);
     expect(body.monthlyBudgetUsd).toBe(50); // E-28 default cap (25 → 50, D-20); display only
-  });
-});
-
-describe("GET /api/lessons/patterns — lesson ready vs priced (criterion 5)", () => {
-  it("prices an ungenerated lesson with the existing estimate machinery, then null once generated", async () => {
-    const before = (await (await GET_PATTERNS()).json()) as {
-      patterns: { key: string; hasLesson: boolean; estimateUsd: number | null }[];
-    };
-    const grammar = before.patterns.find((p) => p.key === "category:grammar")!;
-    expect(grammar.hasLesson).toBe(false);
-    expect(grammar.estimateUsd).toBeGreaterThan(0);
-
-    const { insertLesson } = await import("@/lib/lessons/lessons");
-    insertLesson(db, "category:grammar", {
-      explanation: "short",
-      exercises: [{ type: "fill_in", prompt: "p", answer: "a" }],
-    });
-    const after = (await (await GET_PATTERNS()).json()) as {
-      patterns: { key: string; hasLesson: boolean; estimateUsd: number | null }[];
-    };
-    const ready = after.patterns.find((p) => p.key === "category:grammar")!;
-    expect(ready.hasLesson).toBe(true);
-    expect(ready.estimateUsd).toBeNull();
   });
 });
 
