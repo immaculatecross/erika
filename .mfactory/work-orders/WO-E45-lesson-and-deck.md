@@ -387,3 +387,18 @@ realistic rather than the rule relaxed (D-13).**
 
 Review tier: **Full**, unchanged — money (a new biller and a repriced ceiling), an
 external contract (the STT endpoint), and the card read-model.
+
+### Rebase onto master (E-43 + docs), re-verified
+
+Rebased onto `78d71f1` after E-43 merged. Two conflicts, both trivial and both
+resolved by keeping master's intent:
+- `lib/analysis/rates.ts` — E-43 extracted `rates-realtime.ts` where I extracted
+  `stt-rates.ts`; both imports kept, `BillableModelId` carries both ids.
+- `.eslintrc.json` — master landed the same `"root": true` fix in #78; took master's.
+
+Re-run on the rebased head: `tsc` ✓ · **1301 passed, 3 skipped, 143 files** ✓ ·
+`npm run lint` **0 errors** (it works now that master's fix is in) ✓ · `npm run
+build` ✓ · tripwires ✓ · and the built server driven again on a disposable database,
+same three responder proofs, same result — a real keyless lesson with answerable
+click and speak drills, `/api/lessons/speak` degrading with 200, and 4 answerable
+card fronts with no bare category word.
