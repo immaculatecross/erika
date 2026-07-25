@@ -55,18 +55,27 @@ export function useItemLesson(itemId: string) {
   // Record one graded exercise's result as cued evidence. Best-effort: a failed
   // write must not break the runner (the lesson content is unaffected), so it
   // resolves to the new status or null.
+  //
+  // [E-45] The evidence goes to the lesson's OWN `itemId`, not to the one in the
+  // URL, and the difference is real: 48 of the 266 syllabus rules illustrate
+  // themselves with word lists and cannot make a fair drill, so the engine may
+  // teach a neighbouring rule from the same CEFR band instead of walling. When it
+  // does, the learner earned that evidence on the rule they were actually shown —
+  // writing it against the rule we could not teach would quietly corrupt the
+  // knowledge model, which is worse than the 404 it replaced.
+  const servedItemId = state.phase === "ready" ? state.lesson.itemId : itemId;
   const complete = useCallback(
     async (correct: boolean): Promise<KnowledgeStatus | null> => {
       const res = await fetch("/api/lessons/item/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itemId, correct }),
+        body: JSON.stringify({ itemId: servedItemId, correct }),
       });
       if (!res.ok) return null;
       const body = (await res.json()) as { status: KnowledgeStatus };
       return body.status;
     },
-    [itemId],
+    [servedItemId],
   );
 
   return { state, complete };

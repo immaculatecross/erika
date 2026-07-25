@@ -237,8 +237,32 @@ export function buildRuleLesson(rule: SyllabusRule, register: string): ItemLesso
 /** The deterministic lesson for a knowledge item id, or null when the id is not a
  *  syllabus rule (a lemma needs an English gloss, which no offline source has). */
 export function deterministicLessonFor(itemId: string, register: string): ItemLesson | null {
-  const rule = loadSyllabus().rules.find((r) => ruleKeyToItemId(r.key) === itemId);
-  return rule ? buildRuleLesson(rule, register) : null;
+  const { rules } = loadSyllabus();
+  const rule = rules.find((r) => ruleKeyToItemId(r.key) === itemId);
+  if (!rule) return null;
+
+  const own = buildRuleLesson(rule, register);
+  if (own) return own;
+
+  // ── THE SUBSTITUTION, and why it is not a fudge ───────────────────────────
+  //
+  // 48 of the 266 shipped rules illustrate themselves with word lists rather than
+  // sentences ("palla vs pala", "casa: c-a-s-a"), and no fair gap drill can be cut
+  // from those. Driving the built server found the consequence: the composer
+  // queued one of them at the learner's edge and the lesson route answered 404 —
+  // a wall, which is exactly what D-26 forbids and what a unit test could not see
+  // because it never asked the composer what it had chosen.
+  //
+  // A wall is the worst answer available. Teaching a NEIGHBOURING rule is a good
+  // one: the composer's real instruction is "teach something at this learner's
+  // edge", and the CEFR band is what carries that, not the individual key. So the
+  // substitute is drawn from the same band first, then from anywhere — and the
+  // lesson it returns carries the SUBSTITUTE's `itemId`, so the evidence the
+  // learner earns is recorded against the rule they were actually taught rather
+  // than against the one we could not teach.
+  const sameBand = rules.filter((r) => r.cefr === rule.cefr && ruleIsTeachable(r));
+  const substitute = sameBand[0] ?? pickTeachableRule();
+  return substitute ? buildRuleLesson(substitute, register) : null;
 }
 
 /**
