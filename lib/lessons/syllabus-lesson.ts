@@ -52,7 +52,14 @@ const CONTRAST_FORM = /(\svs\s|\s\/\s|:|—|\|)/;
  *  comfortably and the fewest distractors that still require knowing the rule. */
 export const DRILL_OPTIONS = 3;
 
+/** The blank a gap drill shows — the same constant the card fronts use. */
+const CLOZE_BLANK = "____";
+
 const tokens = (s: string): string[] => s.trim().split(/\s+/).filter(Boolean);
+
+/** Every WORD a rendered cue puts on screen, split on any non-letter so a word
+ *  hiding inside another ("cinquant'anni" → cinquant, anni) is still seen. */
+const wordsOf = (s: string): string[] => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 
 /** A token stripped to its letters/digits, for comparison. */
 const norm = (t: string): string => t.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
@@ -170,6 +177,17 @@ function buildDrill(
   // Deterministic option order: the answer is placed by a stable hash of the cue
   // rather than at a fixed index, so the correct choice is not always in the same
   // position and the lesson still renders identically on every reload.
+  const prompt = ownTokens.map((t, i) => (i === gapIndex ? CLOZE_BLANK : t)).join(" ");
+  // THE CUE MUST NOT CONTAIN ITS OWN ANSWER. Checked on the FINISHED prompt rather
+  // than on the token list, because there are several ways the word gets back in and
+  // only the finished string sees all of them: a second standalone occurrence ("il
+  // libro del ragazzo"), or one hiding inside another word — "Quanti anni ha? Avrà
+  // cinquant'anni." blanks `anni` and leaves `cinquant'anni` on screen, which reads
+  // as the answer to anyone who can see. Blanking every occurrence would need two
+  // gaps, which is a different exercise; skipping is honest and there is always
+  // another candidate word.
+  if (wordsOf(prompt).includes(norm(target))) return [];
+
   const options = [...chosen];
   const slot = [...example, ...target].reduce((a, c) => a + c.charCodeAt(0), 0) % (options.length + 1);
   options.splice(slot, 0, answer);
@@ -177,7 +195,7 @@ function buildDrill(
   return [
     {
       type: "choice",
-      prompt: ownTokens.map((t, i) => (i === gapIndex ? "____" : t)).join(" "),
+      prompt,
       options,
       answerIndex: options.indexOf(answer),
       answer,
