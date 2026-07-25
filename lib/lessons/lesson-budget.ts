@@ -147,13 +147,13 @@ export function trimToBudget<T extends Pick<ItemLesson, "intro" | "examples" | "
     newWords: lesson.newWords.slice(0, MAX_NEW_WORDS),
     exercises: lesson.exercises.slice(0, MAX_DRILLS),
   };
-  // The caps alone can still exceed the promise if every part is at its maximum,
-  // so close the loop by dropping drills (the most expensive part per item) until
-  // the arithmetic actually agrees. Never below MIN_DRILLS: a lesson with no drill
-  // is not a shorter lesson, it is a different thing.
-  while (trimmed.exercises.length > MIN_DRILLS && !lessonFitsBudget(trimmed)) {
-    trimmed.exercises = trimmed.exercises.slice(0, trimmed.exercises.length - 1);
-  }
+  // NOTE there is deliberately no "…and now drop drills until it fits" loop here.
+  // The caps are chosen so that a lesson at EVERY cap simultaneously is still inside
+  // the promise (110/170 min + 4x6s + 10x6s + 5x20s = 3.7 min), and
+  // tests/lesson-budget.test.ts asserts exactly that — so the loop would be code no
+  // input could reach, which this repo counts as a defect rather than as prudence
+  // (three unkillable guards shipped in v0.6). If a cap is ever raised past the
+  // promise, that test goes red, which is the signal we actually want.
   return trimmed;
 }
 

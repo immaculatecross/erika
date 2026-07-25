@@ -79,6 +79,48 @@ describe("the prompt states the contract the runner depends on", () => {
   });
 });
 
+describe("drillIsUsable — each clause, on its own", () => {
+  // A table, one malformation per row, so every clause has a test that goes red
+  // when only that clause is deleted. Grouping them into one "malformed drill"
+  // fixture is how a guard ends up unkillable: an earlier clause catches the input
+  // and the later ones are never reached.
+  const good = {
+    type: "choice" as const,
+    prompt: "Ieri ____ andato.",
+    options: ["sono", "ho"],
+    answerIndex: 0,
+    answer: "sono",
+    invite: "click" as const,
+    rationale: "essere.",
+  };
+
+  it("accepts a well-formed drill", () => {
+    expect(drillIsUsable(good)).toBe(true);
+  });
+
+  const bad: [string, Partial<ItemExercise>][] = [
+    ["no cue", { prompt: "  " }],
+    ["no answer", { answer: "" }],
+    ["no reason", { rationale: "" }],
+    // The click fallback is what keeps a voice drill from becoming a dead end, so
+    // "options are optional" must be a test failure, not a style question.
+    ["one option", { options: ["sono"] }],
+    ["no options at all", { options: undefined as unknown as string[] }],
+    ["answerIndex out of range", { answerIndex: 5 }],
+    ["answerIndex negative", { answerIndex: -1 }],
+    // The answer key must actually point at the answer, or clicking the right
+    // option grades wrong — the same betrayal as a mishearing, from our own bug.
+    ["answer is not the option at answerIndex", { answer: "boh" }],
+    ["duplicate options", { options: ["sono", "sono"], answer: "sono", answerIndex: 0 }],
+  ];
+
+  for (const [name, over] of bad) {
+    it(`rejects: ${name}`, () => {
+      expect(drillIsUsable({ ...good, ...over } as ItemExercise)).toBe(false);
+    });
+  }
+});
+
 describe("parseItemLessonResponse — a usable lesson or a truthful failure", () => {
   it("parses a well-formed reply into the one exercise shape", () => {
     const lesson = parseItemLessonResponse(

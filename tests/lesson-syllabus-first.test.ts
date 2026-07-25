@@ -181,6 +181,26 @@ describe("the guarantee rests on a measured number, not on hope", () => {
     expect(JSON.stringify(buildRuleLesson(rule, "colto"))).toBe(JSON.stringify(buildRuleLesson(rule, "colto")));
   });
 
+  it("refuses a rule that can only make ONE drill — the floor is a floor", () => {
+    // No SHIPPED rule happens to produce exactly one drill, so without constructing
+    // the case the floor would be unreachable and its guard unkillable - which is
+    // how three deletable-green guards shipped in v0.6. Here the second example's
+    // own best word ("il") occurs twice in it, so blanking one occurrence would
+    // leave the other on screen and that drill is refused; only the first survives.
+    const oneDrill = {
+      key: "synthetic-one-drill",
+      cefr: "B1" as const,
+      area: "test",
+      title: "One drill only",
+      description: "A rule whose second example cannot make a fair drill.",
+      prereqs: [],
+      examples: ["Io vado al mare", "il libro il ragazzo"],
+    };
+    expect(ruleDrills(oneDrill)).toHaveLength(1);
+    expect(buildRuleLesson(oneDrill, "colto")).toBeNull();
+    expect(ruleIsTeachable(oneDrill)).toBe(false);
+  });
+
   it("returns null for an item that is not a syllabus rule, rather than inventing one", () => {
     // No offline Italian-English dictionary exists in this repo, so a vocabulary
     // lesson genuinely needs a model. Saying so is the honest answer.
