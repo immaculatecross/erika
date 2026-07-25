@@ -1,4 +1,4 @@
-import { isCategory, isSeverity, sanitizeNotes, type NewFinding } from "./findings";
+import { isSeverity, normalizeCategory, sanitizeNotes, type NewFinding } from "./findings";
 import type { SpeakerProfile } from "./profile";
 import { MINI_MODEL, type ModelId } from "./rates";
 import {
@@ -10,6 +10,7 @@ import {
   RECURRENCE_INSTRUCTION,
   ENRICHED_NOTES_INSTRUCTION,
   PRODUCED_LEMMAS_INSTRUCTION,
+  CATEGORY_MAPPING_INSTRUCTION,
 } from "./prompts";
 import { DEFAULT_REGISTER, type Register } from "../register";
 
@@ -24,6 +25,7 @@ export {
   RECURRENCE_INSTRUCTION,
   ENRICHED_NOTES_INSTRUCTION,
   PRODUCED_LEMMAS_INSTRUCTION,
+  CATEGORY_MAPPING_INSTRUCTION,
 };
 
 // The ONE module that talks to OpenAI's audio models (D-3, D-10). Everything
@@ -222,7 +224,11 @@ export function parseDeepResponse(raw: string): DeepResult {
         throw new ModelParseError(`Finding ${i} has an invalid \`${key}\`.`);
       }
     }
-    if (!isCategory(f.category)) throw new ModelParseError(`Finding ${i} has an invalid \`category\`.`);
+    // A recognisable near-miss ("word choice", "Grammar", "pronounciation") is
+    // coerced to the stored vocabulary rather than costing the whole segment its
+    // findings (E-39); an unrecognisable label is still a truthful parse error.
+    const category = normalizeCategory(f.category);
+    if (category === null) throw new ModelParseError(`Finding ${i} has an invalid \`category\`.`);
     if (!isSeverity(f.severity)) throw new ModelParseError(`Finding ${i} has an invalid \`severity\`.`);
     const relStartMs = numberOrUndefined(f.relStartMs);
     const relEndMs = numberOrUndefined(f.relEndMs);
@@ -239,7 +245,7 @@ export function parseDeepResponse(raw: string): DeepResult {
     return {
       quote: (f.quote as string).trim(),
       correction: (f.correction as string).trim(),
-      category: f.category,
+      category,
       explanation: (f.explanation as string).trim(),
       severity: f.severity,
       startMs: 0,
