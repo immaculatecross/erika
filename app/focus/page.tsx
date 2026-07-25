@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/empty-state";
 import { Sparkline } from "@/components/sparkline";
 import { CategoryBars, TrendBadge } from "@/components/category-bars";
 import { SlipHours } from "@/components/slip-hours";
+import { KnowledgeMap } from "@/components/knowledge-map";
 import type { FocusPayload } from "@/lib/focus";
 
 // The Focus screen (E-7, v0.2): how often do I make each kind of mistake, is it
@@ -70,6 +71,21 @@ export default function FocusPage() {
             <ArrowRight size={16} strokeWidth={1.5} aria-hidden />
           </Link>
         </motion.header>
+
+        {/* The knowledge map (E-38, D-24), moved here from the Learn home at E-44:
+            category cells tint toward green ONLY through resolved-slip semantics, so
+            green stays mastery and never mere activity. It belongs beside the ranking
+            it shares a definition of mastery with. */}
+        {model.map.some((c) => c.slips > 0) && (
+          <motion.section variants={staggerItem(reduced)} data-focus-map className="flex flex-col gap-3">
+            <span className="text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">
+              Your map
+            </span>
+            <div className="rounded-card bg-card p-5 shadow-card">
+              <KnowledgeMap cells={model.map} />
+            </div>
+          </motion.section>
+        )}
 
         <motion.section
           variants={staggerItem(reduced)}

@@ -91,8 +91,16 @@ export default function StudioListPage() {
               </span>
             ))}
           </div>
+          {/* [E-44 criterion 8] The old line promised these sounds "come back through
+              the lines below" — a return NO code path implements. The sounds strip and
+              the drill list come from two unrelated queries (`phone:` knowledge items
+              at the edge vs. pronunciation findings), so a sound could be listed
+              directly above "No pronunciation drills yet." with nothing connecting
+              them. Making it true means joining phones to drills, which is the
+              knowledge core's scheduling work and not this milestone's. So the claim
+              is removed and only the fact is kept. */}
           <p className="text-[13px] text-secondary">
-            Sounds you have missed in a drill. They come back through the lines below.
+            Sounds you have missed in a drill.
           </p>
         </section>
       )}

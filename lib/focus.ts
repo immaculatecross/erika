@@ -4,6 +4,7 @@ import { findingTallies, listAnalysedSessions, listIncludedFindingsWithSession }
 import { CATEGORY_ORDER } from "./analysis-view";
 import { resolvedSlipCount } from "./slips";
 import { slipHourDistribution, type SlipHourDistribution } from "./slip-hours";
+import { buildKnowledgeMap, type MapCell } from "./knowledge-map";
 
 // The Focus map aggregation (E-7, v0.2 milestone 1). Pure metric math over the
 // data v0.1 already produced — no model calls, no writes, no new capture. The
@@ -213,6 +214,12 @@ export interface FocusPayload extends FocusModel {
   resolvedSlips: number;
   /** When in the day the slips fall — the "when you slip" distribution (E-22). */
   slipHours: SlipHourDistribution;
+  /** The knowledge map (E-38, D-24): one cell per category, tinting toward green ONLY
+   *  through resolved-slip semantics. It moved here from the Learn home at E-44, which
+   *  now carries the ring, one line and one control and nothing else — this is the
+   *  surface that was already about mastery, so the map reads in context rather than
+   *  as a fifth thing above the day's work. E-46 gives progress a surface of its own. */
+  map: MapCell[];
 }
 
 /**
@@ -237,5 +244,6 @@ export function buildFocusPayload(db: Db): FocusPayload {
     ...buildFocusModel(db),
     resolvedSlips: resolvedSlipCount(db),
     slipHours: collectSlipHours(db),
+    map: buildKnowledgeMap(db),
   };
 }

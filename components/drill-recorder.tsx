@@ -75,6 +75,9 @@ export function DrillRecorder({
   const [take, setTake] = useState<{ blob: Blob; url: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  /** Playing the learner's own take failed. Visible, because a silent button that
+   *  does nothing is how "Said N×" came to count presses instead of laps. */
+  const [playbackFailed, setPlaybackFailed] = useState(false);
   const playerRef = useRef<HTMLAudioElement | null>(null);
   const cycleReported = useRef(false);
 
@@ -102,22 +105,38 @@ export function DrillRecorder({
     });
   }, [stop]);
 
-  const playMine = useCallback(() => {
+  const playMine = useCallback(async () => {
     const audio = playerRef.current;
     if (!audio || !take) return;
     audio.src = take.url;
-    void audio.play().catch(() => {});
-    // Recorded, and now heard yourself back: one lap. Reported once per TAKE (a fresh
-    // recording re-arms it in `onStop`), so "Said N×" counts real laps rather than button
-    // presses; the server-side upsert is idempotent regardless.
+    setPlaybackFailed(false);
+
+    // [E-44 criterion 8] THE LAP IS REPORTED WHEN THE PLAYBACK ENDS, NOT WHEN THE
+    // BUTTON IS PRESSED. Before this, `play()`'s rejection was swallowed and the lap
+    // was reported unconditionally on the same tick — so "Said 3×" could mean three
+    // taps that produced no sound at all, and it PERMANENTLY RETIRED the correction
+    // from the daily plan on the strength of it. A count that names an action the
+    // learner did not perform is worse than no count.
     //
-    // The latch is spent ONLY when the lap can actually be reported. Burning it on a lap
-    // the parent is ignoring (an unheard blind lap, where `onCycleComplete` is undefined)
-    // would silently drop the learner's next, genuine lap on the same take — leaving the
-    // correction unspendable until they re-recorded.
-    if (shouldReportLap({ canReport: !!onCycleComplete, alreadyReported: cycleReported.current })) {
-      cycleReported.current = true;
-      onCycleComplete?.();
+    // Reported once per TAKE (a fresh recording re-arms it in `onStop`); the
+    // server-side upsert is idempotent regardless. The latch is spent ONLY when the
+    // lap can actually be reported — burning it on a lap the parent is ignoring (an
+    // unheard blind lap, where `onCycleComplete` is undefined) would silently drop the
+    // learner's next, genuine lap on the same take.
+    const reportLap = () => {
+      if (shouldReportLap({ canReport: !!onCycleComplete, alreadyReported: cycleReported.current })) {
+        cycleReported.current = true;
+        onCycleComplete?.();
+      }
+    };
+    audio.addEventListener("ended", reportLap, { once: true });
+
+    try {
+      await audio.play();
+    } catch {
+      // Playback genuinely did not happen — say so, and report nothing.
+      audio.removeEventListener("ended", reportLap);
+      setPlaybackFailed(true);
     }
   }, [take, onCycleComplete]);
 
@@ -193,7 +212,7 @@ export function DrillRecorder({
           <button
             type="button"
             data-drill-play-mine
-            onClick={playMine}
+            onClick={() => void playMine()}
             className={`${PILL} bg-black/[0.06] text-ink dark:bg-white/[0.08]`}
           >
             <Volume2 size={18} strokeWidth={1.5} aria-hidden />
@@ -231,6 +250,14 @@ export function DrillRecorder({
       {failure && (
         <span data-drill-error className="text-[13px] text-secondary">
           {failure}
+        </span>
+      )}
+      {/* [E-44 criterion 8] A failed playback used to be swallowed entirely: the
+          button did nothing, said nothing, and the lap was counted anyway. */}
+      {playbackFailed && (
+        <span data-drill-playback-error className="text-[13px] text-secondary">
+          Your take could not be played back, so this lap was not counted. Try again, or
+          record a fresh take.
         </span>
       )}
     </div>

@@ -38,7 +38,6 @@ function baseInput(over: Partial<ComposeInput> = {}): ComposeInput {
     nextDay: "2026-07-25",
     spill: [],
     reviews: [],
-    slips: [],
     findings: [],
     fresh: { vocab: [], rule: [], pronunciation: [] },
     caps: { ...DEFAULT_CAPS },
@@ -47,18 +46,22 @@ function baseInput(over: Partial<ComposeInput> = {}): ComposeInput {
 }
 
 describe("composePlan — priority ordering (criterion 1)", () => {
-  it("assembles spill → reviews → slips → findings → fresh new items", () => {
+  // [E-44 criterion 9] The `slip` plan item was removed: it rendered nowhere and
+  // double-counted the same mistake its own findings already contribute. Slips
+  // themselves are untouched — the dossier, the map and the tutor's targets all read
+  // lib/slips.ts directly and never went through this plan.
+  it("assembles spill → reviews → findings → fresh new items", () => {
     const plan = composePlan(
       baseInput({
         spill: [{ itemId: "lemma:sp#NOUN", kind: "vocab" }],
         reviews: [{ cardId: "c1", itemId: null, retrievability: 0.4 }],
-        slips: [{ slipId: "s1" }],
         findings: [{ findingId: "f1" }],
         fresh: { vocab: [{ itemId: "lemma:fr#NOUN", kind: "vocab" }], rule: [], pronunciation: [] },
       }),
     );
-    expect(plan.items.map((i) => i.source)).toEqual(["spill", "due", "active", "unspent", "fresh"]);
-    expect(plan.items.map((i) => i.ref)).toEqual(["lemma:sp#NOUN", "c1", "s1", "f1", "lemma:fr#NOUN"]);
+    expect(plan.items.map((i) => i.source)).toEqual(["spill", "due", "unspent", "fresh"]);
+    expect(plan.items.map((i) => i.ref)).toEqual(["lemma:sp#NOUN", "c1", "f1", "lemma:fr#NOUN"]);
+    expect(plan.items.map((i) => i.kind)).not.toContain("slip");
   });
 
   it("orders reviews worst-retrievability first (caller-sorted), preserved through the plan", () => {
