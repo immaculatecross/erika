@@ -5,6 +5,7 @@ import { loadSyllabus } from "../syllabus";
 import { itemLessonKind } from "../lessons/item-lessons";
 import { conversationCredit } from "./conversation-credit";
 import { currentStep, getSession, isSessionComplete, reconcileSession } from "./store";
+import { completeDayIfMet } from "./day";
 import { lessonLabelFor, planSession } from "./plan";
 import { describeSession, orderSteps, type StepKey } from "./steps";
 import type { NoticeReason } from "./notices";
@@ -57,6 +58,22 @@ export interface SessionView {
 
 export function buildSessionView(db: Db, day: string = localDay()): SessionView {
   const session = reconcileSession(db, day) ?? getSession(db, day);
+  // RECORD THE DAY WHEREVER THE SESSION IS OBSERVED COMPLETE — not only where a step
+  // was POSTed. Found by driving the built server: the conversation is the LAST step
+  // and the only one that completes by observation (the learner has it on the tutor
+  // page; nothing posts a step). So the session read `complete: true` while
+  // `day_ledger` stayed empty — a learner who finished their day exactly as designed
+  // got no completion sentence, no closed ring and no streak day. Fixing the POST
+  // route alone would have fixed the instance and left the invariant broken.
+  //
+  // A write on a read path, deliberately, on the precedent this file already sits on
+  // (the composer's spill reconciliation and E-38's silent repair ledger both write
+  // from a GET). It is NOT the E-18 letter mistake, which consumed unread state as a
+  // side effect of looking: this is idempotent, it is gated on the server's OWN
+  // authoritative check that every step is genuinely done, and it records a fact
+  // rather than spending one. Refusing to write here would mean a finished day quietly
+  // did not count.
+  if (isSessionComplete(session)) completeDayIfMet(db, day);
   const plan = planSession(db, day);
 
   const steps = session ? session.steps : plan.steps;

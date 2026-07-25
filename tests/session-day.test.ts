@@ -6,6 +6,7 @@ import { openDatabase, type Db } from "@/lib/db";
 import { completedDayCount, getDayCompletion, recordDayComplete } from "@/lib/day-ledger";
 import { completeDayIfMet, completionFigures, dayFigures, dayGoal } from "@/lib/session/day";
 import { getSession, markStepDone, openSession, reconcileSession } from "@/lib/session/store";
+import { buildSessionView } from "@/lib/session/view";
 import { buildStreak } from "@/lib/streak/store";
 import { localDay } from "@/lib/local-day";
 
@@ -146,6 +147,48 @@ describe("the conversation counts only when the minimum was met (the operator's 
 
     const completion = completeDayIfMet(db, day)!;
     expect(completionFigures(db, completion).conversation).toBe(true);
+    db.close();
+  });
+});
+
+describe("the day is recorded wherever the session is observed complete", () => {
+  it("records it when the LAST step completes by observation, with no step ever POSTed", () => {
+    // Found by driving the built server. The conversation is the last step and the
+    // only one that completes by observation — the learner has it on the tutor page
+    // and nothing posts a step. The session read complete while `day_ledger` stayed
+    // EMPTY: no completion sentence, no closed ring, no streak day, for a learner who
+    // finished their day exactly as designed.
+    const db = freshDb();
+    createConversationRecord(db);
+    const day = localDay();
+    const session = openSession(db, day);
+    expect(session.steps[session.steps.length - 1]).toBe("conversation");
+    for (const step of session.steps) {
+      if (step !== "conversation") markStepDone(db, day, step);
+    }
+    expect(getDayCompletion(db, day)).toBeNull();
+
+    creditConversation(db, day, true);
+    // A plain READ of the session — exactly what the home and the runner do.
+    const view = buildSessionView(db, day);
+    expect(view.complete).toBe(true);
+
+    const completion = getDayCompletion(db, day);
+    expect(completion).not.toBeNull();
+    expect(completion!.lessonsDone).toBe(1);
+    expect(completedDayCount(db)).toBe(1);
+    db.close();
+  });
+
+  it("does not record a day whose session is unfinished, however often it is read", () => {
+    const db = freshDb();
+    createConversationRecord(db);
+    const day = localDay();
+    const session = openSession(db, day);
+    markStepDone(db, day, session.steps[0]);
+    for (let i = 0; i < 3; i++) buildSessionView(db, day);
+    expect(getDayCompletion(db, day)).toBeNull();
+    expect(completedDayCount(db)).toBe(0);
     db.close();
   });
 });
