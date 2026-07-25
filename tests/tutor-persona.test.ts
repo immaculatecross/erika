@@ -72,33 +72,87 @@ describe("buildTutorPersona — the error-flagging mandate", () => {
     expect(persona.toLowerCase()).toContain("do not politely let errors slide");
   });
 
-  it("makes final-vowel / -o/-a agreement the top-priority error class, with a worked example", () => {
+  // E-39: the three classes are PEERS. The previous mandate ranked final-vowel/-o/-a
+  // agreement as "your highest priority", put grammar and word choice third, and never
+  // said the word vocabulary — the operator's EXAMPLE encoded as the spec. These tests
+  // are the guard against that regression, in both directions: all three classes named,
+  // and no class (least of all the example's) declared to outrank another.
+  it("names grammar, vocabulary/word choice and pronunciation as equal classes", () => {
     const persona = minimal();
-    expect(persona).toContain("FINAL VOWELS AND AGREEMENT (-o/-a, -i/-e)");
-    expect(persona).toContain("highest priority");
-    // The final vowel carries gender AND number — the reason this class leads.
-    expect(persona).toMatch(/final vowel carries gender and number/);
-    // Says what was said and what it should be.
-    expect(persona).toContain('you said la ragazzo — it\'s il ragazzo');
-    expect(persona).toContain("le case sono belle");
-    // The address case turns on the addressee named IN the utterance ("signora"), so
-    // it needs no fact about the learner — see the no-gender-inference test below.
-    expect(persona).toContain('"signora, è stanco" — it\'s "è stanca"');
-    // A swallowed/centralised ending counts too, not just an outright wrong letter.
-    expect(persona.toLowerCase()).toMatch(/swallowed, cut short, or centralised/);
+    expect(persona).toContain("GRAMMAR");
+    expect(persona).toContain("VOCABULARY AND WORD CHOICE");
+    expect(persona).toContain("PRONUNCIATION");
+    expect(persona).toContain("all three matter equally");
+    expect(persona).toContain("No class outranks another");
     // Definitional, not an unqualified "flag every one" that would beat the per-turn cap.
-    expect(persona).toContain("All of these count as real errors, not slips to overlook");
+    expect(persona).toContain("All of the following count as real errors, not slips to overlook");
     expect(persona).not.toMatch(/Flag every one/);
   });
 
-  it("names the other pronunciation errors and grammar/word choice, below final vowels", () => {
+  it("ranks no class above another — the -o/-a example is not the headline", () => {
     const persona = minimal();
-    for (const cue of ["gli", "gn", "DOUBLE CONSONANTS", "geminates", "stress"]) {
+    expect(persona).not.toMatch(/highest priority/i);
+    expect(persona).not.toMatch(/priority order/i);
+    expect(persona).not.toMatch(/outranks the rest/i);
+    // The example survives — inside the agreement bullet, where an example belongs.
+    expect(persona).toContain("Agreement of gender and number");
+    expect(persona).toContain('"la ragazzo" (it\'s "il ragazzo")');
+    // …and it is not a class of its own sitting above the three.
+    expect(persona).not.toMatch(/FINAL VOWELS AND AGREEMENT/);
+  });
+
+  it("covers the grammar class beyond agreement: tense/mood, auxiliary, prepositions, clitics, word order", () => {
+    const persona = minimal();
+    // Agreement, with the -o/-a worked example and the address case (which turns on the
+    // addressee named IN the utterance, so it needs no fact about the learner).
+    expect(persona).toContain("le case sono belle");
+    expect(persona).toContain('"signora, è stanco" (it\'s "è stanca")');
+    expect(persona.toLowerCase()).toMatch(/swallowed, cut short, or centralised/);
+    // Tense, mood and aspect — congiuntivo, condizionale, passato prossimo/imperfetto.
+    expect(persona).toContain("penso che sia vero");
+    expect(persona).toContain("se avessi tempo, verrei");
+    expect(persona).toContain("ieri sono andato al cinema");
+    // Auxiliary choice.
+    expect(persona).toContain('"ho andato" — "sono andato"');
+    // Articles and prepositions, including the articulated form and the choice itself.
+    expect(persona).toContain('"il studente" — "lo studente"');
+    expect(persona).toContain("vado in Italia");
+    expect(persona).toContain("dipende da");
+    // Clitics and pronouns.
+    expect(persona).toContain('"lo telefono" — "gli telefono"');
+    expect(persona).toContain("glielo");
+    // Word order and negation.
+    expect(persona).toContain("non ho visto niente");
+  });
+
+  it("covers the vocabulary class: wrong word, false friends, calques, collocation, lexical gender, register", () => {
+    const persona = minimal();
+    expect(persona).toContain("the grammar is intact but the word is wrong");
+    expect(persona).toContain("says something the learner did not mean");
+    // False friends, named with what they actually mean.
+    expect(persona).toContain("attualmente");
+    expect(persona).toContain("eventualmente");
+    expect(persona).toContain("libreria");
+    // A calque, and a collocation error.
+    expect(persona).toContain('"fare una decisione" — "prendere una decisione"');
+    expect(persona).toContain("sostenere un esame");
+    // Lexical gender — a fact about the word, distinct from the agreement rule.
+    expect(persona).toContain('"la problema" — "il problema"');
+    // D-23: a register slip is a real mistake, judged against the learner's dial.
+    expect(persona).toContain("plainly outside the register named above");
+    expect(persona).toContain("never against your own preference");
+  });
+
+  it("covers the pronunciation class it already had, plus s/z and the blurred ending", () => {
+    const persona = minimal();
+    for (const cue of ["geminates", "gli", "gn", "the Italian r", "misplaced stress", "schwa"]) {
       expect(persona).toContain(cue);
     }
-    expect(persona.toLowerCase()).toContain("grammar and word-choice errors you are confident about");
-    // Priority order is explicit: final vowels are 1, the rest follow.
-    expect(persona.indexOf("FINAL VOWELS")).toBeLessThan(persona.indexOf("DOUBLE CONSONANTS"));
+    expect(persona).toContain("fato against fatto");
+    expect(persona).toContain("voiced against voiceless s and z");
+    expect(persona).toContain("a final vowel blurred until the ending is lost");
+    // The class is still gated on actually hearing it.
+    expect(persona).toContain("when you actually hear one go wrong");
   });
 
   it("carries the never-invent-an-error guardrail (D-19 honesty)", () => {
@@ -120,7 +174,9 @@ describe("buildTutorPersona — the error-flagging mandate", () => {
     // The mandate's own example must not require that inference either.
     expect(persona).not.toMatch(/sono stanca/);
     expect(persona).not.toMatch(/male speaker/);
-    expect(persona).toContain("but only when they have told you which form applies to them");
+    expect(persona).toContain(
+      "an ending that disagrees with the SPEAKER themselves counts only when they have told you which form applies to them",
+    );
   });
 
   // D-21's evidence transfers: audio LLMs diagnose phones from L1 stereotypes rather
@@ -145,10 +201,14 @@ describe("buildTutorPersona — the error-flagging mandate", () => {
   // The nag hole: a cross-class ranking alone is silent on several final-vowel errors
   // in ONE turn — the normal case for a learner with a habitual -o/-a slip — and a
   // comparative preference loses to the mandate's superlatives. Hence a countable cap.
-  it("caps correction at one error per learner turn, within the top class as well as across classes", () => {
+  it("caps correction at one error per learner turn, within a class as well as across classes", () => {
     const persona = minimal();
     expect(persona).toContain("Correct at most one error per learner turn");
-    expect(persona).toContain("even when several of them are final-vowel errors");
+    expect(persona).toContain("even when several of them are of the same kind");
+    // The tie-break is class-neutral now: it used to say a final-vowel error "outranks
+    // the rest", which would pass over a meaning-changing false friend for a blurred -o.
+    expect(persona).toContain("whichever of the three classes it belongs to");
+    expect(persona).toContain("most gets in the way of being understood");
     // Load-bearing: silence is success, not dereliction — this is what balances
     // "do not politely let errors slide".
     expect(persona).toContain(
@@ -170,7 +230,7 @@ describe("buildTutorPersona — the error-flagging mandate", () => {
       const persona = buildTutorPersona({ register, targetLanguage: "Italian", nativeLanguage: "English" });
       // The register line survives verbatim, and the mandate rides alongside it.
       expect(persona).toContain(registerInstruction(register));
-      expect(persona).toContain("FINAL VOWELS AND AGREEMENT (-o/-a, -i/-e)");
+      expect(persona).toContain("VOCABULARY AND WORD CHOICE");
       expect(persona).toContain("Never invent an error");
       // The register line comes first: the mandate says what is an error, not how to speak.
       expect(persona.indexOf(registerInstruction(register))).toBeLessThan(persona.indexOf("Never invent an error"));
@@ -209,7 +269,8 @@ describe("buildTutorSessionConfig — the wired config", () => {
     writeSettings(db, { register: "colto" });
     const { config } = buildTutorSessionConfig(db);
     expect(config.instructions).toContain(registerInstruction("colto"));
-    expect(config.instructions).toContain("FINAL VOWELS AND AGREEMENT (-o/-a, -i/-e)");
+    expect(config.instructions).toContain("VOCABULARY AND WORD CHOICE");
+    expect(config.instructions).toContain("No class outranks another");
     expect(config.instructions).toContain("Never invent an error");
     db.close();
   });
