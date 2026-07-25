@@ -19,6 +19,13 @@ import { seedPlacement } from "@/lib/knowledge/seed-placement";
 // `calibrated` now reflects real confidence, not sample size alone. `runId` is the
 // placement generation: a later run supersedes an earlier one, so a careless placement
 // is repairable by re-taking the check rather than by deleting the database.
+//
+// [REVIEW-63] Those flags described the result; they did not govern it. A run whose
+// response-style control failed was reported as unmeasurable and seeded anyway (F1), a
+// crafted submission could claim a level over bands it never asked about (N1), and the
+// threshold's boundary contradicted its own docstring (N2). The scoring is unchanged in
+// every reachable-through-the-UI case; what changed is that the refusals now reach the
+// writes. `runId` is null exactly when nothing was written.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -67,11 +74,18 @@ export async function POST(request: Request) {
   // Seeding records a placement RUN, which supersedes every earlier one (§DE-2): the
   // derivation stops counting the previous placement's seeds, so re-taking the check
   // actually re-places the learner. `evidence` is still only ever appended to.
+  //
+  // [REVIEW-63 F1] `caveat` is passed because the threshold must gate the WRITES, not only
+  // how they are described. This call used to be unconditional, so a run the result screen
+  // called unmeasurable ("nothing has been assumed … your daily plan is unchanged") still
+  // wrote 39 recognition rows. `seedPlacement` refuses a `"response-style"` run outright,
+  // returning `runId: null` and zero counts, so the sentence is true rather than nearly true.
   const seeded = seedPlacement(getDb(), {
     level: result.level,
     recognizedItemIds: recognizedItemIds(answers),
     calibrated: result.calibrated,
     falseAlarmRate: result.falseAlarmRate,
+    caveat: result.caveat,
   });
 
   return NextResponse.json({

@@ -45,19 +45,36 @@ const CAPTION = "text-[13px] font-medium uppercase tracking-[0.06em] text-second
 const CAVEAT_REASON: Record<NonNullable<PlacementResult["caveat"]>, string> = {
   "response-style": "Several invented words were marked known, so the answers cannot separate the words you know from the ones you do not.",
   inconsistent: "Recognition was uneven — some less common words were marked known while more common ones were not — so only the run from the most common words up is counted.",
-  "thin-sample": "The check was short.",
+  // [REVIEW-63 N1] Was "The check was short." — still true, but the caveat now also fires
+  // when a whole frequency level went unasked, which "short" does not describe.
+  "thin-sample": "The check did not ask enough words at every frequency level.",
 };
 
-/** The honest line when no level can be claimed and the answers say why. */
+/** The honest line when no level can be claimed and the answers say why.
+ *
+ *  [REVIEW-63 F1] The second sentence used to be an unconditional "Nothing has been
+ *  assumed about your level — your daily plan is unchanged", while the run that produced
+ *  it had just written 39 recognition rows; in 1 of 15 measured seeds the next day's
+ *  vocabulary list changed. The writes are now refused for an untrustworthy response style
+ *  (`seedPlacement`), so that sentence is true — and this line reads the counts the server
+ *  actually returned rather than asserting them, so the two cannot drift apart again. */
 function unplaceableLine(r: PlacementResult): string {
   const reason = r.caveat ? ` ${CAVEAT_REASON[r.caveat]}` : "";
-  return `The check could not place you.${reason} Nothing has been assumed about your level — your daily plan is unchanged. You can take the check again whenever you like.`;
+  const wrote =
+    r.seededWords > 0
+      ? ` No level has been assumed. The ${r.seededWords} ${r.seededWords === 1 ? "word" : "words"} you marked as known ${r.seededWords === 1 ? "is" : "are"} noted, and nothing else has changed.`
+      : " Nothing has been assumed about your level, and nothing was added to your model — your daily plan is unchanged.";
+  return `The check could not place you.${reason}${wrote} You can take the check again whenever you like.`;
 }
 
 function levelLine(r: PlacementResult): string {
   // No level AND a reason to distrust the answers: say so, rather than reporting a
-  // beginner who never said they were one.
-  if (r.level === null && r.caveat && r.caveat !== "thin-sample") return unplaceableLine(r);
+  // beginner who never said they were one. [REVIEW-63 N1] `thin-sample` is included now:
+  // the scorer refuses a level when a band was never measured, and "Placed at the very
+  // start." would be a claim about someone the check never asked. A level-less run with NO
+  // caveat is a real measurement (A1 asked and not recognized, non-words rejected) and
+  // still reads as the very start.
+  if (r.level === null && r.caveat) return unplaceableLine(r);
 
   const where = r.level ? `around ${r.level}` : "at the very start";
   const words = r.seededWords > 0 ? ` ${r.seededWords} ${r.seededWords === 1 ? "word" : "words"} you knew are now in your model.` : "";
