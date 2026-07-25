@@ -88,11 +88,14 @@ function apiKey(): string {
  */
 export const openAiClientSecretMinter: ClientSecretMinter = {
   async mint(config) {
+    // [E-39 §B3] Resolve the key BEFORE the try, so a missing key is not reported as a
+    // network error for a request that was never sent.
+    const key = apiKey();
     let res: Response;
     try {
       res = await fetch(CLIENT_SECRETS_URL, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey()}` },
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
         // Only the OpenAI-recognized session fields reach the wire — internal-only
         // fields (e.g. maxSessionSeconds) are stripped by the allowlist builder, so
         // the mint cannot 400 on an unknown param (OBS-001).

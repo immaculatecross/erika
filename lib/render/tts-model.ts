@@ -51,11 +51,15 @@ function apiKey(): string {
 /** The production client. Kept thin: send text → return audio bytes + format. */
 export const openAiTtsModel: TtsModelClient = {
   async synthesize({ text, voice, instructions }) {
+    // [E-39 §B3] Resolve the key BEFORE the try — read inside the header expression it was
+    // caught by the network handler below and rethrown as "Network error calling …", turning
+    // a permanent missing-key condition into a claimed transient blip.
+    const key = apiKey();
     let res: Response;
     try {
       res = await fetch(OPENAI_URL, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey()}` },
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
         body: JSON.stringify({
           model: TTS_MODEL,
           input: text,

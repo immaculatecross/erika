@@ -76,11 +76,18 @@ function apiKey(): string {
 /** The production client. Kept thin: send prompt → return text + token usage. */
 export const openAiTextModel: TextModelClient = {
   async complete({ prompt, maxOutputTokens }) {
+    // [E-39 §B3] Resolve the key BEFORE the try. It used to be read inside the
+    // `authorization` header expression, so on a keyless server `TextModelNotConfiguredError`
+    // was caught by the network handler below and rethrown as a generic
+    // `TextModelUnavailableError("Network error calling …")` — a permanent, user-fixable
+    // condition disguised as a transient blip, and the sentence claimed a network attempt
+    // that never happened. Found by DRIVING the built keyless server, not by reading this.
+    const key = apiKey();
     let res: Response;
     try {
       res = await fetch(OPENAI_URL, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey()}` },
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
         body: JSON.stringify({
           model: TEXT_MODEL,
           max_tokens: maxOutputTokens,

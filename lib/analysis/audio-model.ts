@@ -366,11 +366,17 @@ async function callModelOnce(
   input: TriageInput | DeepInput,
   maxOutputTokens: number,
 ): Promise<RawReply> {
+  // [E-39 §B3] Resolve the key BEFORE the try. Read inside the header expression, a missing
+  // key was caught by the network handler and reported as "Network error calling …" — a
+  // sentence describing an attempt that never left the process. Same class of error either
+  // way here (unlike the lesson/TTS clients, where it changed the class), but the message
+  // has to describe what actually happened.
+  const key = apiKey();
   let res: Response;
   try {
     res = await fetch(OPENAI_URL, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey()}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify({
         // These audio models take audio in and return text; they do not support a
         // JSON response_format, so JSON is requested in the prompt and extracted

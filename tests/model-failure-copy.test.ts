@@ -134,6 +134,52 @@ describe("a genuinely transient failure keeps its retry — the mirror defect", 
   });
 });
 
+describe("a keyless client reports NOT-CONFIGURED, not a network error", () => {
+  // [E-39 §B3] The defect this pins was found by DRIVING the built keyless server, and no
+  // amount of reading had caught it: every real client resolved the key INSIDE the header
+  // expression of its `fetch`, inside the try block, so a missing key was caught by the
+  // network handler and rethrown as "Network error calling …" — the wrong CLASS for the
+  // lesson and TTS clients (so the wall went back to promising transience with a retry that
+  // could never work), and a sentence describing a request that never left the process.
+  //
+  // The assertion is on the CLASS the client throws with no key set, which is the contract
+  // every error mapping above depends on.
+  const cases: { name: string; call: () => Promise<unknown>; expected: new () => Error }[] = [
+    {
+      name: "the lesson text model",
+      call: async () => {
+        const { openAiTextModel } = await import("@/lib/lessons/text-model");
+        return openAiTextModel.complete({ prompt: "x", maxOutputTokens: 8 });
+      },
+      expected: TextModelNotConfiguredError,
+    },
+    {
+      name: "the TTS model",
+      call: async () => {
+        const { openAiTtsModel } = await import("@/lib/render/tts-model");
+        return openAiTtsModel.synthesize({ text: "ciao" });
+      },
+      expected: TtsModelNotConfiguredError,
+    },
+  ];
+
+  for (const c of cases) {
+    it(`${c.name}: throws the not-configured error, never a network error`, async () => {
+      const before = process.env[REQUIRED_KEY];
+      try {
+        delete process.env[REQUIRED_KEY];
+        await expect(c.call()).rejects.toBeInstanceOf(c.expected);
+        // …and it must not describe a network attempt that never happened.
+        await expect(c.call()).rejects.toThrow(/is not set/);
+        await expect(c.call()).rejects.not.toThrow(/Network error/);
+      } finally {
+        if (before === undefined) delete process.env[REQUIRED_KEY];
+        else process.env[REQUIRED_KEY] = before;
+      }
+    });
+  }
+});
+
 describe("the not-configured sentence itself", () => {
   it("names the capability, the key and the file, and states the permanence", () => {
     const msg = modelNotConfiguredMessage("lessons");
