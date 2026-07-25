@@ -166,7 +166,7 @@ Drive it in a browser and **state the measured silence-to-first-audio number** i
 
 ```
 RESULT: done
-PR:     https://github.com/immaculatecross/erika/pulls (branch feat/e43-tutor-voice-loop)
+PR:     https://github.com/immaculatecross/erika/pull/74
 ```
 
 **Review tier: Full** (unchanged — money, a migration, secrets, an external contract).
