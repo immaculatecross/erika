@@ -12,6 +12,7 @@ import { ensurePronunciationDir, pronunciationTakePath, streamToFile, UploadTooL
 import { normalize } from "@/lib/ingest/normalize";
 import { probeDuration } from "@/lib/ingest/ffmpeg";
 import { getPhraseRender, phraseHash } from "@/lib/render/phrase-renders";
+import { hasAnalysisKey } from "@/lib/env-file";
 import { phraseRenderEstimateUsd } from "@/lib/render/phrase";
 import {
   buildResultView,
@@ -74,6 +75,14 @@ export async function GET(_request: Request, { params }: Ctx) {
     /** The native rendition is rendered through the E-33 shadow endpoints — the same
      *  cached phrase render, billed once, replayed free. */
     renditionExists,
+    /**
+     * Whether this server can render a reference line AT ALL (E-39 §B4). False means no
+     * voice is configured, so "listen first" is a condition no learner here can ever
+     * satisfy — the drill reduces to the guidance + record + hear-yourself loop, and that
+     * loop must be able to retire the finding. Distinct from a rendition that merely
+     * failed or was refused by the cap, which a later attempt may still satisfy.
+     */
+    voiceAvailable: hasAnalysisKey(),
     renditionEstimateUsd: phraseRenderEstimateUsd(drill.referenceText),
     /** Whether the OPTIONAL scoring layer can run here. False changes nothing about
      *  the listen → say-it-back loop; it only hides the priced scoring control. */

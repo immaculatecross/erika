@@ -91,8 +91,17 @@ export default function StudioListPage() {
               </span>
             ))}
           </div>
+          {/* [E-39 §B7] This used to end "They come back through the lines below." No code
+              path implements that: sounds are `phone:` knowledge items, the lines are
+              finding-derived sentences, and nothing anywhere selects a drill by which sound
+              is at the edge — lib/compose.ts documents the opposite in as many words ("it
+              is offered once and never re-scheduled. Nothing brings it back"). Worse, on a
+              day with no drills the promise rendered directly above "No pronunciation
+              drills yet." Re-scheduling by sound is real work and belongs with the
+              knowledge core's scheduling; until it exists the copy says only what is true. */}
           <p className="text-[13px] text-secondary">
-            Sounds you have missed in a drill. They come back through the lines below.
+            Sounds you have missed in a drill so far. Erika is not yet able to pick a line for a
+            particular sound — the lines below come from your own recordings.
           </p>
         </section>
       )}

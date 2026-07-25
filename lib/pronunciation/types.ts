@@ -151,6 +151,20 @@ export interface DrillGateState {
   heard: boolean;
   /** The rendition could not be played at all (budget refusal or a failed render). */
   renditionUnavailable: boolean;
+  /**
+   * This server CANNOT render the reference line at all — no voice is configured, so no
+   * amount of waiting or retrying will ever produce one (E-39 §B4).
+   *
+   * This is a different fact from `renditionUnavailable`, and the difference is the whole
+   * repair. When a rendition is merely refused or failed, hearing it later is possible and
+   * a visit must keep waiting for that. When the server has no voice, "hear the line
+   * first" is a condition that can never be met — so the drill's premise reduces to what
+   * IS available (the written guidance, the recording, the playback), and that reduced
+   * loop has to be able to complete. Otherwise the pronunciation finding gets no card
+   * either (`UNCARDABLE_CATEGORIES`) and re-enters the daily plan every day forever, with
+   * no action in the product that can ever clear it. [RETRO-004 §DE-4]
+   */
+  renditionImpossible: boolean;
 }
 
 export interface DrillGate {
@@ -175,13 +189,29 @@ export interface DrillGate {
  * is practice worth allowing, but it must never spend the finding. So an unheard lap
  * unlocks practice and records nothing.
  *
- * The pair is exported and tested as a truth table so the permissive and the strict
- * decision can never silently be conflated again.
+ * [E-39 §B4] …with ONE exception, and it is an exception about IMPOSSIBILITY, not about
+ * failure. When the server cannot render the reference line at all — no voice configured —
+ * "hear it first" is a condition no learner can ever satisfy here. A pronunciation finding
+ * has no card path, so the studio visit is its only retirement route, and the finding
+ * re-entered the daily plan every day forever with no action that could clear it. On such
+ * a server the drill is what remains available (read the guidance, say it, hear yourself
+ * back) and completing THAT retires it.
+ *
+ * The two directions this deliberately does NOT do, because each is the mirror defect:
+ *   * It does not fire on a merely FAILED or budget-REFUSED rendition. Those can succeed
+ *     later, so a visit keeps waiting — retiring a drill the learner never heard, on a
+ *     server that could have played it, is the E-37 defect this same gate was built to
+ *     stop, and it stays stopped.
+ *   * It does not turn on a CLIENT-side failure. `renditionImpossible` comes from the
+ *     server's own report of its configuration, so a flaky network cannot manufacture it.
+ *
+ * The trio is exported and tested as a truth table so the permissive and the strict
+ * decisions can never silently be conflated again.
  */
 export function drillGate(state: DrillGateState): DrillGate {
   return {
-    canRecord: state.heard || state.renditionUnavailable,
-    visitCounts: state.heard,
+    canRecord: state.heard || state.renditionUnavailable || state.renditionImpossible,
+    visitCounts: state.heard || state.renditionImpossible,
   };
 }
 

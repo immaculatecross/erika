@@ -14,11 +14,17 @@ import type { KnowledgeStatus } from "@/lib/knowledge/types";
 export type ItemLessonState =
   | { phase: "loading" }
   | { phase: "budget" }
-  | { phase: "error"; message: string }
+  /** [E-39 §B3] `retryable` decides whether the runner may offer "Try again" at all:
+   *  offering it for a missing key is the defect (a control that cannot ever succeed),
+   *  and NOT offering it for a real blip is the mirror defect. The server says which. */
+  | { phase: "error"; message: string; retryable: boolean }
   | { phase: "ready"; lesson: ItemLesson };
 
 export function useItemLesson(itemId: string) {
   const [state, setState] = useState<ItemLessonState>({ phase: "loading" });
+  /** Bumped by `retry()` to re-run the effect — the in-place recovery a transient
+   *  failure had no way to reach before (the error branch was a heading and a link). */
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -35,19 +41,28 @@ export function useItemLesson(itemId: string) {
         return;
       }
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setState({ phase: "error", message: body.error ?? "This lesson could not be loaded." });
+        const body = (await res.json().catch(() => ({}))) as { error?: string; retryable?: boolean };
+        setState({
+          phase: "error",
+          message: body.error ?? "This lesson could not be loaded.",
+          // An unlabelled failure is treated as transient: a retry that fails again is a
+          // smaller harm than withholding the only way forward from someone who can use it.
+          retryable: body.retryable ?? true,
+        });
         return;
       }
       const body = (await res.json()) as { lesson: ItemLesson };
       setState({ phase: "ready", lesson: body.lesson });
     })().catch(() => {
-      if (alive) setState({ phase: "error", message: "This lesson could not be loaded." });
+      // A thrown fetch never reached the server, so it is transient by construction.
+      if (alive) setState({ phase: "error", message: "This lesson could not be loaded.", retryable: true });
     });
     return () => {
       alive = false;
     };
-  }, [itemId]);
+  }, [itemId, attempt]);
+
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   // Record one graded exercise's result as cued evidence. Best-effort: a failed
   // write must not break the runner (the lesson content is unaffected), so it
@@ -66,5 +81,5 @@ export function useItemLesson(itemId: string) {
     [itemId],
   );
 
-  return { state, complete };
+  return { state, complete, retry };
 }

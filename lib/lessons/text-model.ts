@@ -12,6 +12,13 @@ import { TEXT_MODEL } from "../analysis/rates";
 
 /** Thrown when the text model/endpoint is unavailable or unauthorized (a blocker). */
 export class TextModelUnavailableError extends Error {}
+/**
+ * Thrown when there is no API key at all — a PERMANENT, operator-fixable condition, not a
+ * blip (E-39 §B3). A subclass so every existing `catch (TextModelUnavailableError)` keeps
+ * working unchanged, while a caller that wants to tell the learner the truth about
+ * permanence — and whether "Try again" could possibly help — can distinguish it.
+ */
+export class TextModelNotConfiguredError extends TextModelUnavailableError {}
 /** Thrown when a text response cannot be parsed into the expected shape. */
 export class TextModelParseError extends Error {}
 
@@ -62,7 +69,7 @@ const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
 function apiKey(): string {
   const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new TextModelUnavailableError("OPENAI_API_KEY is not set.");
+  if (!key) throw new TextModelNotConfiguredError("OPENAI_API_KEY is not set.");
   return key;
 }
 

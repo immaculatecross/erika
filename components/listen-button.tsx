@@ -13,6 +13,18 @@ import { formatEstimate } from "@/lib/format";
 
 type Phase = "idle" | "generating" | "playing" | "budget" | "error";
 
+/**
+ * What the server said went wrong, when it said anything (E-39 §B3). `null` means the
+ * failure was local (playback died in the browser) — transient by construction.
+ */
+type Failure = { message: string; retryable: boolean } | null;
+
+/**
+ * Why the reference clip could not be played, for a surface that gates on having heard it.
+ * `"not-configured"` is PERMANENT on this server; the other two may succeed later.
+ */
+export type RenditionUnavailableReason = "not-configured" | "budget" | "unavailable";
+
 /** Play `src` to completion (or rejection). Mirrors the Compare control's helper. */
 function playClip(audio: HTMLAudioElement, src: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -59,13 +71,19 @@ export function ListenButton({
    *  to unlock recording only AFTER the reference has been heard — Azure cannot assess
    *  two voices in one take, so listening and recording must be sequential. */
   onPlayed?: () => void;
-  /** Fired when the clip cannot be played at all (budget refusal or a failed render).
-   *  A surface that gates on `onPlayed` uses this to stop gating and say so honestly,
-   *  rather than leaving the learner stuck behind a control that cannot succeed. */
-  onUnavailable?: () => void;
+  /** Fired when the clip cannot be played at all. A surface that gates on `onPlayed` uses
+   *  this to stop gating and say so honestly, rather than leaving the learner stuck behind
+   *  a control that cannot succeed.
+   *
+   *  [E-39 §B3/§B4] It now carries WHY, because the two cases are not the same fact and
+   *  the studio's retirement rule turns on the difference: `"not-configured"` means this
+   *  server can never render the line (permanent — no retry can help), while
+   *  `"budget"`/`"unavailable"` mean a later attempt genuinely might. */
+  onUnavailable?: (reason: RenditionUnavailableReason) => void;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [ready, setReady] = useState(exists);
+  const [failure, setFailure] = useState<Failure>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -82,10 +100,13 @@ export function ListenButton({
       setPhase("playing");
       await playClip(audio, audioSrc);
       setPhase("idle");
+      setFailure(null);
       onPlayed?.();
     } catch {
+      // Local playback failure: nothing was asked of the server, so it is transient.
+      setFailure(null);
       setPhase("error");
-      onUnavailable?.();
+      onUnavailable?.("unavailable");
     }
   }, [audioSrc, onPlayed, onUnavailable]);
 
@@ -94,20 +115,28 @@ export function ListenButton({
     try {
       const res = await fetch(renderUrl, { method: "POST" });
       if (res.status === 402) {
+        setFailure(null);
         setPhase("budget");
-        onUnavailable?.();
+        onUnavailable?.("budget");
         return;
       }
       if (!res.ok) {
+        // [E-39 §B3] The server says which failure this is. A missing key is permanent,
+        // so the copy must not say "right now" and no retry may be offered for it.
+        const body = (await res.json().catch(() => ({}))) as { error?: string; retryable?: boolean };
+        const retryable = body.retryable ?? true;
+        setFailure(body.error ? { message: body.error, retryable } : null);
         setPhase("error");
-        onUnavailable?.();
+        onUnavailable?.(retryable ? "unavailable" : "not-configured");
         return;
       }
       setReady(true);
+      setFailure(null);
       await play();
     } catch {
+      setFailure(null);
       setPhase("error");
-      onUnavailable?.();
+      onUnavailable?.("unavailable");
     }
   }, [renderUrl, play, onUnavailable]);
 
@@ -134,19 +163,26 @@ export function ListenButton({
     );
   }
   if (phase === "error") {
+    // [E-39 §B3] This said "The voice is unavailable right now." for every failure,
+    // including a server with no key configured — where it is false and the "Try again"
+    // beside it could never succeed. The server's own sentence is shown when it sent one,
+    // and the retry appears only when a retry can honestly help.
+    const retryable = failure === null || failure.retryable;
     return (
       <span className="inline-flex flex-wrap items-center gap-2">
         <span data-listen-error className="text-[13px] text-secondary">
-          The voice is unavailable right now.
+          {failure?.message ?? "The voice could not be played. This is usually temporary."}
         </span>
-        <button
-          type="button"
-          data-listen-retry
-          onClick={() => void (ready ? play() : generateAndPlay())}
-          className="text-[13px] font-medium text-ink underline underline-offset-2"
-        >
-          Try again
-        </button>
+        {retryable && (
+          <button
+            type="button"
+            data-listen-retry
+            onClick={() => void (ready ? play() : generateAndPlay())}
+            className="text-[13px] font-medium text-ink underline underline-offset-2"
+          >
+            Try again
+          </button>
+        )}
       </span>
     );
   }

@@ -5,6 +5,7 @@ import { getCompletedNote } from "@/lib/ask/notes";
 import { askFinding, canAsk, estimateUsd, BudgetExceededError, NoCorpusToCiteError } from "@/lib/ask/engine";
 import { openAiTextModel, TextModelUnavailableError, TextModelParseError } from "@/lib/lessons/text-model";
 import type { AskNote } from "@/lib/ask/notes";
+import { askModelErrorResponse } from "@/app/api/model-errors";
 
 // The Ask Erika route (E-23, the v0.3 finale). GET is the read-only status the ask
 // control primes with: whether a note already exists (and, if so, the note plus its
@@ -72,11 +73,10 @@ export async function POST(_request: Request, { params }: Ctx) {
     if (err instanceof NoCorpusToCiteError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
-    if (err instanceof TextModelUnavailableError) {
-      return NextResponse.json({ error: "Erika is unavailable right now." }, { status: 502 });
-    }
-    if (err instanceof TextModelParseError) {
-      return NextResponse.json({ error: "Erika's note could not be read — try again." }, { status: 502 });
+    // [E-39 §B3] One mapping, and it names the cause: on a server with no key this said
+    // "unavailable right now", which is not true and gives nobody anything to act on.
+    if (err instanceof TextModelUnavailableError || err instanceof TextModelParseError) {
+      return askModelErrorResponse(err);
     }
     throw err;
   }

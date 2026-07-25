@@ -37,6 +37,9 @@ interface DrillStatus {
   guidance: DrillGuidance;
   register: string;
   renditionExists: boolean;
+  /** Whether this server can render a reference line at all (E-39 §B4). False means no
+   *  voice is configured, so "listen first" can never be satisfied here. */
+  voiceAvailable: boolean;
   renditionEstimateUsd: number;
   scoringAvailable: boolean;
   scoreEstimateUsd: number;
@@ -86,7 +89,18 @@ export default function StudioDrillPage({ params }: { params: Promise<{ drillKey
   // when the rendition cannot play, but a lap the learner never heard the line for must
   // NOT count as a visit — a visit retires the correction permanently, and the
   // comparison against the native rendition IS the drill.
-  const gate = drillGate({ heard, renditionUnavailable });
+  //
+  // [E-39 §B4] `renditionImpossible` is the server's own report that it has no voice at
+  // all, which is a different fact from a rendition that failed: it can never succeed, so
+  // "listen first" is unsatisfiable here and the reduced loop has to be able to complete —
+  // otherwise this finding, which gets no card either, re-enters the plan every day
+  // forever. It is read from `status.voiceAvailable`, never inferred from a failed fetch,
+  // so a flaky network cannot manufacture a retirement.
+  const gate = drillGate({
+    heard,
+    renditionUnavailable,
+    renditionImpossible: status !== null && !status.voiceAvailable,
+  });
 
   const onScored = useCallback((body: unknown) => setScored(body as ScoredBody), []);
 
@@ -172,16 +186,30 @@ export default function StudioDrillPage({ params }: { params: Promise<{ drillKey
                   // clear it rather than leave a stale (and now untrue) line on screen.
                   setRenditionUnavailable(false);
                 }}
+                // The reason is deliberately IGNORED for the retirement decision: that
+                // turns on `status.voiceAvailable`, the server's own report, so no
+                // client-side failure can manufacture a permanent write (E-39 §B4).
                 onUnavailable={() => setRenditionUnavailable(true)}
               />
             </div>
           )}
-          {renditionUnavailable && (
-            <p data-drill-rendition-unavailable className="text-[15px] text-secondary">
-              The line could not be played just now. You can still record your take and listen
-              back, but this one stays on your list until you have heard it said correctly —
-              comparing is the practice.
+          {/* [E-39 §B4] Two different facts, two different screens. The old copy said "just
+              now" and "stays on your list until you have heard it said correctly" for BOTH,
+              which on a server with no voice described a wait that never ends. */}
+          {!status.voiceAvailable ? (
+            <p data-drill-no-voice className="text-[15px] text-secondary">
+              This server has no spoken voice set up, so there is no recording of the line to
+              compare against. Read the note above, say the line, and listen back to yourself —
+              that is the drill here, and finishing it clears this one from your list.
             </p>
+          ) : (
+            renditionUnavailable && (
+              <p data-drill-rendition-unavailable className="text-[15px] text-secondary">
+                The line could not be played. You can still record your take and listen back, but
+                this one stays on your list until you have heard it said correctly — comparing is
+                the practice, and the voice may work on your next try.
+              </p>
+            )
           )}
         </motion.section>
 

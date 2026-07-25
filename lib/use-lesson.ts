@@ -12,7 +12,9 @@ import type { Lesson, LessonGrade } from "@/lib/lessons/lessons-view";
 export type LessonState =
   | { phase: "loading" }
   | { phase: "budget" }
-  | { phase: "error"; message: string }
+  /** [E-39 §B3] `retryable` is the server's verdict on whether "Try again" could ever
+   *  succeed — false for "no key is configured", which is permanent until someone acts. */
+  | { phase: "error"; message: string; retryable: boolean }
   | { phase: "ready"; lesson: Lesson };
 
 /** A grade attempt resolves to a verdict, the budget cap, or a truthful failure. */
@@ -20,6 +22,9 @@ export type GradeOutcome = LessonGrade | { budget: true } | { error: string };
 
 export function useLesson(patternKey: string) {
   const [state, setState] = useState<LessonState>({ phase: "loading" });
+  /** Bumped by `retry()` to re-run the generate call in place (E-39 §B3) — the
+   *  recovery a genuinely transient failure had no way to reach before. */
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -36,19 +41,28 @@ export function useLesson(patternKey: string) {
         return;
       }
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setState({ phase: "error", message: body.error ?? "This lesson could not be loaded." });
+        const body = (await res.json().catch(() => ({}))) as { error?: string; retryable?: boolean };
+        setState({
+          phase: "error",
+          message: body.error ?? "This lesson could not be loaded.",
+          // Unlabelled ⇒ treated as transient: withholding the only way forward from
+          // someone who could use it is the worse of the two errors.
+          retryable: body.retryable ?? true,
+        });
         return;
       }
       const body = (await res.json()) as { lesson: Lesson };
       setState({ phase: "ready", lesson: body.lesson });
     })().catch(() => {
-      if (alive) setState({ phase: "error", message: "This lesson could not be loaded." });
+      // A thrown fetch never reached the server, so it is transient by construction.
+      if (alive) setState({ phase: "error", message: "This lesson could not be loaded.", retryable: true });
     });
     return () => {
       alive = false;
     };
-  }, [patternKey]);
+  }, [patternKey, attempt]);
+
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   const grade = useCallback(
     async (target: string, rewrite: string): Promise<GradeOutcome> => {
@@ -81,5 +95,5 @@ export function useLesson(patternKey: string) {
     [patternKey],
   );
 
-  return { state, grade, complete };
+  return { state, grade, complete, retry };
 }

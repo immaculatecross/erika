@@ -7,6 +7,7 @@ import { renderPhrase, phraseRenderEstimateUsd } from "@/lib/render/phrase";
 import { getPhraseRender, phraseHash } from "@/lib/render/phrase-renders";
 import { BudgetExceededError } from "@/lib/render/engine";
 import { openAiTtsModel, TtsModelUnavailableError } from "@/lib/render/tts-model";
+import { voiceModelErrorResponse } from "@/app/api/model-errors";
 
 // One shadow drill (E-33, D-18/D-21). GET is the read-only status the drill primes
 // with: the correct target phrase, whether its render already exists, and the render
@@ -56,9 +57,8 @@ export async function POST(_request: Request, { params }: Ctx) {
         { status: 402 },
       );
     }
-    if (err instanceof TtsModelUnavailableError) {
-      return NextResponse.json({ error: "The voice model is unavailable right now." }, { status: 502 });
-    }
+    // [E-39 §B3] Name the real cause and say whether a retry could help.
+    if (err instanceof TtsModelUnavailableError) return voiceModelErrorResponse(err);
     throw err;
   }
 }

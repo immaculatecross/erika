@@ -268,8 +268,21 @@ function LessonBody({
   );
 }
 
+/** The quiet link to Settings, where the cap actually lives. */
+function SettingsLink({ label }: { label: string }) {
+  return (
+    <Link
+      href="/settings"
+      data-settings-link
+      className="inline-flex w-fit text-[15px] font-medium text-ink underline underline-offset-2"
+    >
+      {label}
+    </Link>
+  );
+}
+
 export function ItemLessonRunner({ itemId }: { itemId: string }) {
-  const { state, complete } = useItemLesson(itemId);
+  const { state, complete, retry } = useItemLesson(itemId);
 
   if (state.phase === "loading") {
     return (
@@ -288,18 +301,38 @@ export function ItemLessonRunner({ itemId }: { itemId: string }) {
         </h1>
         <p className="text-[17px] leading-[1.47] text-secondary">
           This lesson hasn&apos;t been generated yet, and the monthly budget is spent. It becomes
-          available again next month, or raise the cap in Settings.
+          available again next month, or you can raise the cap.
         </p>
+        {/* [E-39 §B3] The copy used to say "raise the cap in Settings" and point at a
+            control that is not on this screen. Now it goes there. */}
+        <SettingsLink label="Open Settings" />
       </div>
     );
   }
 
   if (state.phase === "error") {
+    // [E-39 §B3] Two different screens, because they are two different facts. A missing
+    // key is permanent and gets no "Try again" — a control that can never succeed is what
+    // made a person retry all 13 rows. Anything transient gets one, in place.
     return (
       <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-4 p-8">
         <BackToItems />
-        <h1 className="text-[34px] font-bold tracking-tight">Lesson unavailable</h1>
-        <p className="text-[17px] leading-[1.47] text-secondary">{state.message}</p>
+        <h1 className="text-[34px] font-bold tracking-tight">
+          {state.retryable ? "That didn’t come through" : "Lessons aren’t set up here"}
+        </h1>
+        <p data-lesson-error className="text-[17px] leading-[1.47] text-secondary">
+          {state.message}
+        </p>
+        {state.retryable && (
+          <button
+            type="button"
+            data-lesson-retry
+            onClick={retry}
+            className="inline-flex w-fit rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98]"
+          >
+            Try again
+          </button>
+        )}
       </div>
     );
   }

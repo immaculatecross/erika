@@ -14,18 +14,36 @@ const LABEL = "text-[13px] font-medium uppercase tracking-[0.06em] text-secondar
 const FIELD =
   "rounded-control border border-hairline bg-card px-3 py-2 text-[15px] text-ink outline-none focus:border-accent";
 
+/** What the server reports about its own API key — a boolean and a name, never a key. */
+type KeyState = { present: boolean; name: string };
+
 export default function SettingsPage() {
   const [form, setForm] = useState<Settings | null>(null);
   const [spent, setSpent] = useState<number | null>(null);
+  const [key, setKey] = useState<KeyState | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
-      .then(({ spentThisMonth, ...s }: Settings & { spentThisMonth: number }) => {
-        setForm(s);
-        setSpent(spentThisMonth);
-      })
+      .then(
+        ({
+          spentThisMonth,
+          analysisKeyPresent,
+          requiredKeyName,
+          ...s
+        }: Settings & {
+          spentThisMonth: number;
+          analysisKeyPresent?: boolean;
+          requiredKeyName?: string;
+        }) => {
+          setForm(s as Settings);
+          setSpent(spentThisMonth);
+          if (typeof analysisKeyPresent === "boolean") {
+            setKey({ present: analysisKeyPresent, name: requiredKeyName ?? "OPENAI_API_KEY" });
+          }
+        },
+      )
       .catch(() => setStatus({ kind: "error", message: "Could not load settings." }));
   }, []);
 
@@ -59,6 +77,39 @@ export default function SettingsPage() {
     <div className="mx-auto max-w-xl p-8">
       <h1 className="mb-6 text-[34px] font-bold tracking-tight">Settings</h1>
       <div className="flex flex-col gap-5 rounded-card bg-card p-6 shadow-card">
+        {/* [E-39 §B5] Erika needs an OpenAI key, and Settings never said so — the only
+            place a new user learned it was a leaked internal error string on the tutor
+            screen. Said once, here, where a person goes looking. D-24 tone: factual, no
+            alarm, no red, no exclamation; it states what works without one, because a
+            great deal does. */}
+        {key && (
+          <div className="flex flex-col gap-1.5" data-api-key>
+            <span className={LABEL}>API key</span>
+            <p data-api-key-state className="text-[15px] text-ink">
+              {key.present
+                ? "An API key is configured on this server."
+                : "No API key is configured on this server."}
+            </p>
+            <span className="text-[13px] leading-[1.5] text-secondary">
+              {key.present ? (
+                <>
+                  Erika reads <span className="tabular">{key.name}</span> from{" "}
+                  <span className="tabular">.env.local</span> at the repo root. Analysis, lessons, the
+                  spoken voice and the tutor all bill against your monthly budget below.
+                </>
+              ) : (
+                <>
+                  Recording, uploading and the speech timeline work without one. Analysis, lessons,
+                  the spoken voice and the tutor need it. Put{" "}
+                  <span className="tabular">{key.name}</span> in{" "}
+                  <span className="tabular">.env.local</span> at the repo root (see{" "}
+                  <span className="tabular">.env.example</span>) and restart the server.
+                </>
+              )}
+            </span>
+          </div>
+        )}
+
         <label className="flex flex-col gap-1.5">
           <span className={LABEL}>Target language</span>
           <input

@@ -87,7 +87,7 @@ describe("the drill gate — recording vs SPENDING the finding", () => {
   // heard. The pair is now one pure function, tested as a truth table.
 
   it("normal path: heard the line ⇒ can record, and the lap spends the finding", () => {
-    expect(drillGate({ heard: true, renditionUnavailable: false })).toEqual({
+    expect(drillGate({ heard: true, renditionUnavailable: false, renditionImpossible: false })).toEqual({
       canRecord: true,
       visitCounts: true,
     });
@@ -96,32 +96,59 @@ describe("the drill gate — recording vs SPENDING the finding", () => {
   it("[N1] rendition unavailable and NOT heard ⇒ can record, but the lap must NOT count", () => {
     // The whole defect in one assertion: practice stays available (F5), and the
     // correction is not silently retired without ever being compared to the reference.
-    expect(drillGate({ heard: false, renditionUnavailable: true })).toEqual({
+    expect(drillGate({ heard: false, renditionUnavailable: true, renditionImpossible: false })).toEqual({
       canRecord: true,
       visitCounts: false,
     });
   });
 
   it("nothing heard and nothing failed ⇒ recording is still locked (listen first)", () => {
-    expect(drillGate({ heard: false, renditionUnavailable: false })).toEqual({
+    expect(drillGate({ heard: false, renditionUnavailable: false, renditionImpossible: false })).toEqual({
       canRecord: false,
       visitCounts: false,
     });
   });
 
   it("heard it, and a LATER render failed ⇒ the lap still counts (they did hear it)", () => {
-    expect(drillGate({ heard: true, renditionUnavailable: true })).toEqual({
+    expect(drillGate({ heard: true, renditionUnavailable: true, renditionImpossible: false })).toEqual({
       canRecord: true,
       visitCounts: true,
     });
   });
 
-  it("`visitCounts` never outruns `canRecord` — a spendable lap is always a legal one", () => {
-    for (const heard of [true, false]) {
-      for (const renditionUnavailable of [true, false]) {
-        const g = drillGate({ heard, renditionUnavailable });
-        if (g.visitCounts) expect(g.canRecord).toBe(true);
-      }
+  it("is the whole truth table, asserted positively over every combination", () => {
+    // [E-39] This used to be `if (g.visitCounts) expect(g.canRecord).toBe(true)` — an
+    // implication a mutation making `visitCounts` always false satisfies VACUOUSLY, since
+    // the body never runs (RETRO-004 §1.4 V3). The expectation now comes from this table,
+    // stated independently of the function, and every one of the eight inputs is named.
+    const table: {
+      heard: boolean;
+      renditionUnavailable: boolean;
+      renditionImpossible: boolean;
+      canRecord: boolean;
+      visitCounts: boolean;
+    }[] = [
+      // Heard the line: record, and the lap spends the finding. The normal path.
+      { heard: true, renditionUnavailable: false, renditionImpossible: false, canRecord: true, visitCounts: true },
+      { heard: true, renditionUnavailable: true, renditionImpossible: false, canRecord: true, visitCounts: true },
+      { heard: true, renditionUnavailable: false, renditionImpossible: true, canRecord: true, visitCounts: true },
+      { heard: true, renditionUnavailable: true, renditionImpossible: true, canRecord: true, visitCounts: true },
+      // Never heard it, and the line COULD have played: practise, spend nothing.
+      { heard: false, renditionUnavailable: false, renditionImpossible: false, canRecord: false, visitCounts: false },
+      { heard: false, renditionUnavailable: true, renditionImpossible: false, canRecord: true, visitCounts: false },
+      // Never heard it, and this server can NEVER play it: the reduced loop IS the drill,
+      // so it must be able to retire the finding (E-39 §B4) — otherwise the finding, which
+      // gets no card either, returns to the plan every day forever.
+      { heard: false, renditionUnavailable: false, renditionImpossible: true, canRecord: true, visitCounts: true },
+      { heard: false, renditionUnavailable: true, renditionImpossible: true, canRecord: true, visitCounts: true },
+    ];
+    expect(table).toHaveLength(8); // every combination of three booleans, none omitted
+
+    for (const row of table) {
+      const { canRecord, visitCounts, ...input } = row;
+      expect({ ...input, ...drillGate(input) }).toEqual({ ...input, canRecord, visitCounts });
+      // And the standing structural rule: a spendable lap is always a legal one.
+      expect(canRecord || !visitCounts).toBe(true);
     }
   });
 
@@ -178,13 +205,13 @@ describe("the lap latch — a blind lap must not disarm the take (B2)", () => {
     const r = lapper();
 
     // The rendition failed. F5 unlocks recording; the N1 gate passes no callback.
-    const blind = drillGate({ heard: false, renditionUnavailable: true });
+    const blind = drillGate({ heard: false, renditionUnavailable: true, renditionImpossible: false });
     expect(blind.canRecord).toBe(true);
     expect(r.lap(blind.visitCounts)).toBe(false);
     expect(r.spent).toBe(false);
 
     // The rendition recovers, the learner hears the line, and compares again.
-    const heard = drillGate({ heard: true, renditionUnavailable: false });
+    const heard = drillGate({ heard: true, renditionUnavailable: false, renditionImpossible: false });
     expect(r.lap(heard.visitCounts)).toBe(true); // the lap that must count
     expect(r.spent).toBe(true);
 

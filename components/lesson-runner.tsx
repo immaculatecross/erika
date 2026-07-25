@@ -236,7 +236,7 @@ function ExerciseCard({
 
 export function LessonRunner({ patternKey }: { patternKey: string }) {
   const reduced = usePrefersReducedMotion();
-  const { state, grade, complete } = useLesson(patternKey);
+  const { state, grade, complete, retry } = useLesson(patternKey);
   const [index, setIndex] = useState(0);
   const [correctCount, setCorrectCount] = useState(0);
   const [step, setStep] = useState<Resolution>({ done: false });
@@ -260,18 +260,42 @@ export function LessonRunner({ patternKey }: { patternKey: string }) {
         </h1>
         <p className="text-[17px] leading-[1.47] text-secondary">
           This lesson hasn&apos;t been generated yet, and the monthly budget is spent. It becomes
-          available again next month, or raise the cap in Settings.
+          available again next month, or you can raise the cap.
         </p>
+        {/* [E-39 §B3] "in Settings" used to name a control that is not on this screen. */}
+        <Link
+          href="/settings"
+          data-settings-link
+          className="inline-flex w-fit text-[15px] font-medium text-ink underline underline-offset-2"
+        >
+          Open Settings
+        </Link>
       </div>
     );
   }
 
   if (state.phase === "error") {
+    // [E-39 §B3] The permanence has to be true, and the way forward has to exist. A
+    // missing key is not "right now" and gets no retry it cannot honour.
     return (
       <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-4 p-8">
         <BackToLessons />
-        <h1 className="text-[34px] font-bold tracking-tight">Lesson unavailable</h1>
-        <p className="text-[17px] leading-[1.47] text-secondary">{state.message}</p>
+        <h1 className="text-[34px] font-bold tracking-tight">
+          {state.retryable ? "That didn’t come through" : "Lessons aren’t set up here"}
+        </h1>
+        <p data-lesson-error className="text-[17px] leading-[1.47] text-secondary">
+          {state.message}
+        </p>
+        {state.retryable && (
+          <button
+            type="button"
+            data-lesson-retry
+            onClick={retry}
+            className="inline-flex w-fit rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98]"
+          >
+            Try again
+          </button>
+        )}
       </div>
     );
   }

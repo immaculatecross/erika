@@ -5,6 +5,7 @@ import { getRendition } from "@/lib/render/renditions";
 import { renderCorrection, renditionEstimateUsd, BudgetExceededError } from "@/lib/render/engine";
 import { openAiTtsModel } from "@/lib/render/tts-model";
 import { TtsModelUnavailableError } from "@/lib/render/tts-model";
+import { voiceModelErrorResponse } from "@/app/api/model-errors";
 
 // The contrastive-playback rendition route (E-21). GET is the read-only status the
 // Compare control primes with: whether a rendition already exists, the estimated
@@ -48,9 +49,9 @@ export async function POST(_request: Request, { params }: Ctx) {
         { status: 402 },
       );
     }
-    if (err instanceof TtsModelUnavailableError) {
-      return NextResponse.json({ error: "The voice model is unavailable right now." }, { status: 502 });
-    }
+    // [E-39 §B3] Name the real cause and say whether a retry could help. "unavailable
+    // right now" was false on the shipped default and offered no way forward.
+    if (err instanceof TtsModelUnavailableError) return voiceModelErrorResponse(err);
     throw err;
   }
 }

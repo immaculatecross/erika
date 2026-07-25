@@ -142,3 +142,42 @@ export function startupKeyNotice(
 export function analysisUnavailableMessage(): string {
   return `no ${REQUIRED_KEY} is set, so analysis cannot run. Add it to ${ENV_LOCAL} at the repo root (see .env.example), restart the worker, and analyze again. Your recording, its segments and its timeline are already saved.`;
 }
+
+// ---- why a model call failed, and what the learner should do about it -------
+//
+// [E-39 §B3] The invariant: **a failure tells the truth about its own permanence, and
+// every failure branch offers the action that resolves it.**
+//
+// Every model surface used to answer "… is unavailable right now" for BOTH a transient
+// blip and a permanent, user-fixable "no key is configured on this server". On the
+// shipped default that made all 13 rows of /practice/learn a wall promising transience,
+// with no retry control — so a person retried every row before concluding anything, and
+// the one thing that would have fixed it was never named. The keyless-ingest notice
+// above (`analysisUnavailableMessage`, RETRO-004 §DE-1) is the standard: name the cause,
+// say it is permanent until you act, give the exact fix.
+//
+// The cause travels to the client in the error envelope, because only the server knows
+// it, and the client decides from `retryable` whether "Try again" can honestly be offered.
+
+/** Why a model call could not produce a result. */
+export type ModelFailureCause =
+  /** No API key on this server. Permanent until the operator acts; retrying cannot help. */
+  | "not-configured"
+  /** A reachable endpoint that failed, or a network blip. Retrying can genuinely help. */
+  | "unavailable"
+  /** The model answered with something unparseable. Retrying can genuinely help. */
+  | "unreadable";
+
+/** May a client honestly offer "Try again" for this cause? */
+export function isRetryableCause(cause: ModelFailureCause): boolean {
+  return cause !== "not-configured";
+}
+
+/**
+ * The message for a model surface that cannot run because no key is configured.
+ * `what` names the capability in the learner's terms ("lessons", "the spoken voice") and
+ * lands mid-sentence, so each surface reads as its own screen rather than a shared string.
+ */
+export function modelNotConfiguredMessage(what: string): string {
+  return `No ${REQUIRED_KEY} is set on this server, so ${what} cannot run. This will not change on its own: add the key to ${ENV_LOCAL} at the repo root (see .env.example) and restart the server.`;
+}

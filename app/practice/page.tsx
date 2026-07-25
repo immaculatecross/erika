@@ -36,9 +36,18 @@ function completionSentence(c: { cardsDone: number; lessonsDone: number }): stri
 export default function LearnTodayPage() {
   const reduced = usePrefersReducedMotion();
   const [today, setToday] = useState<TodayView | null>(null);
+  // [E-39 §B7] A FAILED load is its own state. It used to be answered by fabricating a
+  // whole view — every count zero and `placed: true` — which fell straight into the
+  // "Nothing to practice right now" branch: a server failure was indistinguishable from an
+  // empty day, and the fabricated `placed` also hid the placement prompt from someone who
+  // had never placed. A failure reported as a success, and the user's only clue was that
+  // nothing was ever there.
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
+    setFailed(false);
     (async () => {
       await fetch("/api/cards/generate", { method: "POST" });
       const res = await fetch("/api/learn/today");
@@ -57,26 +66,32 @@ export default function LearnTodayPage() {
       }
       if (alive) setToday(view);
     })().catch(() => {
-      if (alive)
-        setToday({
-          day: "",
-          goal: { done: 0, total: 0 },
-          complete: false,
-          completion: null,
-          dueCount: 0,
-          lesson: null,
-          letterUnread: false,
-          newItems: { vocab: 0, rules: 0, pronunciation: 0 },
-          placed: true,
-          streak: { currentRun: 0, repairedDays: [], lastCompletedDay: null },
-          map: [],
-          thread: null,
-        });
+      if (alive) setFailed(true);
     });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [attempt]);
+
+  if (failed) {
+    return (
+      <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-4 p-8">
+        <h1 className="text-[34px] font-bold tracking-tight">Today didn&rsquo;t load</h1>
+        <p data-today-failed className="text-[17px] leading-[1.47] text-secondary">
+          Your plan could not be composed just now. Nothing is lost — this is about reading it,
+          not about your practice.
+        </p>
+        <button
+          type="button"
+          data-today-retry
+          onClick={() => setAttempt((n) => n + 1)}
+          className="inline-flex w-fit rounded-full bg-accent px-5 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98]"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   if (today === null) {
     return (

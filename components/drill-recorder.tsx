@@ -9,6 +9,7 @@ import { formatElapsed } from "@/lib/recording";
 import { formatEstimate } from "@/lib/format";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { shouldReportLap } from "@/lib/pronunciation/types";
+import { playToEnd } from "@/lib/play-clip";
 
 // The drill recorder (E-37). The take does NOT become a session: it stays in the page,
 // where its whole job is the loop that matters — hear the correct line, say it back,
@@ -102,14 +103,26 @@ export function DrillRecorder({
     });
   }, [stop]);
 
-  const playMine = useCallback(() => {
+  const playMine = useCallback(async () => {
     const audio = playerRef.current;
     if (!audio || !take) return;
-    audio.src = take.url;
-    void audio.play().catch(() => {});
-    // Recorded, and now heard yourself back: one lap. Reported once per TAKE (a fresh
-    // recording re-arms it in `onStop`), so "Said N×" counts real laps rather than button
-    // presses; the server-side upsert is idempotent regardless.
+    setFailure(null);
+    // [E-39 §B7] AWAIT the playback. This used to be `void audio.play().catch(() => {})`
+    // followed immediately by the lap report — so the lap was written when the button was
+    // PRESSED, with any failure swallowed, and that lap PERMANENTLY retires the correction
+    // from the daily plan. A silent playback failure meant the learner heard nothing and
+    // lost the correction for good. "Said N×" counted button presses. Now the lap follows
+    // `ended`, the same bar the reference clip has always been held to, and a failure is
+    // said out loud instead of reported as a success.
+    try {
+      await playToEnd(audio, take.url);
+    } catch {
+      setFailure("That take could not be played back here, so this lap was not counted. Try again.");
+      return;
+    }
+    // Recorded, and now genuinely heard yourself back: one lap. Reported once per TAKE (a
+    // fresh recording re-arms it in `onStop`), so "Said N×" counts real laps; the
+    // server-side upsert is idempotent regardless.
     //
     // The latch is spent ONLY when the lap can actually be reported. Burning it on a lap
     // the parent is ignoring (an unheard blind lap, where `onCycleComplete` is undefined)
@@ -193,7 +206,7 @@ export function DrillRecorder({
           <button
             type="button"
             data-drill-play-mine
-            onClick={playMine}
+            onClick={() => void playMine()}
             className={`${PILL} bg-black/[0.06] text-ink dark:bg-white/[0.08]`}
           >
             <Volume2 size={18} strokeWidth={1.5} aria-hidden />

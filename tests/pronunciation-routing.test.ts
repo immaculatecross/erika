@@ -288,7 +288,7 @@ describe("E-37 criterion 4 — pronunciation signal routes to the studio", () =>
 
     // The rendition failed (402 at the cap, or a transient TTS error): the gate allows
     // recording but refuses to count the lap.
-    const gate = drillGate({ heard: false, renditionUnavailable: true });
+    const gate = drillGate({ heard: false, renditionUnavailable: true, renditionImpossible: false });
     expect(gate.canRecord).toBe(true);
     expect(gate.visitCounts).toBe(false);
 
@@ -300,7 +300,7 @@ describe("E-37 criterion 4 — pronunciation signal routes to the studio", () =>
     }
 
     // Once they DO hear it, the same lap retires it.
-    const heardGate = drillGate({ heard: true, renditionUnavailable: true });
+    const heardGate = drillGate({ heard: true, renditionUnavailable: true, renditionImpossible: false });
     expect(heardGate.visitCounts).toBe(true);
     recordVisit(db, { drillKey: drill.drillKey, findingId: drill.findingId });
     expect(compose(db, "2026-07-24", DEFAULT_CAPS).counts.finding).toBe(0);

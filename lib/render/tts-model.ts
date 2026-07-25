@@ -13,6 +13,10 @@ import { TTS_MODEL } from "../analysis/rates";
 
 /** Thrown when the TTS model/endpoint is unavailable or unauthorized (a blocker). */
 export class TtsModelUnavailableError extends Error {}
+/** Thrown when there is no API key at all — permanent until the operator acts, so no
+ *  amount of retrying helps and the copy must not promise transience (E-39 §B3). A
+ *  subclass, so every existing catch of `TtsModelUnavailableError` is unaffected. */
+export class TtsModelNotConfiguredError extends TtsModelUnavailableError {}
 
 /** One synthesized clip: the audio bytes and their container format. */
 export interface TtsResult {
@@ -40,7 +44,7 @@ const FORMAT = "mp3";
 
 function apiKey(): string {
   const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new TtsModelUnavailableError("OPENAI_API_KEY is not set.");
+  if (!key) throw new TtsModelNotConfiguredError("OPENAI_API_KEY is not set.");
   return key;
 }
 
