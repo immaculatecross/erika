@@ -133,3 +133,26 @@ Pass ledger — one line per dispatched unit: `WO-<slug>: first-pass | repaired 
 - L: **An operator's product instinct can catch an architectural error no review would have.** D-26's transport ruling would have broken D-3; the operator's "realtime might be good for listening" caught it before code existed. → encoded as: D-28, and the practice of measuring a founding claim rather than citing it (`spike-6` re-proved D-3 empirically).
 - L: **A prescription from a review is not automatically right; measurement outranks it.** The money review's 700 tok/min would have under-booked. The worker overrode it *and said so explicitly*, and an independent reviewer confirmed the override. → encoded as: the standing instruction that a worker may contradict a criterion provided it says so and argues it (D-26 product-authority clause), now validated on a money path.
 - L: **`npm run lint` was a no-op in every nested worktree** — ESLint walked into the parent checkout, hit a duplicate `@next/next`, and aborted before linting a single file. Every worker in this run reported false-green or unverified lint. → encoded as: `"root": true` in `.eslintrc.json` (PR #78), reproduced and verified in both directions before landing.
+
+---
+
+## Where this session stopped — 2026-07-25 evening (operator ending the session)
+
+**Merged and green on `master`:** E-42 (#71) and E-43 (#74), plus the plan (#67), spike-5 + WO amendments (#68), the product-authority clause (#69), D-27/D-28 (#70), the E-42 ritual (#73), the E-45 speaker-predicate withdrawal (#75), the E-43 revert amendment (#76), cost visibility (#77), **the ESLint fix (#78)**, the E-43 ritual (#81) and the E-46 calibrated-day-one amendment (#80).
+
+**Open, with exact next actions:**
+
+- **PR #79 — E-44 "one session a day".** Built, gates green **against its own branch**, but master has moved. **Rebase first, then review** — reviewing the pre-rebase head wastes the pass, which is why the review dispatched here was not resumed after it stalled with a 963-byte stub. The rebase is **mechanical and fully scoped**, because building a local preview of E-43+E-44 forced it already:
+  1. `lib/migrations/index.ts` — each branch deleted the other's registration. Register **both** `tutorConversationsMigration` (v29) and `dailySessionsMigration` (v30). *This is the migration-registry family of hazard that left v0.6 databases unbootable — do not hand-wave it.*
+  2. `docs/schema.md` — one version line (`tests/migrations.test.ts` pins the pairing).
+  3. `tests/session-day.test.ts` — its `createConversationRecord` helper creates `tutor_conversations` with hand-written DDL; that table now exists for real, so `Database.exec` throws. **5 call sites.** Use the real migration.
+  4. Knock-ons in `tests/session-plan.test.ts`, `tests/session-store.test.ts`, `tests/today.test.ts` — same root cause.
+  **14 tests across 5 files.** The runtime composes fine: a preview merge booted on a fresh database, migrations reached **v30** (v29+v30 both applied), every probed route 200, tutor estimate `$1.6188` at `minSeconds: 600`, voice `alloy`, flagship. E-44's own worker predicted (3) and warned to re-walk the conversation step after rebase; it did **not** predict (1).
+- **E-45 "the lesson and the deck"** — mid-build on `feat/e45-lesson-and-deck`, work pushed, no PR. Last: *"an unteachable rule substitutes, never 404s."* Carries the handed-over truncation defect (a billed item-lesson call that returns nothing; `ITEM_LESSON_MAX_OUTPUT_TOKENS = 1400` short of the prompt's own 3–5-exercise contract).
+- **E-46** — not started. Work order amended with three criteria for a **calibrated day one** (the first session composed from the placement result, asserting the positive; the spoken prompts shown to move the estimate or honestly stated not to; a learner who declines to speak still calibrated).
+
+**Run health:** ~13 agent deaths — 4 network, 1 Claude spend limit, the rest stream-watchdog stalls on long turns. **Nothing was lost.** The discipline that did it: push after every *file* (not every milestone), write review verdicts to disk incrementally, and rescue an agent's worktree before relaunching. Two dispatcher errors worth recording: a rescope message **misaddressed** to the E-44 worker instead of the E-43 money reviewer (the worker confirmed it touched nothing outside its lane), and a rescue that ran `git add -A` inside a live agent's worktree, leaving a staged index it had not created — **capture patches to scratchpad instead**.
+
+**Live spend:** ≈ $2.16 of the operator's $5 ceiling. Largest single item: `spike-6` at $0.74, which proved keeping Realtime for listening was right and re-proved D-3 empirically.
+
+**Preview for the operator:** `/tmp/erika-preview` (local-only merge of E-43+E-44, throwaway DB at `/tmp/erika-preview-data`). Disposable — delete once #79 merges.
