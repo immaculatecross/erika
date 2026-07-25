@@ -1,158 +1,64 @@
 import type { Db } from "../db";
 import { readSettings } from "../settings";
-import { registerInstruction, coerceRegister, type Register } from "../register";
+import { coerceRegister, type Register } from "../register";
 import { finalizeReservation } from "../analysis/budget";
 import { TEXT_MODEL, estimateTokens, textCallCost } from "../analysis/rates";
 import { parseItemId } from "../knowledge/items";
 import { loadSyllabus, type SyllabusRule } from "../syllabus";
-import type { Pos } from "../lexicon/pos";
-import { extractJsonObject, TextModelParseError, type TextModelClient } from "./text-model";
+import { TextModelParseError, TextModelTruncatedError, wasTruncated, type TextModelClient } from "./text-model";
 import { runBilledTextCall } from "./billing";
+import { lessonOutputTokenCeiling, lessonRepairTokenCeiling } from "./lesson-budget";
+import { deterministicLessonFor, ruleDrills } from "./syllabus-lesson";
 import {
-  applyGlossFallback,
-  ITEM_EXERCISE_TYPES,
-  MIN_ITEM_EXERCISES,
+  BREVITY_RETRY_INSTRUCTION,
+  grammarLessonPrompt as grammarPrompt,
+  parseItemLessonResponse,
+  vocabLessonPrompt as vocabPrompt,
+} from "./lesson-parse";
+import {
+  usableDrills,
   type ItemExercise,
   type ItemLesson,
   type ItemLessonKind,
+  type LessonWord,
   type NewItemLesson,
 } from "./item-lessons-view";
 
-// E-32 item-lesson generation (WO criteria 1-3, D-18/D-19/D-23). Turn ONE
-// composer-chosen knowledge item into a doable micro-lesson via ONE budget-checked
-// text-model call at request time, cached per item like E-6. Grammar rules get a
-// rule explanation + meaning-first exercises; lemmas get an intro (meaning + a
-// correct colto example) + recognition→production exercises. The money spine is
-// E-6's exactly — reserve-before-call, finalize to actual, a parse failure still
-// ledgers the resolved call — reused, never re-forked (lib/lessons/billing.ts).
+// Lesson generation for ONE composer-chosen knowledge item, cached per item and
+// paid for through the shared money spine (reserve-before-call, finalize to actual,
+// a parse failure still ledgers the resolved call — lib/lessons/billing.ts). The
+// prompts and the parser live in ./lesson-parse; this module is the money, the
+// lease, and the guarantee.
 //
-// Every exercise is MEANING-FIRST: an English instruction/gloss or an Italian
-// context gap, never an error form (D-18). The retrieval target is always the
-// correct form. Colto register (D-23) is injected into the prompt. The pure prompt
-// builders and the response parser are exported for direct fixture tests — no CI
-// test ever makes a real call (there is no key in the sandbox).
+// ── THE GUARANTEE (E-45) ─────────────────────────────────────────────────────
+//
+//   A billed generation either produces a usable lesson, or it is not presented
+//   as one — and either way the learner gets a lesson.
+//
+// It did not hold. A live probe found a call that resolved, was billed, and left
+// the learner with "the lesson model returned an unreadable response": the reply
+// had been CUT OFF at the token ceiling, so it was half a JSON object. Three
+// things were wrong at once and all three are fixed here:
+//
+//   1. the ceiling was a picked number, not one derived from what the prompt asks
+//      for — it is now `lessonOutputTokenCeiling()`, computed from the content
+//      budget and checked against live measurement;
+//   2. truncation was invisible, because the client discarded `finish_reason` — it
+//      now raises `TextModelTruncatedError`, which is a different fact from "that
+//      was unreadable" and, unlike it, is something a model can act on;
+//   3. there was no repair. There is now ONE bounded retry (E-16's pattern) that
+//      asks for the minimum lesson with more room, and if that also fails the
+//      caller falls back to the deterministic syllabus lesson.
+//
+// `todaysLesson` is the seam every caller should use: it cannot fail.
 
-/** Output-token allowance for an item-lesson — bounds the worst-case pre-call cost. */
-export const ITEM_LESSON_MAX_OUTPUT_TOKENS = 1400;
+// Re-exported so existing importers of this module keep one import site.
+export { grammarLessonPrompt, vocabLessonPrompt, parseItemLessonResponse, posLabel } from "./lesson-parse";
 
-/** English display names for the POS scheme — for the vocab prompt and labels only. */
-const POS_LABEL: Record<Pos, string> = {
-  NOUN: "noun", PROPN: "proper noun", VERB: "verb", AUX: "auxiliary verb",
-  ADJ: "adjective", ADV: "adverb", PRON: "pronoun", DET: "determiner",
-  ADP: "preposition", CCONJ: "conjunction", INTJ: "interjection",
-};
-
-export function posLabel(pos: Pos | null): string {
-  return pos ? POS_LABEL[pos] : "word";
-}
-
-/** The register guidance injected into every prompt (E-33, D-23). Now the shared
- *  dial instruction (lib/register.ts) — one source for recasts, lessons, TTS, tutor. */
-function registerLine(register: string): string {
-  return registerInstruction(coerceRegister(register));
-}
-
-// ── prompts ──────────────────────────────────────────────────────────────────
-
-const SHARED_RULES = [
-  `Respond with JSON ONLY, no prose. Every exercise is MEANING-FIRST: the "prompt" is an English instruction/gloss or an Italian sentence with a gap written "____".`,
-  `NEVER put an incorrect or error form in a "prompt" — the cue is never the wrong answer. The correct form is always the retrieval target.`,
-  `Each exercise carries the correct "answer" and a one-sentence "rationale" explaining why it is correct.`,
-  `Use "type":"multiple_choice" with "options" (2+) and 0-based "answerIndex" (its option must equal "answer"), or "type":"cloze" (a gapped sentence; "answer" fills the gap) with a boolean "derivable" (is the answer inferable from the surrounding context?).`,
-  `Include ${MIN_ITEM_EXERCISES}-5 exercises mixing both types.`,
-];
-
-/** Build the grammar-lesson prompt for a syllabus rule, colto-aware (D-23). */
-export function grammarLessonPrompt(targetLanguage: string, register: string, rule: SyllabusRule): string {
-  return [
-    `You are an expert ${targetLanguage} coach writing a short grammar micro-lesson for an advanced learner.`,
-    registerLine(register),
-    `Teach this rule (${rule.cefr}): "${rule.title}". ${rule.description}`,
-    `Correct examples of the rule: ${rule.examples.join("; ")}.`,
-    "",
-    'Shape exactly: {"intro": string, "exercises": [ ... ]}',
-    "The intro is a 2-4 sentence explanation of the rule.",
-    ...SHARED_RULES,
-  ].join("\n");
-}
-
-/** Build the vocabulary-lesson prompt for a lemma, colto-aware (D-23). */
-export function vocabLessonPrompt(
-  targetLanguage: string,
-  register: string,
-  lemma: string,
-  pos: Pos | null,
-): string {
-  return [
-    `You are an expert ${targetLanguage} coach writing a short vocabulary micro-lesson for an advanced learner.`,
-    registerLine(register),
-    `Teach the ${targetLanguage} ${posLabel(pos)} "${lemma}".`,
-    "",
-    'Shape exactly: {"intro": string, "glossEn": string, "exercises": [ ... ]}',
-    `The intro gives the meaning and ONE correct ${targetLanguage} example sentence in register. "glossEn" is a short English gloss of "${lemma}".`,
-    "Order exercises recognition first, then production.",
-    ...SHARED_RULES,
-  ].join("\n");
-}
-
-// ── parsing ────────────────────────────────────────────────────────────────
-
-function asString(v: unknown, ctx: string): string {
-  if (typeof v !== "string" || v.trim() === "") throw new TextModelParseError(`${ctx} must be a non-empty string.`);
-  return v.trim();
-}
-
-/** Validate one exercise object into a typed `ItemExercise`; any defect rejects it. */
-function parseExercise(raw: unknown, i: number): ItemExercise {
-  if (typeof raw !== "object" || raw === null) throw new TextModelParseError(`Exercise ${i} is not an object.`);
-  const e = raw as Record<string, unknown>;
-  if (typeof e.type !== "string" || !(ITEM_EXERCISE_TYPES as readonly string[]).includes(e.type)) {
-    throw new TextModelParseError(`Exercise ${i} has an invalid \`type\`.`);
-  }
-  const prompt = asString(e.prompt, `Exercise ${i} prompt`);
-  const answer = asString(e.answer, `Exercise ${i} answer`);
-  const rationale = asString(e.rationale, `Exercise ${i} rationale`);
-  const gloss = e.gloss === undefined || e.gloss === null ? undefined : asString(e.gloss, `Exercise ${i} gloss`);
-
-  if (e.type === "multiple_choice") {
-    if (!Array.isArray(e.options) || e.options.length < 2) {
-      throw new TextModelParseError(`Exercise ${i} needs an options array of 2+.`);
-    }
-    const options = e.options.map((o, j) => asString(o, `Exercise ${i} option ${j}`));
-    if (typeof e.answerIndex !== "number" || !Number.isInteger(e.answerIndex) || e.answerIndex < 0 || e.answerIndex >= options.length) {
-      throw new TextModelParseError(`Exercise ${i} has an out-of-range \`answerIndex\`.`);
-    }
-    if (options[e.answerIndex] !== answer) {
-      throw new TextModelParseError(`Exercise ${i} answer must equal the option at answerIndex.`);
-    }
-    return { type: "multiple_choice", prompt, options, answerIndex: e.answerIndex, answer, rationale, ...(gloss ? { gloss } : {}) };
-  }
-  // cloze
-  const derivable = typeof e.derivable === "boolean" ? e.derivable : undefined;
-  return { type: "cloze", prompt, answer, rationale, ...(derivable !== undefined ? { derivable } : {}), ...(gloss ? { gloss } : {}) };
-}
-
-/**
- * Parse a model reply into a validated `NewItemLesson` for `item`. Any malformed or
- * partial exercise rejects the WHOLE response with a truthful error (nothing is
- * persisted). For vocab lessons the [P4] gloss-fallback runs after validation, so a
- * degraded cloze is stored already answerable. Tolerates fenced/prose JSON.
- */
-export function parseItemLessonResponse(
-  item: { id: string; kind: ItemLessonKind },
-  register: string,
-  raw: string,
-): NewItemLesson {
-  const obj = extractJsonObject(raw);
-  const intro = asString(obj.intro, "Lesson intro");
-  if (!Array.isArray(obj.exercises) || obj.exercises.length < MIN_ITEM_EXERCISES) {
-    throw new TextModelParseError(`Lesson needs at least ${MIN_ITEM_EXERCISES} exercises.`);
-  }
-  const exercises = obj.exercises.map((e, i) => parseExercise(e, i));
-  const glossEn = item.kind === "vocab" ? asString(obj.glossEn, "Lesson glossEn") : null;
-  const lesson: NewItemLesson = { itemId: item.id, kind: item.kind, register, intro, glossEn, exercises };
-  return applyGlossFallback(lesson);
-}
+/** Output-token allowance for an item-lesson — DERIVED from the content budget
+ *  (lib/lessons/lesson-budget.ts) rather than picked, and checked against live
+ *  measurement. See `lessonOutputTokenCeiling` for the arithmetic and the numbers. */
+export const ITEM_LESSON_MAX_OUTPUT_TOKENS = lessonOutputTokenCeiling();
 
 // ── store ────────────────────────────────────────────────────────────────────
 
@@ -164,33 +70,53 @@ interface ItemLessonRow {
   created_at: string;
 }
 
+interface StoredBody {
+  intro: string;
+  glossEn: string | null;
+  exercises: ItemExercise[];
+  examples?: string[];
+  newWords?: LessonWord[];
+}
+
 /**
  * The COMPLETED cached lesson for a knowledge item, or null. A lesson is complete
  * once its winning call has written the `body` (`body <> ''`); a bare CLAIM row —
- * inserted before the call and still empty ([T1] lease-before-call, the ask_notes
- * pattern) — is deliberately NOT returned, so an in-flight claim never reads as a
- * cache hit and never blocks the re-open path from re-leasing after a released
- * failure.
+ * inserted before the call and still empty ([T1] lease-before-call) — is
+ * deliberately NOT returned, so an in-flight claim never reads as a cache hit.
+ *
+ * [E-45] Stored exercises pass through `usableDrills` on the way out. A body
+ * written before the format change holds typed `cloze` exercises with no options,
+ * which the runner cannot render; dropping them here is what lets the format change
+ * WITHOUT a migration and without re-billing — `todaysLesson` tops the lesson back
+ * up from the deterministic syllabus drills, so the learner keeps the explanation
+ * they already paid for and gets working drills with it.
  */
 export function getItemLesson(db: Db, itemId: string): ItemLesson | null {
   const r = db
     .prepare("SELECT * FROM item_lessons WHERE item_id = ? AND body <> ''")
     .get(itemId) as ItemLessonRow | undefined;
   if (!r) return null;
-  const body = JSON.parse(r.body) as { intro: string; glossEn: string | null; exercises: ItemExercise[] };
-  return { itemId: r.item_id, kind: r.kind, register: r.register, intro: body.intro, glossEn: body.glossEn, exercises: body.exercises };
+  const body = JSON.parse(r.body) as StoredBody;
+  return {
+    itemId: r.item_id,
+    kind: r.kind,
+    register: r.register,
+    intro: body.intro,
+    examples: body.examples ?? [],
+    newWords: body.newWords ?? [],
+    glossEn: body.glossEn,
+    exercises: usableDrills(body.exercises ?? []),
+  };
 }
 
 /**
- * Claim the `item_id` row idempotently — this is the item-lesson lease ([T1],
- * mirroring `claimNote`). Inserts a BARE claim (empty `body`, the kind + register
- * known before the call) and returns whether THIS call inserted it: `true` = we won
- * the claim (proceed to the one budgeted model call, then `completeItemLesson`),
- * `false` = a row already existed (a concurrent generate claimed it first — make NO
- * model call and bill nothing). `ON CONFLICT(item_id) DO NOTHING` on the PK makes
- * the claim exclusive; because better-sqlite3 runs statements serially on the
- * connection, two racing generates can never both win the row, so at most one model
- * call and one ledger row ever result. The engine claims BEFORE it spends.
+ * Claim the `item_id` row idempotently — the item-lesson lease ([T1], mirroring
+ * `claimNote`). Inserts a BARE claim (empty `body`) and returns whether THIS call
+ * inserted it: `true` = we won (proceed to the one budgeted call), `false` = a
+ * concurrent generate claimed it first, so make NO model call and bill nothing.
+ * `ON CONFLICT(item_id) DO NOTHING` on the PK makes the claim exclusive, and
+ * better-sqlite3 runs statements serially, so at most one call and one ledger row
+ * ever result. The engine claims BEFORE it spends.
  */
 export function claimItemLesson(
   db: Db,
@@ -205,28 +131,32 @@ export function claimItemLesson(
 }
 
 /**
- * Complete a won claim: write the generated lesson body (and confirm its kind /
- * register). Called only by the request that won the claim, only after a successful
- * model call, inside the same transaction that finalizes the spend — so a lesson is
- * never stored without its charge nor charged without being stored. Returns the
- * completed lesson.
+ * Complete a won claim: write the generated lesson body. Called only by the request
+ * that won the claim, only after a successful call, inside the same transaction
+ * that finalizes the spend — so a lesson is never stored without its charge nor
+ * charged without being stored.
  */
 export function completeItemLesson(db: Db, lesson: NewItemLesson): ItemLesson {
+  const body: StoredBody = {
+    intro: lesson.intro,
+    glossEn: lesson.glossEn,
+    exercises: lesson.exercises,
+    examples: lesson.examples,
+    newWords: lesson.newWords,
+  };
   db.prepare("UPDATE item_lessons SET kind = ?, register = ?, body = ? WHERE item_id = ?").run(
     lesson.kind,
     lesson.register,
-    JSON.stringify({ intro: lesson.intro, glossEn: lesson.glossEn, exercises: lesson.exercises }),
+    JSON.stringify(body),
     lesson.itemId,
   );
   return getItemLesson(db, lesson.itemId)!;
 }
 
 /**
- * Release a claim: delete the bare `item_id` row. The engine calls this only on its
- * OWN uncommitted claim when generation does not complete (budget refusal or a
- * failed/unreadable call), so a legitimate retry can re-claim and generate — a
- * claimed row is never a permanent tombstone. Only ever deletes an EMPTY claim, so a
- * completed lesson can never be dropped by this path.
+ * Release a claim: delete the bare `item_id` row. Called only on the engine's OWN
+ * uncommitted claim when generation does not complete, so a legitimate retry can
+ * re-lease. Only ever deletes an EMPTY claim, so a completed lesson is safe.
  */
 export function releaseItemLesson(db: Db, itemId: string): void {
   db.prepare("DELETE FROM item_lessons WHERE item_id = ? AND body = ''").run(itemId);
@@ -234,8 +164,8 @@ export function releaseItemLesson(db: Db, itemId: string): void {
 
 // ── generation (money-capped, cached) ─────────────────────────────────────────
 
-/** The lesson kind a knowledge item maps to, or null for a kind E-32 does not cover
- *  (phones are pronunciation → E-37, out of scope). */
+/** The lesson kind a knowledge item maps to, or null for a kind with no lesson
+ *  format (phones are pronunciation → the studio, E-37). */
 export function itemLessonKind(itemId: string): ItemLessonKind | null {
   const kind = parseItemId(itemId).kind;
   return kind === "rule" ? "grammar" : kind === "lemma" ? "vocab" : null;
@@ -254,13 +184,13 @@ export function itemLessonPrompt(db: Db, itemId: string, register: string): stri
   if (kind === "grammar") {
     const rule = ruleOf(itemId);
     if (!rule) throw new Error(`No syllabus rule for ${itemId}.`);
-    return grammarLessonPrompt(targetLanguage, register, rule);
+    return grammarPrompt(targetLanguage, register, rule);
   }
   if (kind === "vocab") {
     const { lemma, pos } = parseItemId(itemId);
-    return vocabLessonPrompt(targetLanguage, register, lemma ?? "", pos);
+    return vocabPrompt(targetLanguage, register, lemma ?? "", pos);
   }
-  throw new Error(`E-32 does not generate a lesson for ${itemId}.`);
+  throw new Error(`There is no lesson format for ${itemId}.`);
 }
 
 /** The register lesson generation writes in — the E-33 dial from Settings (D-23). */
@@ -269,34 +199,33 @@ export function lessonRegister(db: Db): Register {
 }
 
 /** Worst-case USD to generate an item's lesson — the SAME upper bound the cap
- *  checks before the real call (display only, no model call, no write). Uses the
- *  live register so the estimate is built from the prompt the call will send. */
+ *  checks before the real call (display only, no model call, no write). */
 export function itemLessonEstimateUsd(db: Db, itemId: string): number {
   const prompt = itemLessonPrompt(db, itemId, lessonRegister(db));
   return textCallCost(TEXT_MODEL, estimateTokens(prompt), ITEM_LESSON_MAX_OUTPUT_TOKENS);
 }
 
+/** The deterministic syllabus drills for an item — the top-up source and the
+ *  fallback lesson's own drills. Empty for a lemma: there is no offline
+ *  Italian→English gloss source, so a vocabulary lesson genuinely needs a model. */
+function fallbackDrillsFor(itemId: string): ItemExercise[] {
+  const rule = itemLessonKind(itemId) === "grammar" ? ruleOf(itemId) : null;
+  return rule ? ruleDrills(rule) : [];
+}
+
 /**
  * Generate (or return the cached) lesson for a composer-chosen item. A cache hit
- * makes ZERO model calls and records nothing (WO criterion 3).
+ * makes ZERO model calls and records nothing.
  *
- * [T1 — money, never-waivable] Ordering is LEASE-BEFORE-CALL, adopting the sibling
- * ask_notes pattern: `claimItemLesson` inserts the `item_id` PK row FIRST — before
- * the budget check and before `client.complete()`. The claim is exclusive (PK +
- * serialized statements), so exactly one racing request reaches the provider and
- * bills; every racing LOSER detects the claim and returns WITHOUT a model call and
- * WITHOUT a ledger row (`lesson: <completed or null>, cached: true`). Previously the
- * call fired before the insert, so two concurrent same-item opens BOTH called and
- * were BOTH charged — but the loser's PK conflict rolled back its `finalizeReservation`,
- * leaving its real charge as a pending row the sweep swept to $0 (recorded spend ≠
- * actual spend, D-15).
+ * [T1 — money, never-waivable] Ordering is LEASE-BEFORE-CALL: `claimItemLesson`
+ * inserts the PK row FIRST, before the budget check and before `client.complete()`.
+ * The claim is exclusive, so exactly one racing request reaches the provider and
+ * bills; every loser returns without a model call and without a ledger row.
  *
- * The winner: reserve before the call → one model call → parse (a malformed reply
- * STILL ledgers the resolved call, E-16 defect 4) → complete the lesson and finalize
- * its spend in ONE transaction. Any handled failure before completion RELEASES the
- * claim so a legitimate retry can re-lease. Throws `BudgetExceededError` before any
- * call if the cap would be breached, or `TextModelParseError` on a malformed reply
- * (no lesson persisted).
+ * The winner reserves before the call, then parses (a malformed reply STILL ledgers
+ * the resolved call, E-16 defect 4), then completes the lesson and finalizes its
+ * spend in ONE transaction. Any handled failure before completion RELEASES the
+ * claim so a legitimate retry can re-lease.
  */
 export async function generateItemLesson(
   db: Db,
@@ -307,46 +236,134 @@ export async function generateItemLesson(
   if (existing) return { lesson: existing, cached: true };
 
   const kind = itemLessonKind(itemId);
-  if (!kind) throw new Error(`E-32 does not generate a lesson for ${itemId}.`);
+  if (!kind) throw new Error(`There is no lesson format for ${itemId}.`);
   const register = lessonRegister(db);
 
-  // LEASE FIRST: claim the item_lessons row before reserving and before the model
-  // call. If we lose the claim, a concurrent generate already holds it — make NO
-  // call and bill nothing; hand back the completed lesson if it is ready yet.
   const won = claimItemLesson(db, { itemId, kind, register });
   if (!won) return { lesson: getItemLesson(db, itemId), cached: true };
 
-  const prompt = itemLessonPrompt(db, itemId, register);
-  let billed;
   try {
-    billed = await runBilledTextCall(db, client, {
-      prompt,
-      maxOutputTokens: ITEM_LESSON_MAX_OUTPUT_TOKENS,
-      contentHash: `item-lesson:${itemId}`,
+    const lesson = await callWithBrevityRepair(db, client, {
+      itemId,
+      kind,
+      register,
+      basePrompt: itemLessonPrompt(db, itemId, register),
+      fallback: fallbackDrillsFor(itemId),
     });
+    return { lesson, cached: false };
   } catch (err) {
-    // Budget refusal (before any call) or a failed call (nothing billed): release the
-    // claim so a retry can re-lease. `runBilledTextCall` already released any reservation.
     releaseItemLesson(db, itemId);
     throw err;
   }
+}
 
-  const { completion, costUsd, reservation } = billed;
-  let parsed;
-  try {
-    parsed = parseItemLessonResponse({ id: itemId, kind }, register, completion.text);
-  } catch (err) {
-    // Billed but unreadable: finalize the reservation to the ACTUAL charge (never
-    // understate spend, E-16 defect 4) THEN release the empty claim so no half-lesson
-    // persists. A retry is a new, separately-billed call.
-    finalizeReservation(db, reservation, costUsd);
-    releaseItemLesson(db, itemId);
-    throw err;
+/**
+ * One call, and — only if it came back TRUNCATED — one bounded repair (E-16's
+ * pattern). The repair asks for the minimum lesson and is given more room, so both
+ * levers move the same way.
+ *
+ * Each attempt is independently reserved, billed and finalized, because it IS a
+ * separate call: folding two calls into one charge would understate spend, which
+ * this repo treats as a never-waivable defect. If the repair also truncates the
+ * error is `TextModelTruncatedError` — truthful, and distinguishable by the caller
+ * from "unreadable", which is what lets `todaysLesson` answer with the syllabus
+ * lesson instead of an error screen.
+ */
+async function callWithBrevityRepair(
+  db: Db,
+  client: TextModelClient,
+  input: {
+    itemId: string;
+    kind: ItemLessonKind;
+    register: string;
+    basePrompt: string;
+    fallback: readonly ItemExercise[];
+  },
+): Promise<ItemLesson> {
+  const attempts = [
+    { prompt: input.basePrompt, ceiling: ITEM_LESSON_MAX_OUTPUT_TOKENS, hash: `item-lesson:${input.itemId}` },
+    {
+      prompt: `${input.basePrompt}\n\n${BREVITY_RETRY_INSTRUCTION}`,
+      ceiling: lessonRepairTokenCeiling(),
+      hash: `item-lesson-repair:${input.itemId}`,
+    },
+  ];
+
+  let truncation: TextModelTruncatedError | null = null;
+  for (const attempt of attempts) {
+    const { completion, costUsd, reservation } = await runBilledTextCall(db, client, {
+      prompt: attempt.prompt,
+      maxOutputTokens: attempt.ceiling,
+      contentHash: attempt.hash,
+    });
+
+    // The call resolved, so it was billed. Every branch finalizes FIRST — never
+    // understate spend precisely when things are going wrong (E-16 defect 4).
+    if (wasTruncated(completion)) {
+      finalizeReservation(db, reservation, costUsd);
+      truncation = new TextModelTruncatedError(`The lesson reply was cut off at ${attempt.ceiling} tokens.`);
+      continue;
+    }
+
+    let parsed: NewItemLesson;
+    try {
+      parsed = parseItemLessonResponse(
+        { id: input.itemId, kind: input.kind },
+        input.register,
+        completion.text,
+        input.fallback,
+      );
+    } catch (err) {
+      finalizeReservation(db, reservation, costUsd);
+      throw err;
+    }
+
+    return db.transaction(() => {
+      finalizeReservation(db, reservation, costUsd);
+      return completeItemLesson(db, parsed);
+    })();
   }
+  throw truncation ?? new TextModelParseError("The lesson could not be generated.");
+}
 
-  const lesson = db.transaction(() => {
-    finalizeReservation(db, reservation, costUsd);
-    return completeItemLesson(db, parsed);
-  })();
-  return { lesson, cached: false };
+/**
+ * TODAY'S LESSON — the seam E-44's session asks for, and the one that CANNOT FAIL.
+ *
+ * Order: the cached lesson, then a generated one if a client is offered and the
+ * budget allows, then the deterministic syllabus lesson. Every failure of the
+ * middle step — no key, budget refused, network down, unreadable reply, a reply
+ * truncated twice — lands on the syllabus lesson rather than on a wall, because
+ * D-27 makes the syllabus the backbone and not the consolation prize.
+ *
+ * Pass `client: null` to stay entirely offline, which is what a keyless install
+ * does and what the empty-database test drives.
+ */
+export async function todaysLesson(
+  db: Db,
+  client: TextModelClient | null,
+  itemId: string,
+): Promise<ItemLesson | null> {
+  const deterministic = deterministicLessonFor(itemId, lessonRegister(db));
+
+  const cached = getItemLesson(db, itemId);
+  if (cached) return withDrills(cached, deterministic);
+
+  if (client) {
+    try {
+      const { lesson } = await generateItemLesson(db, client, itemId);
+      if (lesson) return withDrills(lesson, deterministic);
+    } catch {
+      // Budget, network, parse, truncation — one answer to the learner: here is
+      // your lesson. The failure is in the ledger and the server log, never on the
+      // screen as a dead end (D-26: no route may end at a wall).
+    }
+  }
+  return deterministic;
+}
+
+/** Top a lesson up from the deterministic drills when it has none of its own —
+ *  what rescues a legacy stored body whose typed exercises were dropped on read. */
+function withDrills(lesson: ItemLesson, deterministic: ItemLesson | null): ItemLesson {
+  if (lesson.exercises.length > 0 || !deterministic) return lesson;
+  return { ...lesson, exercises: deterministic.exercises };
 }
