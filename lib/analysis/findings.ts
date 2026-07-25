@@ -137,6 +137,75 @@ export function toFinding(r: FindingRow): Finding {
 export function isCategory(v: unknown): v is Category {
   return typeof v === "string" && (CATEGORIES as readonly string[]).includes(v);
 }
+
+/**
+ * Near-misses for the closed category vocabulary, mapped to the value the schema
+ * stores (E-39 workstream A).
+ *
+ * The gap this closes. `parseDeepResponse` rejects the WHOLE deep reply when any one
+ * finding's `category` is off-vocabulary, and that is deliberate — half a segment's
+ * garbage must never persist (E-16 criterion 2). But the punishment landed on the
+ * wrong offender: a model that had correctly HEARD five mistakes and labelled one of
+ * them "word choice" instead of "vocabulary" lost all five, and the segment was
+ * recorded as unreadable. The class of mistake most exposed to it was precisely the
+ * one the operator says is missing — vocabulary, whose natural English name is "word
+ * choice". So this is a coverage fix, not a leniency: the findings were there and the
+ * pipeline threw them away over a synonym.
+ *
+ * Every alias is an UNAMBIGUOUS synonym of exactly one category — a term that could
+ * plausibly belong to two (e.g. "register", which is a word-choice error but also the
+ * name of a `notes` field, or "usage") is deliberately absent, because guessing would
+ * mislabel a finding and mislabelling is worse than rejecting. An unrecognised value
+ * still fails the whole reply exactly as before.
+ */
+const CATEGORY_ALIASES: Readonly<Record<string, Category>> = {
+  // vocabulary — the wrong-word class, and the aliases a model actually reaches for.
+  "word choice": "vocabulary",
+  wordchoice: "vocabulary",
+  word: "vocabulary",
+  vocab: "vocabulary",
+  lexis: "vocabulary",
+  lexical: "vocabulary",
+  lexicon: "vocabulary",
+  "false friend": "vocabulary",
+  collocation: "vocabulary",
+  // grammar — a wrong form, under any of its technical names.
+  grammatical: "grammar",
+  syntax: "grammar",
+  syntactic: "grammar",
+  morphology: "grammar",
+  morphological: "grammar",
+  agreement: "grammar",
+  conjugation: "grammar",
+  tense: "grammar",
+  // pronunciation — including the misspelling models produce most often.
+  pronounciation: "pronunciation",
+  phonetic: "pronunciation",
+  phonetics: "pronunciation",
+  phonology: "pronunciation",
+  phonological: "pronunciation",
+  accent: "pronunciation",
+  // idiom / phrasing.
+  idiomatic: "idiom",
+  idioms: "idiom",
+  expression: "idiom",
+  phrase: "phrasing",
+  wording: "phrasing",
+};
+
+/**
+ * Coerce a model's `category` to the stored vocabulary, or null if unrecognisable.
+ * Case, surrounding space, and `_`/`-` separators are normalised first (a reply of
+ * "Grammar" or "word_choice" is the same claim); then the exact vocabulary, then the
+ * alias table. Null — never a guess and never a default — is what keeps a genuinely
+ * unreadable label a truthful parse error rather than a silently mislabelled finding.
+ */
+export function normalizeCategory(v: unknown): Category | null {
+  if (typeof v !== "string") return null;
+  const key = v.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (isCategory(key)) return key;
+  return CATEGORY_ALIASES[key] ?? null;
+}
 export function isSeverity(v: unknown): v is Severity {
   return typeof v === "string" && (SEVERITIES as readonly string[]).includes(v);
 }

@@ -1,11 +1,21 @@
 import { profileBlock, type SpeakerProfile } from "./profile";
 import { registerInstruction, DEFAULT_REGISTER, type Register } from "../register";
+import { mistakeClasses, precisionCore } from "../mistakes";
 
 // The prompt builders for the two audio-model calls (D-3, D-10), factored out of
 // lib/analysis/audio-model.ts to keep that file under the 500-line hook. Pure
 // string builders — no I/O, no network — and re-exported from audio-model.ts so the
 // import surface the cascade and tests use is unchanged. The E-28 richness dial
 // loosened the triage bar and enriched the deep prompt (notes + produced lemmas).
+//
+// Coverage (E-39 workstream A). The deep prompt used to ask for "each genuine error"
+// and then name its five category words with no statement of what any of them covers
+// — so WHICH classes of mistake came back was left to the model: `vocabulary` was a
+// bare label, and a wrong preposition, a missing clitic, or a false friend had no
+// worked example anywhere in the prompt. It now composes `lib/mistakes.ts`, the same
+// definition of what counts as a mistake that the tutor persona composes, so the two
+// error-hunting paths cannot disagree; the shared precision core rides with it,
+// because a wider net without one is how an analysis starts over-reporting.
 
 /** The profile block as prompt lines — empty when no profile was provided. */
 function profileLines(profile?: SpeakerProfile): string[] {
@@ -84,6 +94,23 @@ export function recastRegisterInstruction(register: Register): string {
   return `${registerInstruction(register)} Each "correction" you give is a recast of the learner's words in this register.`;
 }
 
+/**
+ * How the three shared mistake classes map onto the CLOSED five-word `category`
+ * vocabulary the schema stores (E-39). Without this the model was left to guess which
+ * label a false friend or a wrong preposition wears — and an off-vocabulary guess is
+ * not a mild loss: `parseDeepResponse` rejects the WHOLE reply, so one stray word
+ * ("word choice") discarded every finding for that segment. `normalizeCategory`
+ * (lib/analysis/findings.ts) now recovers the recognisable near-misses; this line is
+ * the front half of the same fix, aimed at not needing it.
+ */
+export const CATEGORY_MAPPING_INSTRUCTION =
+  'Map each finding onto exactly one of the five category words: "grammar" for a wrong form;' +
+  ' "vocabulary" for a wrong word — a false friend, a calqued word, a wrong collocation, a noun\'s' +
+  ' own gender, or a register slip; "pronunciation" for a wrong sound; "idiom" for a fixed' +
+  ' expression misused or translated literally; "phrasing" for wording that is grammatical and' +
+  " understood but not how an Italian would put it. Use one of those five words exactly and" +
+  " lower-case: any other value is unreadable to us and loses the whole segment.";
+
 export function deepPrompt(
   targetLanguage: string,
   profile?: SpeakerProfile,
@@ -95,7 +122,11 @@ export function deepPrompt(
     ...profileLines(profile),
     DOMINANT_SPEAKER_INSTRUCTION,
     recastRegisterInstruction(register),
-    "Identify each genuine error the dominant speaker makes. For each, give the quote, a correction,",
+    "Identify each genuine error the dominant speaker makes.",
+    mistakeClasses(),
+    precisionCore(),
+    CATEGORY_MAPPING_INSTRUCTION,
+    "For each error, give the quote, a correction,",
     "a category (one of: grammar, vocabulary, phrasing, idiom, pronunciation), a short explanation,",
     "a severity (high, medium, low), and its approximate start/end time within this clip in",
     "milliseconds (relStartMs, relEndMs).",
