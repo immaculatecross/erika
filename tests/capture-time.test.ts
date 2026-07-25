@@ -3,7 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { openDatabase, type Db } from "@/lib/db";
+import Database from "better-sqlite3";
+import { openDatabase, runMigrations, type Db } from "@/lib/db";
+import { migrations } from "@/lib/migrations";
 import { createSession } from "@/lib/sessions";
 import { upsertSegment } from "@/lib/segments";
 import { persistSegmentFindings } from "@/lib/analysis/findings";
@@ -224,19 +226,55 @@ describe("every 'when they spoke' claim reads captured_at (criterion 6)", () => 
     db.close();
   });
 
-  it("migration v28 backfills every pre-existing row to its created_at", () => {
-    const db = freshDb();
-    db.prepare(
-      `INSERT INTO sessions (id, original_filename, format, size_bytes, duration_seconds, created_at, captured_at)
-       VALUES ('old', 'o.wav', 'wav', 1, 60, '2026-01-02 03:04:05', NULL)`,
-    ).run();
-    // Re-running the migration is what a pre-v28 database experiences on first boot.
-    db.prepare("UPDATE sessions SET captured_at = created_at WHERE captured_at IS NULL").run();
-    const row = db.prepare("SELECT captured_at FROM sessions WHERE id = 'old'").get() as {
-      captured_at: string;
-    };
-    expect(row.captured_at).toBe("2026-01-02 03:04:05");
-    db.close();
+  it("migration v28 backfills every pre-existing row — run against a REAL pre-v28 database", () => {
+    // [B1] This test used to hand-type its own copy of the backfill statement and
+    // assert that IT worked — so it passed with the backfill deleted from the actual
+    // migration. A test that cannot fail is worse than none (RETRO-004 found four in
+    // v0.6, including the one written to fix the third). It now builds a database at
+    // **v27**, puts pre-existing rows in it, and lets the REAL runner apply the REAL
+    // v28 — the exact sequence an existing install experiences on first boot.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "erika-v28-"));
+    dirs.push(dir);
+    const raw = new Database(path.join(dir, "erika.db"));
+    raw.pragma("foreign_keys = ON");
+    raw.exec(`CREATE TABLE IF NOT EXISTS _migrations (
+      version INTEGER PRIMARY KEY, name TEXT NOT NULL,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now')));`);
+    const record = raw.prepare("INSERT INTO _migrations (version, name) VALUES (?, ?)");
+    for (const m of [...migrations].sort((a, b) => a.version - b.version)) {
+      if (m.version >= 28) continue; // stop at v27: the state a real install is in
+      m.up(raw);
+      record.run(m.version, m.name);
+    }
+    // The column cannot exist yet — the premise, asserted rather than assumed.
+    const before = (raw.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]).map((c) => c.name);
+    expect(before).not.toContain("captured_at");
+
+    // Recordings made before v28 existed, with distinct upload instants.
+    const insert = raw.prepare(
+      `INSERT INTO sessions (id, original_filename, format, size_bytes, duration_seconds, created_at)
+       VALUES (?, ?, 'wav', 1, 60, ?)`,
+    );
+    insert.run("old-a", "a.wav", "2026-01-02 03:04:05");
+    insert.run("old-b", "b.wav", "2025-11-30 23:59:59");
+
+    // The real runner, applying the real migration — nothing hand-typed.
+    const applied = runMigrations(raw);
+    expect(applied).toContain(28);
+
+    const rows = raw
+      .prepare("SELECT id, created_at, captured_at FROM sessions ORDER BY id")
+      .all() as { id: string; created_at: string; captured_at: string | null }[];
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      // The best value that exists for a recording captured before the column did.
+      expect(r.captured_at).toBe(r.created_at);
+      expect(r.captured_at).not.toBeNull();
+    }
+    // And the two rows kept their OWN instants — a backfill that stamped `now` on
+    // everything would satisfy "not null" while destroying every session's date.
+    expect(rows.map((r) => r.captured_at)).toEqual(["2026-01-02 03:04:05", "2025-11-30 23:59:59"]);
+    raw.close();
   });
 });
 

@@ -144,6 +144,22 @@ describe("the rates are floors over spike-6's LIVE MEASUREMENTS", () => {
     }
   });
 
+  it("covers EVERY model at every length — the claim that actually matters", () => {
+    // Not "higher than the old table" (false above ~3.5 audio-minutes for
+    // gpt-audio-1.5 and ~1.0 for the fallback, because their per-minute rate fell
+    // toward the true audio-input price) but "at or above MEASURED reality", which
+    // holds everywhere. This repo has been bitten by prose asserting a money property
+    // no test enforced, so the property is enforced here and the prose defers to it.
+    for (const [m, perMin] of Object.entries(MEASURED_10MIN_PER_AUDIO_MIN)) {
+      for (const seconds of [1, 5, 15, 30, 60, 120, 240, 600, 1800]) {
+        const measured = perMin * (seconds / 60);
+        expect(
+          callCost(m as keyof typeof MEASURED_10MIN_PER_AUDIO_MIN, seconds * 1000),
+        ).toBeGreaterThanOrEqual(measured);
+      }
+    }
+  });
+
   it("covers gpt-audio-mini at EVERY length — the leg spike-6 found under-priced even on the analysis path", () => {
     // MINI_MODEL triages every segment of every capture, so a systematic under-count
     // there compounds across the whole product. Its audio rate is also the least

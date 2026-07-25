@@ -3,9 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
+import { processJob } from "@/lib/ingest/pipeline";
+import { cleanup, workspace, type Workspace } from "./fixtures";
 import { createSession } from "@/lib/sessions";
 import { upsertSegment } from "@/lib/segments";
-import { parseDeepResponse } from "@/lib/analysis/audio-model";
+import { parseDeepResponse, type AudioModelClient } from "@/lib/analysis/audio-model";
+import { enqueueAnalysis, runAnalysisJob } from "@/lib/analysis/cascade";
 import { normalizeCategory } from "@/lib/analysis/findings";
 import { persistSegmentFindings } from "@/lib/analysis/findings";
 import { listSessionFindings } from "@/lib/findings-model";
@@ -218,6 +221,67 @@ describe("2b · A BAD FINDING COSTS ITSELF, NEVER THE SEGMENT [spike-6, live]", 
     // it. Widening the parser alone would leave us relying on tolerance forever.
     expect(deepPrompt("Italian")).toMatch(/NOT the heading of the class it came from/);
   });
+});
+
+describe("2c · the bad-category path no longer bills twice for nothing", () => {
+  // The Full review's follow-up to the segment loss: because an unreadable category
+  // threw `ModelParseError`, `withRepair` (lib/analysis/reserved-call.ts) fired its
+  // one repair retry — so a reply that was fine except for one word cost TWO billed
+  // deep calls, produced nothing, and left the segment `unreadable`, which a later
+  // run then re-billed a THIRD time. The parser fix closes the money leak as well as
+  // the signal loss, and this is the assertion that says so.
+  //
+  // Driven through the REAL cascade against real segment audio, because the leak was
+  // in `withRepair`'s retry, not in the parser's return value.
+  let ws: Workspace;
+  afterEach(() => {
+    if (ws) cleanup(ws);
+  });
+
+  it("makes exactly ONE deep call, ledgers ONE row, and never re-bills the segment", async () => {
+    ws = workspace();
+    const { sessionId, jobId } = ws.seed([{ kind: "tone", seconds: 2 }]);
+    await processJob(ws.db, jobId);
+
+    // A reply the model really returns: good findings plus one labelled with the
+    // class heading, served through the same parser the real client uses.
+    const raw = JSON.stringify({
+      findings: [
+        { quote: "q1", correction: "c1", category: "grammar", explanation: "e", severity: "high", relStartMs: 0, relEndMs: 10 },
+        { quote: "q2", correction: "c2", category: "wat", explanation: "e", severity: "high", relStartMs: 10, relEndMs: 20 },
+        { quote: "q3", correction: "c3", category: "idiom", explanation: "e", severity: "low", relStartMs: 20, relEndMs: 30 },
+      ],
+      produced: [],
+    });
+    let deepCalls = 0;
+    const client: AudioModelClient = {
+      async triage() {
+        return { flagged: true };
+      },
+      async deepListen() {
+        deepCalls += 1;
+        return parseDeepResponse(raw);
+      },
+    };
+
+    const job = await runAnalysisJob(ws.db, enqueueAnalysis(ws.db, sessionId).id, client);
+    expect(job.state).toBe("done");
+    expect(deepCalls).toBe(1); // ONE call — the repair retry never fired
+    const ledger = ws.db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number };
+    expect(ledger.n).toBe(1); // ONE charge, not two
+
+    // The readable findings landed; only the unreadable one was dropped.
+    expect(listSessionFindings(ws.db, sessionId).map((f) => f.quote).sort()).toEqual(["q1", "q3"]);
+
+    // And the segment is COMPLETE, not `unreadable` — so a second run is a pure cache
+    // hit that makes no call and adds no charge. Before the fix the segment was
+    // recorded unreadable and every later run paid for it again.
+    const second = await runAnalysisJob(ws.db, enqueueAnalysis(ws.db, sessionId).id, client);
+    expect(second.state).toBe("done");
+    expect(deepCalls).toBe(1); // still one, across both runs
+    const after = ws.db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number };
+    expect(after.n).toBe(1);
+  }, 120_000);
 });
 
 describe("3 · it persists and surfaces like any other finding", () => {

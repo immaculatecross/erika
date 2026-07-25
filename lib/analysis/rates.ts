@@ -91,12 +91,28 @@ export const AUDIO_TOKENS_PER_MINUTE = 700;
 // What this changes in practice: the fixed per-call text cost is now charged even to
 // a very short segment (previously such a segment was billed almost nothing however
 // large the prompt), while a long segment's per-minute figure drops toward its true
-// audio-input price. Both moves make the model match the invoice's shape. The
-// resulting all-in figures sit ABOVE D-20's modelled $0.22 per 10-min capture and
-// $1.77 per 12-h dump — deliberately, since D-20's numbers were computed before the
-// prompt quadrupled. The standing usage→invoice reconciliation ([RETRO-002 T1]) is
-// still what should eventually replace every estimate here with a measurement; the
-// cap guards the MODELLED budget, not the invoice.
+// audio-input price. Both moves make the model match the invoice's shape.
+//
+// ⚠️ AND THE PART THAT IS EASY TO STATE WRONGLY. Against the OLD per-minute-only
+// table the new total is NOT uniformly higher — it is higher for short calls and
+// lower for long ones, crossing over at:
+//
+//   gpt-audio-1.5   ~3.49 audio-minutes   (old $0.030/min vs new $0.0224/min + $0.0265/call)
+//   gpt-audio       ~0.96 audio-minutes   (old $0.050/min vs new $0.0224/min + $0.0265/call)
+//   gpt-audio-mini  never — its per-minute rate ROSE, so it is higher at every length
+//
+// The property that matters is not "higher than before" but "at or above MEASURED
+// reality", which is a different claim and the only one worth defending. It holds at
+// every duration and is enforced, not asserted: `tests/rates-text-floor.test.ts`
+// checks each model against spike-6's measured 5.15 s turn and 10-minute segment and
+// sweeps nine durations from 1 s to 30 min. This repo has been bitten specifically by
+// prose asserting a money property no test enforced — so the prose defers to the test.
+//
+// The all-in figures sit above D-20's modelled $0.22 per 10-min capture and $1.77 per
+// 12-h dump, deliberately: D-20's numbers were computed before the prompt quadrupled.
+// The standing usage→invoice reconciliation ([RETRO-002 T1]) is still what should
+// eventually replace every estimate here with a measurement; the cap guards the
+// MODELLED budget, not the invoice.
 export const RATES: Record<ModelId, ModelRate> = {
   "gpt-audio-mini": {
     usdPerAudioInputToken: 10 / 1_000_000,

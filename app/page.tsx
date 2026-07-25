@@ -12,6 +12,7 @@ import { uploadAudio } from "@/lib/upload-audio";
 import { useSessions } from "@/lib/use-sessions";
 import { SUPPORTED_FORMATS } from "@/lib/session-types";
 import { isInFlight, sessionPhase } from "@/lib/sessions-list-view";
+import { formatCreatedAt } from "@/lib/format";
 
 const ACCEPT = SUPPORTED_FORMATS.map((f) => `.${f}`).join(",");
 
@@ -39,6 +40,11 @@ export default function SessionsPage() {
   const reduced = usePrefersReducedMotion();
   const { sessions, polling, pollCount, refresh } = useSessions();
   const [upload, setUpload] = useState<Upload>({ kind: "idle" });
+  // The ids that existed BEFORE the upload, so the new row can be identified by set
+  // difference rather than by guessing. `created_at` is second-granular — the very
+  // reason migration v27 needed its own `seq` — so two uploads inside one second tie,
+  // and "the newest row" silently identified the wrong one.
+  const [added, setAdded] = useState<{ name: string; knownIds: string[] } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   function pick() {
@@ -61,6 +67,7 @@ export default function SessionsPage() {
     });
     if (result.ok) {
       setUpload({ kind: "idle" });
+      setAdded({ name: file.name, knownIds: (sessions ?? []).map((s) => s.id) });
       refresh(); // pick the new session up and follow it
     } else {
       setUpload({ kind: "error", message: result.message });
@@ -68,6 +75,24 @@ export default function SessionsPage() {
   }
 
   const busy = upload.kind === "busy";
+  // [Full review] ACKNOWLEDGE THE UPLOAD WHERE THE EYE ALREADY IS. Dropping in a
+  // 12-hour dump — the headline case in PRODUCT.md — used to say nothing at all: the
+  // flow has no button left to reassure anyone, and because the list is ordered by
+  // CAPTURE time (product call 2), a file recorded days ago lands far below the fold.
+  //
+  // The row just added is the one that was not there before — an exact identity, not
+  // a guess at "the newest". When it is not the top row, the acknowledgement says
+  // where it went rather than leaving the learner to hunt for it.
+  const justAdded = (() => {
+    if (!added || !sessions?.length) return null;
+    const known = new Set(added.knownIds);
+    const index = sessions.findIndex((s) => !known.has(s.id));
+    if (index === -1) return null;
+    return {
+      name: added.name,
+      where: index === 0 ? null : formatCreatedAt(sessions[index].capturedAt),
+    };
+  })();
   // One notice for the whole screen, not one per row: the work happens in a second
   // process, and a learner who has never started it needs the command once. This is
   // the single most common cold-start dead end this app has (RETRO-004 §DE-1).
@@ -96,6 +121,7 @@ export default function SessionsPage() {
             disabled={busy}
             actionVariant="secondary"
             secondary={<Recorder onRecorded={refresh} disabled={busy} variant="primary" />}
+            note={<WorkerPrerequisite />}
           />
           {upload.kind === "error" && (
             <p className="pb-8 text-center text-[13px] text-severe" role="alert">
@@ -130,6 +156,7 @@ export default function SessionsPage() {
               {upload.message}
             </p>
           )}
+          {justAdded && <UploadAck name={justAdded.name} where={justAdded.where} />}
           {workerAbsent && (
             <div className="mb-4">
               <WorkerAbsentNotice />
@@ -150,5 +177,37 @@ export default function SessionsPage() {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * The one manual prerequisite left, stated before anyone waits on it.
+ *
+ * [Full review] This milestone removed every button from the capture path, which
+ * makes the second process the ONLY thing a newcomer must do by hand — and a learner
+ * who records and then watches nothing happen has been asked a question the product
+ * never answered. That is precisely what made the v0.6 cold-start gate fail: the
+ * app's own remedy was a loop. The worker-absent notice still exists, but it is a
+ * diagnosis after 20 s of silence; this is the instruction before the silence.
+ */
+function WorkerPrerequisite() {
+  return (
+    <span data-worker-prerequisite>
+      Erika listens in a second process — leave{" "}
+      <code className="rounded bg-black/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-ink dark:bg-white/[0.08]">
+        npm run worker
+      </code>{" "}
+      running in another terminal.
+    </span>
+  );
+}
+
+/** A quiet line confirming the upload landed, and where it went if not to the top. */
+function UploadAck({ name, where }: { name: string; where: string | null }) {
+  return (
+    <p className="mb-4 text-[13px] text-secondary" role="status" data-upload-ack>
+      <span className="text-ink">{name}</span> added — Erika is working on it
+      {where ? `. It's dated ${where}, so it sits further down the list.` : "."}
+    </p>
   );
 }

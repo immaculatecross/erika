@@ -31,10 +31,24 @@ export function analysisUnavailableMessage(): string {
 }
 
 /**
- * Does a stored job error mean "there is no API key"? Used by the sessions list and
- * the session page to render a permanent condition as one — with the fix beside it —
- * instead of a generic failure the learner is invited to retry into a loop.
+ * Is this stored job error OUR OWN refusal for want of a key?
+ *
+ * EXACT equality, deliberately — not `includes(REQUIRED_KEY)`, which is what this
+ * was and which the Full review broke in four ticks. A provider error body is not
+ * ours and we do not control its wording: OpenAI's own 401 text mentions the API
+ * key, so any transport failure whose body echoed the variable name matched, and
+ * `resumeKeylessRefusals` resurrected the job every worker tick — a retry loop on a
+ * path this milestone made automatic, which is a re-billing risk, not a cosmetic one.
+ *
+ * So the predicate is anchored to a fact we control: the exact string
+ * `analysisUnavailableMessage()` produces, written by our own worker at the one
+ * place it refuses a job. Producer and predicate sit together in this file so they
+ * cannot drift, and `tests/capture-flow.test.ts` pins them to each other.
+ *
+ * The failure mode if the message is ever reworded is safe and visible: an old row
+ * stops matching, renders as a plain failure carrying its own truthful text, and is
+ * never retried. It degrades to "no automatic recovery", never to a loop.
  */
 export function isMissingKeyMessage(error: string | null | undefined): boolean {
-  return typeof error === "string" && error.includes(REQUIRED_KEY);
+  return error === analysisUnavailableMessage();
 }

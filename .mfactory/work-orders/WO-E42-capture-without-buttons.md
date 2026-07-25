@@ -440,3 +440,110 @@ Addendum 1 only began after the tripwire fix.
 
 Every extracted symbol is re-exported from its original module, so no importer anywhere
 changed and the diff is a move, not a rewrite. 1120 tests pass across the split.
+
+---
+
+## Addendum 3 — the Full-review repair cycle (five items)
+
+`lint · typecheck · test` (**1130**, up from 1120) · `build` · **tripwires `--all`** — all green.
+
+### B1 · A committed test that could not fail
+
+The v28 backfill test hand-typed its own copy of the `UPDATE` and asserted that *its own statement* worked, so deleting the backfill from the real migration left 1107/1107 green. Exactly the vacuous-test class RETRO-004 named four times in v0.6.
+
+It now builds a database **at v27** (applying every migration below 28 through their real `up`), asserts the premise that `sessions.captured_at` does not yet exist, inserts pre-v28 rows with distinct upload instants, and lets the **real `runMigrations`** apply the **real v28**. It additionally asserts each row kept its *own* instant — a backfill stamping `now` on everything would satisfy "not null" while destroying every session's date.
+
+**Mutation proof — the backfill deleted from `lib/migrations/v28-capture-time.ts`:**
+
+```
+### B1 mutation: delete the backfill from the REAL migration
+   backfill removed
+     → expected null to be '2026-01-02 03:04:05' // Object.is equality
+ FAIL  tests/capture-time.test.ts > … > migration v28 backfills every pre-existing row — run against a REAL pre-v28 database
+ Test Files  1 failed (1)
+      Tests  1 failed | 14 passed (15)
+
+### restored
+      Tests  15 passed (15)
+```
+
+### 2 · The standing-clause gap: nothing told a newcomer to run the worker
+
+Correct, and it is the bar rather than a nit — this milestone removed every button from the capture path, which makes the second process the **only** thing a newcomer must still do by hand. A learner who records and watches nothing happen has been asked a question the product never answers, and that is precisely what failed the v0.6 cold-start gate.
+
+Stated in both places a newcomer meets, before any waiting:
+
+* **Settings** — a third paragraph in "What Erika needs": *"Erika works in two processes… Leave `npm run worker` running in another terminal. Without it your recordings are still saved, but nothing moves — which looks exactly like nothing happening."* It names the failure's **appearance**, because the failure mode is silence.
+* **The empty state** — `EmptyState` gains an optional `note` slot rendered as a quiet caption below the action: *"Erika listens in a second process — leave `npm run worker` running in another terminal."* DESIGN's "one sentence and one action" governs the *offer*; a prerequisite footnote is not a second offer.
+
+The 20-second worker-absent notice stays — it is a *diagnosis* after silence; this is the *instruction* before it.
+
+**Driven from an empty database** on the built server (pid 50461, cwd = this worktree, `analysisKeyPresent` present):
+
+```
+=== EMPTY DATABASE — what a newcomer sees first ===
+  rows: 0
+  PREREQ   : Erika listens in a second process — leave npm run worker running in another terminal.
+  visible? : true
+=== SETTINGS ===
+  PREREQ   : Erika works in two processes. … Without it your recordings are still saved, but
+             nothing moves — which looks exactly like nothing happening.
+  key line : No key is set right now, so analysis will not run.
+  page errors: none
+```
+
+`tests/settings-disclosure-render.test.tsx` (new) pins it at render level **on the loading branch**, so it can never again be gated behind a fetch.
+
+### 3 · `resumeKeylessRefusals` — the gate is now a fact we control
+
+**Was:** `error.includes(REQUIRED_KEY)` — a substring of a body we do not write. OpenAI's own 401 text names the API key, so a transport failure resurrected the job every tick. The reviewer demonstrated four.
+
+**Now:** `error === analysisUnavailableMessage()` — **exact equality** against the string our own worker writes at the one place it refuses a job. Producer and predicate stay in `lib/analysis-key.ts` so they cannot drift.
+
+**Why it cannot loop:**
+1. Re-queueing requires `hasAnalysisKey()`, so nothing moves while the condition stands.
+2. With a key present the job actually **runs**; it then either succeeds or fails with a *different* error — a provider body, never our exact sentence — so it is never re-matched.
+3. Prefixes, suffixes and whitespace variants of our message do not match, so a wrapper or a proxy that quotes us cannot trigger it either.
+
+Two tests: one feeds five provider-shaped bodies (including OpenAI's real 401 wording, a bare prefix of our message, and our message with a suffix) and requires all to be refused; the other drives the full lifecycle — our refusal re-queued exactly once, then a 401 whose body names the variable, then **four** ticks asserting nothing moves and the job stays `failed`. If the message is ever reworded the failure is safe and visible: an old row renders as a plain failure with its own text and is simply never retried — it degrades to "no automatic recovery", never to a loop.
+
+### 4 · The upload acknowledgement
+
+A quiet line under the header, where the eye already is: `daydump.wav added — Erika is working on it.` — and when the recording is not the top row (the day-dump case, because the list is ordered by capture time), it says where it went: *"It's dated Jul 20, 2026, 9:00 AM, so it sits further down the list."*
+
+**A defect found while verifying it, worth recording.** My first implementation identified the new row as "the one with the newest `created_at`" — and it silently identified the *wrong* row when two uploads landed in the same second, because `created_at` is second-granular. That is the identical hazard migration v27 needed its own `seq` for. It now identifies the row by **set difference against the ids that existed before the upload** — an exact identity, not a guess.
+
+```
+=== upload a take recorded JUST NOW ===
+  ack: fresh.wav added — Erika is working on it.
+=== a dump recorded DAYS AGO ===
+  ack: daydump.wav added — Erika is working on it. It's dated Jul 20, 2026, 9:00 AM,
+       so it sits further down the list.
+  list: Jul 25, 2026, 2:15 PM · ingest-queued
+        Jul 20, 2026, 9:00 AM · ingest-queued
+  page errors: none
+```
+
+### 5 · The false money claim, corrected
+
+**"The total per call still rises" is wrong,** and the correct bound is per model:
+
+| model | old per-min | new | crossover |
+|---|---|---|---|
+| `gpt-audio-1.5` | $0.030 | $0.0224/min + $0.0265/call | **~3.49 audio-minutes** |
+| `gpt-audio` | $0.050 | $0.0224/min + $0.0265/call | **~0.96 audio-minutes** |
+| `gpt-audio-mini` | $0.006 | $0.0070/min + $0.00132/call | **never — higher at every length** |
+
+Above those points the new total is **lower** than the old, because the per-minute rate fell toward the true audio-input price.
+
+**The property that actually matters is different, and it holds everywhere: at or above MEASURED reality.** The prose now says exactly that, at the definition site in `rates.ts`, with the crossovers spelled out — and defers to the test rather than asserting the property itself, because this repo has been bitten specifically by prose asserting a money property no test enforced. `tests/rates-text-floor.test.ts` gains a sweep of **every model × nine durations (1 s → 30 min)** against spike-6's measured per-minute cost. The PR body is corrected identically.
+
+### B2 follow-up · the double charge is closed
+
+Confirmed, and now asserted. Because an unreadable category no longer throws `ModelParseError`, `withRepair`'s one repair retry never fires on that path: `tests/register-category.test.ts` drives the **real cascade** over real segment audio with a reply containing one bad label and asserts **one** deep call and **one** ledger row — then re-runs the analysis and asserts the counts are unchanged, because the segment is now recorded *complete* rather than *unreadable* and is a pure cache hit. Before the fix that path cost two billed calls for nothing, produced no findings, and left a segment every later run paid for again.
+
+### Deferred, untouched
+
+The register-slip card front (`Non ____`) — recorded against **WO-E45**, which carries the totality proof that no card front may be a bare or empty prompt.
+
+Also unchanged and still noted for the dispatcher: `REALTIME_RATES` has no text-token rate and over-books 5.1× (spike-6 §5.6) — E-43's table; and `lib/knowledge/derive.ts` counts `distinctCorrectDays` from evidence mint time — D-19's `known` gate, E-45's surface.

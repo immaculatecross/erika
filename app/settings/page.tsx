@@ -314,6 +314,22 @@ function WhatErikaNeeds({ keyPresent }: { keyPresent: boolean | null }) {
             take costs roughly twenty cents of API usage; a full day&rsquo;s audio is a couple of dollars,
             because silence never reaches a model and only the parts that sound off are listened to closely.
           </p>
+          {/* [Full review] The one manual prerequisite left. This milestone removed every
+              button from the capture path, so the SECOND PROCESS is now the only thing a
+              newcomer must do by hand — and a learner who records and waits, seeing
+              nothing, has been asked a question the product never answered. That exact
+              failure is what made the v0.6 cold-start gate FAIL. It is stated here, where
+              a newcomer meets it, rather than discovered 20 s in when a job goes stale. */}
+          <p className="text-[15px] leading-[1.47] text-secondary" data-worker-prerequisite>
+            <strong className="font-medium text-ink">Erika works in two processes.</strong> The page
+            you are reading serves the app; the listening and the analysis happen in a second one.
+            Leave{" "}
+            <code className="rounded bg-black/[0.06] px-1.5 py-0.5 font-mono text-[13px] text-ink dark:bg-white/[0.08]">
+              npm run worker
+            </code>{" "}
+            running in another terminal. Without it your recordings are still saved, but nothing moves
+            — which looks exactly like nothing happening.
+          </p>
           <p className="text-[15px] leading-[1.47] text-secondary">
             The <strong className="font-medium text-ink">monthly budget</strong> below is a hard cap on
             that spending, not a warning. When a month reaches it, analysis stops — your recordings are

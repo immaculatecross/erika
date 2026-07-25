@@ -197,6 +197,51 @@ describe("a missing key is a permanent condition, described as one (criterion 9)
     expect(isMissingKeyMessage(undefined)).toBe(false);
   });
 
+  it("does NOT match a provider body that merely mentions the variable — the retry-loop hole", () => {
+    // The Full review broke the old `includes(REQUIRED_KEY)` gate in four ticks: a
+    // provider error is not ours and we do not control its wording, and OpenAI's own
+    // 401 text names the API key. Matching a substring of a vendor body resurrected
+    // the job every worker tick — a re-billing risk on an automatic path.
+    for (const providerBody of [
+      `gpt-audio-1.5 call failed: 401 Unauthorized {"error":{"message":"Incorrect API key provided. You can find your key at ... ${REQUIRED_KEY}"}}`,
+      `${REQUIRED_KEY} rejected by the proxy`,
+      `no ${REQUIRED_KEY} is set, so analysis cannot run.`, // a PREFIX of ours, not ours
+      `${analysisUnavailableMessage()} (retried)`, // ours plus a suffix, so not ours
+      ` ${analysisUnavailableMessage()}`, // whitespace-shifted
+    ]) {
+      expect(isMissingKeyMessage(providerBody)).toBe(false);
+    }
+  });
+
+  it("cannot loop: a job we DID refuse, retried with a key, is never re-matched by its new error", () => {
+    ws = workspace();
+    const { sessionId } = ws.seed([{ kind: "tone", seconds: 1 }]);
+    const job = enqueueAnalysis(ws.db, sessionId);
+    const had = process.env[REQUIRED_KEY];
+    try {
+      process.env[REQUIRED_KEY] = "a-key-is-configured";
+      // Our own refusal → re-queued exactly once.
+      ws.db.prepare("UPDATE analysis_jobs SET state='failed', error=? WHERE id=?")
+        .run(analysisUnavailableMessage(), job.id);
+      expect(resumeKeylessRefusals(ws.db)).toEqual([job.id]);
+
+      // It then runs and fails for a REAL reason — a bad key, whose 401 body names
+      // the variable. That must be terminal, or the worker spins forever.
+      ws.db.prepare("UPDATE analysis_jobs SET state='failed', error=? WHERE id=?")
+        .run(`gpt-audio-1.5 call failed: 401 Incorrect API key provided (${REQUIRED_KEY})`, job.id);
+      for (let tick = 0; tick < 4; tick++) {
+        expect(resumeKeylessRefusals(ws.db)).toEqual([]);
+      }
+      const final = ws.db.prepare("SELECT state FROM analysis_jobs WHERE id=?").get(job.id) as {
+        state: string;
+      };
+      expect(final.state).toBe("failed");
+    } finally {
+      if (had === undefined) delete process.env[REQUIRED_KEY];
+      else process.env[REQUIRED_KEY] = had;
+    }
+  });
+
   it("the wall moves when the reason for it moves: adding a key retries the refused run", () => {
     // Found by DRIVING the built app, not by reading the diff. Refusing a keyless job
     // terminally is right — it is what stops the worker looping. But `failed` is
