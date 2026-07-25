@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
-import { loadSyllabus } from "@/lib/syllabus";
+import { loadSyllabus, ruleKeyToItemId } from "@/lib/syllabus";
 import { ensureRuleItem } from "@/lib/knowledge/items";
 import {
   buildRuleLesson,
@@ -199,6 +199,39 @@ describe("the guarantee rests on a measured number, not on hope", () => {
     expect(ruleDrills(oneDrill)).toHaveLength(1);
     expect(buildRuleLesson(oneDrill, "colto")).toBeNull();
     expect(ruleIsTeachable(oneDrill)).toBe(false);
+  });
+
+  it("SUBSTITUTES for a rule that cannot be taught, rather than walling", () => {
+    // Found by driving the built server, not by reading: the composer queued
+    // `alfabeto-suoni` at the learner's edge and the lesson route answered 404.
+    // 48 of the 266 rules illustrate themselves with word lists ("casa: c-a-s-a")
+    // and no fair gap drill can be cut from them.
+    const unteachable = RULES.filter((r) => !ruleIsTeachable(r));
+    expect(unteachable.length).toBeGreaterThan(0);
+
+    for (const rule of unteachable) {
+      const lesson = deterministicLessonFor(ruleKeyToItemId(rule.key), "colto");
+      // A lesson exists — that is the whole point.
+      expect(lesson, rule.key).not.toBeNull();
+      expect(lesson!.exercises.length).toBeGreaterThanOrEqual(MIN_DRILLS);
+      expect(lesson!.exercises.every(drillIsUsable)).toBe(true);
+      // It carries the SUBSTITUTE's id, so evidence lands on the rule actually
+      // taught. Writing it against the rule we could not teach would corrupt the
+      // knowledge model quietly, which is worse than the 404 it replaces.
+      expect(lesson!.itemId).not.toBe(ruleKeyToItemId(rule.key));
+      // And the substitute is at the same CEFR band whenever the band has one.
+      const substituteKey = lesson!.itemId.replace(/^rule:/, "");
+      const substitute = RULES.find((r) => r.key === substituteKey)!;
+      const bandHasOne = RULES.some((r) => r.cefr === rule.cefr && ruleIsTeachable(r));
+      if (bandHasOne) expect(substitute.cefr, rule.key).toBe(rule.cefr);
+    }
+  });
+
+  it("a TEACHABLE rule is never substituted — the composer's choice is honoured", () => {
+    for (const rule of RULES.filter(ruleIsTeachable).slice(0, 40)) {
+      const lesson = deterministicLessonFor(ruleKeyToItemId(rule.key), "colto")!;
+      expect(lesson.itemId).toBe(ruleKeyToItemId(rule.key));
+    }
   });
 
   it("returns null for an item that is not a syllabus rule, rather than inventing one", () => {
