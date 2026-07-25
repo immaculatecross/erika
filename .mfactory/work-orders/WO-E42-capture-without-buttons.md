@@ -295,3 +295,46 @@ The key was read directly from the operator's `.env.local` into a single process
 7. **The mtime hint depends on the browser reporting a real `File.lastModified`.** Where a copy tool has reset it, the value is simply the copy time — still no worse than the upload instant, but not the capture instant either.
 8. **`lib/knowledge/derive.ts`'s `distinctCorrectDays`** counts days from evidence mint time. Same invariant, D-19's `known` gate, E-45's surface — **left as a note for the dispatcher, not a diff.**
 9. **No live verification of a day-scale dump.** The walkthrough used takes of 9–11 seconds. The cascade/full-deep split at 30 minutes is unit-tested but was not driven with real long audio.
+
+---
+
+## Addendum — why local gates were green while CI's `gates` was red
+
+CI blocked on the Tripwires step: `BLOCKED [model-api-key] tests/capture-flow.test.ts` — a fixture value shaped like a real credential (an `sk-` prefix followed by a long token), which I had written to make `hasAnalysisKey()` true. The tripwire is correct to fire and was not weakened, suppressed or allow-listed.
+
+**The fix.** `hasAnalysisKey` is `(env[REQUIRED_KEY] ?? "").trim() !== ""` — it tests non-emptiness and nothing else. I verified rather than assumed that no code anywhere validates an `sk-` prefix (`grep -rn '"sk-\|sk-ant\|startsWith("sk' lib/ app/ components/ scripts/` returns only a doc comment in `lib/env-file.ts` about dotenv quoting, whose `sk-abc` is far short of the pattern's `{24,}`). The fixture is now `"a-key-is-configured"`, which is also simply better writing: nothing in the path wanted a key-shaped string.
+
+**The sweep, not the instance.** `.mfactory/hooks/run-tripwires.sh --all` → exit 0 across the whole tree, not just line 220.
+
+### The dispatcher's hypothesis was wrong, and the real cause is worse
+
+Hypothesis offered: the pre-commit hook tripwires only *staged* files while CI runs `--all`, so a file clean when staged is caught later wholesale. **Tested directly by re-introducing the offending line, staging it, and running each scope:**
+
+```
+--staged  → BLOCKED [model-api-key] tests/capture-flow.test.ts   exit=1
+--all     → BLOCKED [model-api-key] tests/capture-flow.test.ts   exit=1
+```
+
+Identical. `--staged` would have caught it at the moment I staged it. The scope difference is real but is **not** why this reached CI.
+
+**The actual cause: every commit on this branch was made with `git commit --no-verify`, so the pre-commit hook never ran once.** I used it reflexively to keep commits fast during a long build. That is my error, and it is worth encoding because it is silent: nothing in the four-gate ritual notices that the fifth gate was skipped.
+
+### Two real gaps this exposed, worth encoding beyond my mistake
+
+**1 · The named gates do not include the tripwires — there is no way to run them from `npm`.**
+`CLAUDE.md` and every work order name the gates as `lint · typecheck · test · build`. `grep -c tripwire package.json` → **0**. The only local path to the tripwires is the pre-commit hook, so a worker who diligently runs "the gates" and sees four greens has still not run the check that CI will fail on. A worker who additionally uses `--no-verify` — for any reason, including a legitimate one like committing a WIP mid-build — cannot discover a tripwire violation until CI.
+**Proposed fix (dispatcher's call, not mine to make):** add `"tripwires": ".mfactory/hooks/run-tripwires.sh --all"` to `package.json`, and name it in `CLAUDE.md`'s command list and in the work-order gate line, so "the gates" means the same five things locally and in CI.
+
+**2 · `core.hooksPath` in a git worktree resolves to the MAIN checkout, not the worktree.**
+I armed hooks per `CLAUDE.md` at session start. `git config core.hooksPath` reports
+`/Users/…/Erika/.mfactory/hooks` while the worktree is `/Users/…/.claude/worktrees/agent-a86fe147e01b1430f` — git stores the relative path in the shared config and resolves it against the main worktree's root. Harmless here (the two copies are identical), but a worker on a branch that *modifies* a hook would silently run the old one, and a worktree created before a `.mfactory/` re-sync would run stale discipline. Worth a line in HANDOVER.md's worktree section.
+
+Neither gap caused a defect in this PR — the tripwire caught the thing it exists to catch, at the last line of defence rather than the first. But "gates green locally" and "gates green in CI" are not currently the same statement, and that difference is the finding.
+
+**Postscript, and a fourth proof the gate works.** Committing this very addendum was
+BLOCKED by the same tripwire, because the paragraph above quoted the offending literal
+verbatim while explaining it. The gate is right: a document carrying a credential-shaped
+string is exactly as scannable as source carrying one, and "it is only an example" is the
+sentence every leaked key is wrapped in. The text is redacted to a description of the
+shape. This also confirms, from the other direction, that the pre-commit hook is armed
+and functioning in this worktree — it simply was never invoked, because I bypassed it.

@@ -217,7 +217,10 @@ describe("a missing key is a permanent condition, described as one (criterion 9)
       delete process.env[REQUIRED_KEY];
       expect(resumeKeylessRefusals(ws.db)).toEqual([]); // still no key: leave it alone
 
-      process.env[REQUIRED_KEY] = "sk-not-a-real-key-for-tests";
+      // Deliberately NOT key-shaped: `hasAnalysisKey` only asks whether the variable
+      // is non-empty, and the repo's `model-api-key` tripwire rightly refuses to let
+      // anything resembling a real credential into the tree, fake or not.
+      process.env[REQUIRED_KEY] = "a-key-is-configured";
       expect(resumeKeylessRefusals(ws.db)).toEqual([job.id]);
       const after = ws.db.prepare("SELECT state, error FROM analysis_jobs WHERE id=?").get(job.id) as {
         state: string;
