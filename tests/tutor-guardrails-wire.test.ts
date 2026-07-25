@@ -91,6 +91,21 @@ describe("every precision guardrail reaches the wire", () => {
     db.close();
   });
 
+  it("forbids narrating the tool call — found by driving the LIVE tutor", () => {
+    // Two live browser runs had Erika say her own bookkeeping out loud: "un momento,
+    // registro un dettaglio su ciò che hai detto" and "mi concentro su una correzione
+    // chiave e poi continuiamo". The learner heard the machinery instead of a
+    // conversation, and it cost a whole spoken sentence of latency. Nothing in the
+    // persona forbade it, and no test could have: the text was perfectly good text.
+    const db = freshDb();
+    const sent = wireInstructions(db);
+    expect(sent).toContain("Never mention or narrate your own tools");
+    expect(sent).toContain("never announce what you are about to do");
+    expect(sent).toContain("recording, noting or focusing");
+    expect(sent).toMatch(/log_evidence` is silent and invisible to the learner/);
+    db.close();
+  });
+
   it("does NOT re-implement the register dial as a TTS prosody instruction", () => {
     // Amendment 2: both voices the operator chose were the PLAIN samples, and D-23
     // governs WHAT the tutor says through the language model, where register has

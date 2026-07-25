@@ -53,6 +53,21 @@ describe("the minimum comes from Settings and is copied in at open", () => {
     db.close();
   });
 
+  it("uses the minimum stored at OPEN even when the setting changes MID-conversation", () => {
+    // The dangerous window the previous test does not cover: the setting moves while
+    // the learner is still talking. Reading it live at close would judge a conversation
+    // against a bar it never agreed to — in either direction.
+    const db = freshDb();
+    openConversation(db, "c", tutorMinimumSeconds(db)); // 300 s in force
+    writeSettings(db, { tutorMinMinutes: 1 }); // …now 60 s, mid-conversation
+    startedSecondsAgo(db, "c", 120);
+    const closed = closeConversation(db, "c", { clientSeconds: 120 });
+    expect(closed?.minSeconds).toBe(300);
+    expect(closed?.metMinimum).toBe(false); // judged against 300 s, not the new 60 s
+    expect(metMinimumOnDay(db, localDay())).toBe(false);
+    db.close();
+  });
+
   it("a later change to the setting never rewrites a conversation already recorded", () => {
     const db = freshDb();
     openConversation(db, "c1", tutorMinimumSeconds(db)); // 300 s

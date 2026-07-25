@@ -148,6 +148,39 @@ export function encodeWav(channels: Float32Array[], sampleRate: number): Blob {
 }
 
 /**
+ * Decode a recorded container to PCM and re-encode it as WAV — the ONE conversion
+ * every mic take passes through before upload.
+ *
+ * ⚠️ THIS IS NOT OPTIONAL AND ITS ABSENCE IS SILENT-ISH. A live MediaRecorder stream
+ * carries no container duration, so the server's ffprobe cannot read one and the
+ * finalize gate rejects the file with 422 `undecodable_audio`. The E-43 browser walk
+ * caught exactly that: the tutor page uploaded its raw WebM take, every conversation
+ * was refused at the door, and the milestone's "the conversation still becomes a
+ * session" criterion was quietly false — with the whole suite green, because no unit
+ * test uploads a real MediaRecorder blob. The Record tab had had this conversion since
+ * E-16b; the tutor never got it.
+ *
+ * It lives here, beside `encodeWav`, so both callers share one definition rather than
+ * one of them carrying a private copy — the "one rule, two dialects" failure that
+ * produced two defects in v0.6.
+ *
+ * Browser-only at CALL time (it needs an AudioContext); the module stays importable in
+ * Node because nothing here runs at import time.
+ */
+export async function toUploadableWav(recorded: Blob): Promise<Blob> {
+  const arrayBuffer = await recorded.arrayBuffer();
+  const ctx = new AudioContext();
+  try {
+    const audio = await ctx.decodeAudioData(arrayBuffer);
+    const channels: Float32Array[] = [];
+    for (let c = 0; c < audio.numberOfChannels; c++) channels.push(audio.getChannelData(c));
+    return encodeWav(channels, audio.sampleRate);
+  } finally {
+    void ctx.close().catch(() => {});
+  }
+}
+
+/**
  * A sensible default name for a mic take, e.g. "Recording 2026-07-17 at 18.30.wav"
  * (RETRO-001: the machine stamp "recording-2026-07-17T18-30-00" read like debris
  * in the sessions list). Local time, since it names the moment the user spoke;

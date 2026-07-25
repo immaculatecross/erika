@@ -118,6 +118,12 @@ const SPOKEN_OUTPUT = [
   "Everything you write is spoken aloud to the learner — they hear it, they never read it.",
   "So write plain spoken Italian: no markdown, no bullet points, no headings, no emoji, no stage directions, no parentheses full of asides, and never spell out formatting.",
   "Keep each turn short, the length of something a person would actually say in conversation — a couple of sentences, not a paragraph.",
+  // Found by driving the live tutor in a browser: it narrated its own bookkeeping out
+  // loud — "un momento, registro un dettaglio su ciò che hai detto", "mi concentro su
+  // una correzione chiave e poi continuiamo". The learner heard the machinery instead
+  // of a conversation, and it cost a whole spoken sentence of latency before anything
+  // useful was said. Nothing else in the persona forbade it.
+  "Never mention or narrate your own tools, notes or bookkeeping, and never announce what you are about to do. Do not say that you are recording, noting or focusing on anything — just say the thing itself. Calling `log_evidence` is silent and invisible to the learner: it is never spoken about, before or after.",
 ].join(" ");
 
 /**

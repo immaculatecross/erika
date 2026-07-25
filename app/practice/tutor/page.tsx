@@ -6,9 +6,10 @@ import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { DotsField } from "@/components/tutor/dots-field";
 import { ConversationProgress } from "@/components/tutor/conversation-progress";
-import { recordingFilename } from "@/lib/recording";
-import { SUPPORTED_FORMATS, type AudioFormat } from "@/lib/session-types";
+import { toUploadableWav } from "@/lib/recording";
 import { uploadAudio } from "@/lib/upload-audio";
+import { landConversationTake } from "@/lib/tutor/take";
+import { closingLine } from "@/lib/tutor/closing-line";
 import { TUTOR_OPENING } from "@/lib/tutor/persona";
 import { startFailureMessage } from "@/lib/tutor/failure-message";
 import { ReplyChunker } from "@/lib/tutor/reply-stream";
@@ -226,7 +227,6 @@ export default function TutorPage() {
     if (phase !== "live") return;
     setPhase("ending");
     const elapsedSeconds = (Date.now() - startedAt.current) / 1000;
-    const capturedAt = new Date(startedAt.current).toISOString();
     const id = tutorId.current;
 
     // Stop heart-beating BEFORE the wind-down's awaits (the take is assembled and
@@ -248,14 +248,17 @@ export default function TutorPage() {
     });
     recorder.current = null;
 
-    // Land the recording as a normal session (→ ingest → deep analysis). `capturedAt`
-    // is the instant the conversation began, which is also how the server links this
-    // recording to the conversation record (E-42's v28 column).
-    if (blob && blob.size > 0) {
-      const raw = (blob.type.split("/")[1] || "webm").split(";")[0];
-      const ext: AudioFormat = (SUPPORTED_FORMATS as readonly string[]).includes(raw) ? (raw as AudioFormat) : "webm";
-      await uploadAudio(recordingFilename(ext), blob, { capturedAt }).catch(() => {});
-    }
+    // Land the recording as a normal session (→ ingest → deep analysis), converted to
+    // WAV first so the server can probe its duration — a raw MediaRecorder container
+    // has none and is refused 422 (lib/tutor/take.ts). `capturedAt` is the instant the
+    // conversation began, which is also how the server links this recording to the
+    // conversation record (E-42's v28 column).
+    const landed = await landConversationTake({
+      blob,
+      capturedAt: new Date(startedAt.current),
+      toWav: toUploadableWav,
+      upload: uploadAudio,
+    });
 
     // Finalize the money lease and close the durable conversation record.
     if (id) {
@@ -268,11 +271,9 @@ export default function TutorPage() {
         .catch(() => null);
       // Factual, once, and silent when the minimum was not reached — leaving early
       // costs nothing and is told nothing (D-24).
-      setClosing(
-        closed?.metMinimum
-          ? "That conversation counts toward today. Erika is listening back to it now."
-          : "Erika is listening back to that conversation now.",
-      );
+      // Factual, once. What it says depends on what actually happened to the take —
+      // never a cheerful line over a recording that was refused.
+      setClosing(closingLine(closed?.metMinimum === true, landed));
     }
 
     cleanup();
