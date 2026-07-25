@@ -27,10 +27,15 @@ const TRAILERS = new Set(['"', "'", "»", "”", "’", ")", "]", "]"]);
 
 /**
  * Shortest chunk worth a request of its own. Below this the round-trip costs more
- * than it saves, and one-word chunks make the delivery choppy. A closing "Esatto!"
- * still gets spoken — it just rides on the turn's final flush.
+ * than it saves and one-word clips make the delivery choppy, so a short sentence
+ * waits and rides out with the next one (or with the turn's final flush).
+ *
+ * Sized to admit a real opening line — "Ciao, come stai oggi?" is 21 characters, and a
+ * threshold that rejected it would merge the tutor's first sentence into its second
+ * and give away most of the latency this whole module exists to win — while still
+ * refusing a bare "Sì."
  */
-export const MIN_SPEAKABLE_CHARS = 24;
+export const MIN_SPEAKABLE_CHARS = 16;
 
 /**
  * The next chunk of `text` that is ready to speak, given how much has already been
