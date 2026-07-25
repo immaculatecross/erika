@@ -4,16 +4,20 @@ import { useCallback, useEffect, useState } from "react";
 import type { ItemLesson } from "@/lib/lessons/item-lessons-view";
 import type { KnowledgeStatus } from "@/lib/knowledge/types";
 
-// Client hook driving the E-32 item-lesson runner against the item-lesson routes.
-// On mount it POSTs /api/lessons/item/generate — a cached lesson comes back with no
-// model call, a first open generates once, and a reached monthly cap answers 402
-// which we surface as a truthful `budget` phase, never a broken screen. `complete`
+// Client hook driving the lesson runner against the item-lesson routes. On mount it
+// POSTs /api/lessons/item/generate, which answers with `todaysLesson` — the cached
+// lesson, else a generated one, else the deterministic syllabus lesson. It cannot
+// come back empty, so the hook has no budget branch and no retry control. `complete`
 // posts one graded exercise's result (correct/incorrect) to the evidence bridge —
 // no model call — so finishing an exercise feeds the knowledge core.
 
+// [E-45] The `budget` phase is GONE. It rendered "Monthly budget reached" as a
+// terminal screen for a lesson the learner could always have had for free: the
+// syllabus lesson needs no key, no budget and no network (D-27). A refusal that has
+// a working alternative is not a refusal, it is a routing decision, and it belongs
+// on the server where the alternative lives — not on a wall (D-26).
 export type ItemLessonState =
   | { phase: "loading" }
-  | { phase: "budget" }
   | { phase: "error"; message: string }
   | { phase: "ready"; lesson: ItemLesson };
 
@@ -30,13 +34,12 @@ export function useItemLesson(itemId: string) {
         body: JSON.stringify({ itemId }),
       });
       if (!alive) return;
-      if (res.status === 402) {
-        setState({ phase: "budget" });
-        return;
-      }
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setState({ phase: "error", message: body.error ?? "This lesson could not be loaded." });
+        setState({
+          phase: "error",
+          message: body.error ?? "There is no lesson format for this item — it is practised elsewhere.",
+        });
         return;
       }
       const body = (await res.json()) as { lesson: ItemLesson };
