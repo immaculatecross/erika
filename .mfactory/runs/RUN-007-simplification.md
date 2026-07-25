@@ -107,3 +107,29 @@ Pass ledger — one line per dispatched unit: `WO-<slug>: first-pass | repaired 
 ### Lesson from this milestone
 
 - L: **"Gates green locally" is not "gates green in CI"** — the pre-commit hook tripwires *staged* files while CI runs `--all`, so a worker can believe itself clean and still turn CI red. → encoded as: the worker was asked to diagnose rather than accept the dispatcher's hypothesis; **OPEN** pending its stated cause in the exit report. Every subsequent WO in this run should require `run-tripwires.sh --all` before opening a PR.
+
+---
+
+## E-43 — merged 2026-07-25 (PR #74, `b48f9ce`)
+
+**Outcome: `repaired` twice — an operator-directed architecture reversal, then one repair cycle.** 39 files, +4,318/−330. Worker spend $0.68 across both passes; reviewers $0.168.
+
+**The arc matters more than the diff.** D-26 ruled the tutor should become STT → LLM → TTS. The operator's own correction (*"for listening… I think realtime might be good"*) caught a flaw before a line was written: a transcript would have made the tutor detect mistakes from text, which **D-3 forbids for exactly this reason**. `spike-6` then measured that claim rather than asserting it — `whisper-1` silently *corrected* the planted errors, `familia` → `famiglia` — and D-28 split the legs: listening stays native, only speaking changes. The operator then drove the built result, rejected its 4.5–5.0 s lag, and reverted the speaking leg too (Amendment 5). **The milestone ended roughly where it started architecturally, and that is not waste** — every step was decided by measurement, and the money and correctness defects found along the way were real and are fixed.
+
+**Three defects that only driving could find, all invisible to a green suite:**
+
+1. **The tutor's correction was never spoken.** `call_id` was extracted and **discarded**, so `function_call_output` never returned and the model stalled after a holding line — **5 of 9 labelled fixtures**, every one a turn that called `log_evidence`. The tutor went silent *precisely* when it had something to correct. The delta reviewer reproduced it on the live wire and confirmed the fix: *"Hai detto «ieri ho andato» — è «ieri sono andato»…"*
+2. **Every tutor conversation had been refused `422 undecodable_audio` for two versions.** The tutor uploaded a raw MediaRecorder container carrying no duration; the Record tab has re-encoded to WAV since E-16b and the tutor never got it. E-34's criterion 5 was quietly false since it shipped.
+3. **`response.output_audio.delta` never arrives over WebRTC**, so "Erika is speaking" never showed while she was.
+
+**Money.** The 1.9× stale-lease overbill is fixed at the invariant (an assumed-run lease is one unit, never partially resolved) and `isAssumedRunLeaseHash` is no longer dead. **The rate story is the run's best example of measurement outranking authority:** the money review prescribed `audioOutUsd` at 700 tok/min; the worker overrode it at 1200 on live `usage`; the delta reviewer then *independently* measured **exactly 20.000 tok/s on both tiers** and identified the earlier 9.93 as an **audio-input** figure — Realtime bills output at exactly double input, so **the prescription would have under-booked**. Verified across 17 durations × 2 tiers: worst 1.775× over, **never under**. The floor test was genuinely replaced (it goes red on the reviewer's own 700), not sign-flipped.
+
+**Measured latency:** 740 ms `speech_stopped` → first audio (worker: 541/936 ms), against 4.5–5.0 s for the TTS path. Cost: flagship $1.6188 booked / ~$0.83 real per 10 min; mini ~3.5× cheaper.
+
+**Deferred, recorded with owners:** two surviving mutations (`cachedInputRate` `max`→`min`; `FRESH_TEXT_TOKENS_PER_MINUTE` 600→1) → close sweep. The cost *shown* is the model, not the invoice, though the browser already receives the `usage` that would fix it → the cost-optimisation mission. `log_evidence` costs one extra billed response per logged turn → same mission. **A daily 10-min flagship conversation models 100.4% of the $50 cap** — raised to the operator, who ruled it not a concern for now.
+
+### Lessons
+
+- L: **An operator's product instinct can catch an architectural error no review would have.** D-26's transport ruling would have broken D-3; the operator's "realtime might be good for listening" caught it before code existed. → encoded as: D-28, and the practice of measuring a founding claim rather than citing it (`spike-6` re-proved D-3 empirically).
+- L: **A prescription from a review is not automatically right; measurement outranks it.** The money review's 700 tok/min would have under-booked. The worker overrode it *and said so explicitly*, and an independent reviewer confirmed the override. → encoded as: the standing instruction that a worker may contradict a criterion provided it says so and argues it (D-26 product-authority clause), now validated on a money path.
+- L: **`npm run lint` was a no-op in every nested worktree** — ESLint walked into the parent checkout, hit a duplicate `@next/next`, and aborted before linting a single file. Every worker in this run reported false-green or unverified lint. → encoded as: `"root": true` in `.eslintrc.json` (PR #78), reproduced and verified in both directions before landing.
