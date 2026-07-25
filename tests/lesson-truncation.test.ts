@@ -92,7 +92,7 @@ const completion = (text: string, finishReason: string): TextCompletion => ({
 });
 
 function seedItem(db: Db): string {
-  return ensureRuleItem(db, RULE.key, RULE.cefr);
+  return ensureRuleItem(db, RULE.key, { cefr: RULE.cefr });
 }
 
 function committedSpend(db: Db): number {

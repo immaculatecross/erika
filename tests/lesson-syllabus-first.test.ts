@@ -65,7 +65,7 @@ describe("an empty database still gets a complete lesson (D-27, the primary path
   it("todaysLesson answers with a real lesson, with no client at all", async () => {
     const db = emptyDb();
     const rule = pickTeachableRule()!;
-    const itemId = ensureRuleItem(db, rule.key, rule.cefr);
+    const itemId = ensureRuleItem(db, rule.key, { cefr: rule.cefr });
 
     const lesson = await todaysLesson(db, null, itemId);
 
@@ -81,7 +81,7 @@ describe("an empty database still gets a complete lesson (D-27, the primary path
   it("makes ZERO model calls even when a client is available but the lesson is cached-free", async () => {
     const db = emptyDb();
     const rule = pickTeachableRule()!;
-    const itemId = ensureRuleItem(db, rule.key, rule.cefr);
+    const itemId = ensureRuleItem(db, rule.key, { cefr: rule.cefr });
     // No client → no call is even possible; this pins the *contract* that the
     // deterministic path is reached without one, so a future refactor that starts
     // requiring a client goes red here.
@@ -94,7 +94,7 @@ describe("an empty database still gets a complete lesson (D-27, the primary path
   it("every drill on the keyless path is answerable by clicking, and the answer key works", async () => {
     const db = emptyDb();
     const rule = pickTeachableRule()!;
-    const lesson = (await todaysLesson(db, null, ensureRuleItem(db, rule.key, rule.cefr)))!;
+    const lesson = (await todaysLesson(db, null, ensureRuleItem(db, rule.key, { cefr: rule.cefr })))!;
 
     for (const drill of lesson.exercises) {
       // Ground truth from the drill's own options: the correct index grades true,
@@ -112,7 +112,7 @@ describe("an empty database still gets a complete lesson (D-27, the primary path
   it("offers both ways to answer — a lesson is never voice-only or click-only", async () => {
     const db = emptyDb();
     const rule = pickTeachableRule()!;
-    const lesson = (await todaysLesson(db, null, ensureRuleItem(db, rule.key, rule.cefr)))!;
+    const lesson = (await todaysLesson(db, null, ensureRuleItem(db, rule.key, { cefr: rule.cefr })))!;
     const invites = new Set(lesson.exercises.map((e) => e.invite));
     expect(invites.has("click")).toBe(true);
     if (lesson.exercises.length >= 2) expect(invites.has("speak")).toBe(true);
