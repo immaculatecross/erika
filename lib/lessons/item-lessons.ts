@@ -4,6 +4,7 @@ import { coerceRegister, type Register } from "../register";
 import { finalizeReservation } from "../analysis/budget";
 import { TEXT_MODEL, estimateTokens, textCallCost } from "../analysis/rates";
 import { parseItemId } from "../knowledge/items";
+import { collectSpeakerProfile } from "../analysis/profile";
 import { loadSyllabus, type SyllabusRule } from "../syllabus";
 import { TextModelParseError, TextModelTruncatedError, wasTruncated, type TextModelClient } from "./text-model";
 import { runBilledTextCall } from "./billing";
@@ -181,14 +182,18 @@ function ruleOf(itemId: string): SyllabusRule | null {
 export function itemLessonPrompt(db: Db, itemId: string, register: string): string {
   const { targetLanguage } = readSettings(db);
   const kind = itemLessonKind(itemId);
+  // The E-19 speaker profile is the D-27 overlay: the syllabus chooses the rule,
+  // the learner's own recorded patterns choose the angle. Absent (a fresh database)
+  // it simply is not in the prompt.
+  const profile = collectSpeakerProfile(db);
   if (kind === "grammar") {
     const rule = ruleOf(itemId);
     if (!rule) throw new Error(`No syllabus rule for ${itemId}.`);
-    return grammarPrompt(targetLanguage, register, rule);
+    return grammarPrompt(targetLanguage, register, rule, profile);
   }
   if (kind === "vocab") {
     const { lemma, pos } = parseItemId(itemId);
-    return vocabPrompt(targetLanguage, register, lemma ?? "", pos);
+    return vocabPrompt(targetLanguage, register, lemma ?? "", pos, profile);
   }
   throw new Error(`There is no lesson format for ${itemId}.`);
 }

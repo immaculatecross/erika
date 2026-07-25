@@ -1,4 +1,5 @@
 import { registerInstruction, coerceRegister } from "../register";
+import { profileBlock, type SpeakerProfile } from "../analysis/profile";
 import type { SyllabusRule } from "../syllabus";
 import type { Pos } from "../lexicon/pos";
 import { extractJsonObject, TextModelParseError } from "./text-model";
@@ -56,10 +57,20 @@ const EXERCISE_RULES = [
 ];
 
 /** Build the grammar-lesson prompt for a syllabus rule, colto-aware (D-23). */
-export function grammarLessonPrompt(targetLanguage: string, register: string, rule: SyllabusRule): string {
+export function grammarLessonPrompt(
+  targetLanguage: string,
+  register: string,
+  rule: SyllabusRule,
+  profile?: SpeakerProfile,
+): string {
   return [
     `You are an expert ${targetLanguage} coach writing one short grammar lesson for an advanced learner.`,
     registerLine(register),
+    // D-27's overlay, at its cheapest: the SYLLABUS decides what is taught, and the
+    // learner's own profile (E-19 — their L1 and their recurring mistakes) decides
+    // how it is angled. The backbone does not depend on it; a learner with no
+    // recordings simply has no profile block and gets the same rule.
+    ...(profile ? [profileBlock(profile)] : []),
     `Teach this rule (${rule.cefr}): "${rule.title}". ${rule.description}`,
     `Correct examples of the rule: ${rule.examples.join("; ")}.`,
     "",
@@ -76,10 +87,12 @@ export function vocabLessonPrompt(
   register: string,
   lemma: string,
   pos: Pos | null,
+  profile?: SpeakerProfile,
 ): string {
   return [
     `You are an expert ${targetLanguage} coach writing one short vocabulary lesson for an advanced learner.`,
     registerLine(register),
+    ...(profile ? [profileBlock(profile)] : []),
     `Teach the ${targetLanguage} ${posLabel(pos)} "${lemma}" together with a few closely related words.`,
     "",
     'Shape exactly: {"intro": string, "glossEn": string, "newWords": [{"lemma":string,"gloss":string,"example":string}], "exercises": [ ... ]}',
