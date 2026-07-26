@@ -1,7 +1,6 @@
 import type { Db } from "./db";
 import { INCLUDED_FINDING_SCOPE } from "./findings-model";
 import { retrievability, seedStability } from "./srs";
-import { materializeSlips, listSlips } from "./slips";
 import { nextLocalDay } from "./local-day";
 import { readSettings } from "./settings";
 import type { KnowledgeStatus } from "./knowledge";
@@ -16,10 +15,24 @@ import { MAX_DRILL_REFERENCE_CHARS } from "./pronunciation/types";
 // slips, unspent findings, and new items at the knowledge edge) and, in one
 // transaction, drains the spill queue and writes tomorrow's overflow back to it.
 //
-// PRIORITY ORDER (WO criterion 1): spill queue (yesterday's overflow) → FSRS-due
-// reviews (worst retrievability first) → active slips → unspent findings → new
-// items at the knowledge edge (10 vocab / 3 rules / 10 pronunciation by default,
-// settable). New items of different kinds are interleaved (round-robin) rather than
+// PRIORITY ORDER (E-31, amended by D-27 at E-44): spill queue (yesterday's overflow)
+// → FSRS-due reviews (worst retrievability first, and NOT negotiable — spaced
+// repetition comes first whatever else the day holds) → unspent findings → new items
+// at the knowledge edge (10 vocab / 3 rules / 10 pronunciation by default, settable).
+//
+// D-27 INVERTS what this ordering MEANS without changing its shape: the syllabus and
+// the lexicon are now the BACKBONE of the day, and the learner's own recordings are
+// the overlay woven into it. A day with no recordings, no findings and no slips still
+// produces a complete session — that is an acceptance criterion now, not a fallback.
+//
+// [E-44 criterion 9] THE `slip` PLAN ITEM IS GONE. It rendered nowhere: it fed a count
+// and consumed a `dailyMax` slot ahead of fresh material, and "a plan item that nothing
+// renders is a concept with no product". Removing it loses nothing, because a slip IS a
+// cluster of findings — its occurrences are already here as `finding` items, which mint
+// the cards the session's drills step serves, so the same mistake was being counted
+// twice against the day's capacity. Slips themselves are untouched everywhere they
+// actually live: the dossier in the Library, the map's resolved-slip semantics, and the
+// tutor persona's targets (which read `lib/slips.ts` directly, never this plan). New items of different kinds are interleaved (round-robin) rather than
 // blocked. A day has a total capacity (`dailyMax`); anything beyond it that is a
 // NEW ITEM spills to tomorrow (spill_queue holds knowledge items only — reviews,
 // slips and findings that don't fit are simply recomputed tomorrow, still due /
@@ -54,7 +67,7 @@ const DRILLABLE_CORRECTION_SQL =
   `AND length(trim(f.correction, ${SQL_WHITESPACE})) <= ${MAX_DRILL_REFERENCE_CHARS})`;
 
 export type NewKind = "vocab" | "rule" | "pronunciation";
-export type PlanItemKind = "review" | "slip" | "finding" | NewKind;
+export type PlanItemKind = "review" | "finding" | NewKind;
 
 /** The kinds a new item can be, in the fixed round-robin interleave order. */
 export const NEW_KINDS: readonly NewKind[] = ["vocab", "rule", "pronunciation"];
@@ -121,9 +134,6 @@ export interface ReviewCandidate {
   /** FSRS retrievability R(t,S) ∈ [0,1] — lower is more urgent. */
   retrievability: number;
 }
-export interface SlipCandidate {
-  slipId: string;
-}
 export interface FindingCandidate {
   findingId: string;
 }
@@ -143,8 +153,6 @@ export interface ComposeInput {
   spill: SpillCandidate[];
   /** Due reviews, already sorted worst-retrievability first. */
   reviews: ReviewCandidate[];
-  /** Active slips, in display order. */
-  slips: SlipCandidate[];
   /** Unspent findings, newest-first. */
   findings: FindingCandidate[];
   /** Fresh edge items per kind, already filtered (unseen, not attested, DAG-ok) and
@@ -162,7 +170,7 @@ export interface PlanItem {
   /** The knowledge item this row is evidence-bearing for (new items, linked
    *  reviews), else null. */
   itemId: string | null;
-  source: "spill" | "fresh" | "due" | "active" | "unspent";
+  source: "spill" | "fresh" | "due" | "unspent";
 }
 
 /** A knowledge item to (re)queue for a future day. */
@@ -226,7 +234,6 @@ export function composePlan(input: ComposeInput): ComposedPlan {
   const assembled: PlanItem[] = [
     ...spillNew.map((n): PlanItem => ({ kind: n.kind, ref: n.itemId, itemId: n.itemId, source: "spill" })),
     ...input.reviews.map((r): PlanItem => ({ kind: "review", ref: r.cardId, itemId: r.itemId, source: "due" })),
-    ...input.slips.map((s): PlanItem => ({ kind: "slip", ref: s.slipId, itemId: null, source: "active" })),
     ...input.findings.map((f): PlanItem => ({ kind: "finding", ref: f.findingId, itemId: null, source: "unspent" })),
     ...freshNew.map((n): PlanItem => ({ kind: n.kind, ref: n.itemId, itemId: n.itemId, source: "fresh" })),
   ];
@@ -241,7 +248,7 @@ export function composePlan(input: ComposeInput): ComposedPlan {
     .map((it) => ({ itemId: it.ref, plannedFor: input.nextDay }));
 
   const counts: Record<PlanItemKind, number> = {
-    review: 0, slip: 0, finding: 0, vocab: 0, rule: 0, pronunciation: 0,
+    review: 0, finding: 0, vocab: 0, rule: 0, pronunciation: 0,
   };
   for (const it of served) counts[it.kind] += 1;
 
@@ -367,14 +374,6 @@ function readUnspentFindings(db: Db): FindingCandidate[] {
   return rows.map((r) => ({ findingId: r.id }));
 }
 
-/** Active slips (materialize first, like every slip read route). */
-function readActiveSlips(db: Db): SlipCandidate[] {
-  materializeSlips(db);
-  return listSlips(db)
-    .filter((s) => s.standing.state === "active")
-    .map((s) => ({ slipId: s.id }));
-}
-
 const CEFR_ORDER: Record<string, number> = { A1: 0, A2: 1, B1: 2, B2: 3, C1: 4, C2: 5 };
 
 interface RuleItemRow { id: string; status: KnowledgeStatus; prereqs: string | null; cefr: string | null; }
@@ -469,7 +468,6 @@ export function compose(db: Db, day: string, caps: ComposeCaps = DEFAULT_CAPS): 
     nextDay,
     spill: eligibleSpill,
     reviews: readReviews(db),
-    slips: readActiveSlips(db),
     findings: readUnspentFindings(db),
     fresh,
     caps,

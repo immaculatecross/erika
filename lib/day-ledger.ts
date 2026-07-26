@@ -1,19 +1,19 @@
 import type { Db } from "./db";
-import { countDueCards } from "./cards";
 import { localDay } from "./local-day";
 
 // The local-day goal-completion ledger (E-31, D-24). Server-only DB glue over the
 // v19 `day_ledger` table: it records each local day the user met their daily goal,
 // idempotently, from day one — so when E-38 renders the streak it is retroactively
 // true. No model calls, no gamification here; this module only records the fact and
-// answers "was this day complete?" and "how far into today's goal are we?".
+// answers "was this day complete?".
 //
-// THE DAILY GOAL (E-31 scope). A day's goal is met when the day's actionable
-// review queue is CLEARED after doing real work: the user reviewed ≥1 card today
-// and no card is left due. This is the one closed loop that exists today; lessons
-// (E-32) and the tutor (E-34) extend the goal later, and their counts slot into the
-// same ledger row. Deliberately derived from durable card state, never a
-// client-trusted counter — a refresh cannot lose or forge a completion.
+// WHAT DECIDES THE GOAL LIVES ELSEWHERE NOW (E-44). Until E-44 this module also
+// computed the goal, and it counted flashcards alone — so a lesson and a whole
+// conversation contributed nothing to the day. `lib/session/day.ts` owns that
+// question now ("the day is complete when the session is", D-26); this file is the
+// ledger and nothing else, which is why it no longer imports the card model. Rows
+// already written are never revisited: they record what was true on the day they were
+// written, under the rule in force then.
 //
 // "Reviewed today" is recovered without a new column: a graded card's last review
 // instant is `due` minus its scheduled interval (gradeCard sets
@@ -52,23 +52,6 @@ export function cardsReviewedToday(db: Db, day: string, advancedOnly = false): n
     if (localDay(new Date(reviewMs)) === day) n += 1;
   }
   return n;
-}
-
-/** Today's goal progress: cards done, cards still due, the ring total, and whether
- *  the goal is met (some work done AND the queue cleared). */
-export interface DayGoal {
-  done: number;
-  dueRemaining: number;
-  /** Ring denominator — the work the day set out to do (done + still due). */
-  total: number;
-  met: boolean;
-}
-
-export function dayGoal(db: Db, day: string): DayGoal {
-  const done = cardsReviewedToday(db, day, true); // advanced (cleared) today only
-  const dueRemaining = countDueCards(db);
-  const total = done + dueRemaining;
-  return { done, dueRemaining, total, met: total > 0 && dueRemaining === 0 };
 }
 
 /** One ledger row (a completed day). */
@@ -126,21 +109,6 @@ export function recordDayComplete(
     )
     .run(day, figures.cardsDone, figures.lessonsDone ?? 0);
   return info.changes > 0;
-}
-
-/**
- * Meet-and-record in one step, the way the completion route calls it: recompute
- * the goal server-side (authoritative — never trust the client that the ring is
- * closed) and, if it is met, record the day with its real card count. Returns the
- * completion row when the day is (now or already) complete, else null.
- */
-export function completeDayIfMet(db: Db, day: string): DayCompletion | null {
-  const existing = getDayCompletion(db, day);
-  if (existing) return existing;
-  const goal = dayGoal(db, day);
-  if (!goal.met) return null;
-  recordDayComplete(db, day, { cardsDone: goal.done, lessonsDone: 0 });
-  return getDayCompletion(db, day);
 }
 
 /** How many days have been completed — the raw material for E-38's streak. */

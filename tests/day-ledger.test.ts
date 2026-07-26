@@ -15,13 +15,16 @@ import {
 } from "@/lib/local-day";
 import {
   cardsReviewedToday,
-  completeDayIfMet,
   completedDayCount,
-  dayGoal,
   getDayCompletion,
   isDayComplete,
   recordDayComplete,
 } from "@/lib/day-ledger";
+
+// E-44 moved the GOAL out of this module: what completes a day is now "the session is
+// finished" (lib/session/day.ts), not "the card queue is clear". Those cases live in
+// tests/session-day.test.ts. What stays here is the LEDGER itself — the durable record
+// a completed day leaves behind — plus the card-derived counts it is written from.
 
 // The local-day goal-completion ledger (E-31, D-24) and its local-day basis.
 
@@ -150,41 +153,6 @@ describe("cardsReviewedToday (derived, no new column)", () => {
   });
 });
 
-describe("dayGoal — met only when work was done AND the queue is clear", () => {
-  it("is not met with nothing to do", () => {
-    const db = freshDb();
-    expect(dayGoal(db, localDay()).met).toBe(false);
-  });
-
-  it("is not met while a card is still due", () => {
-    const db = freshDb();
-    const today = localDay();
-    // one reviewed-today card (due in the future) + one still due now.
-    seedCard(db, "done", { intervalDays: 2, due: "datetimeplaceholder", lastGrade: "good" });
-    // set the reviewed card's due to now+2d so its last review is ~today
-    db.prepare("UPDATE cards SET due = datetime('now','+2 days') WHERE id = 'done'").run();
-    seedCard(db, "due", { intervalDays: 0, due: "datetimeplaceholder", lastGrade: null });
-    db.prepare("UPDATE cards SET due = datetime('now') WHERE id = 'due'").run();
-
-    const g = dayGoal(db, today);
-    expect(g.done).toBeGreaterThanOrEqual(1);
-    expect(g.dueRemaining).toBeGreaterThanOrEqual(1);
-    expect(g.met).toBe(false);
-    expect(g.total).toBe(g.done + g.dueRemaining);
-  });
-
-  it("is met once the queue is clear and ≥1 card was reviewed today", () => {
-    const db = freshDb();
-    const today = localDay();
-    seedCard(db, "done", { intervalDays: 2, due: "datetimeplaceholder", lastGrade: "good" });
-    db.prepare("UPDATE cards SET due = datetime('now','+2 days') WHERE id = 'done'").run();
-    const g = dayGoal(db, today);
-    expect(g.done).toBe(1);
-    expect(g.dueRemaining).toBe(0);
-    expect(g.met).toBe(true);
-  });
-});
-
 describe("the ledger — idempotent, authoritative, one row per completed day", () => {
   it("records a completed day exactly once and never double-counts", () => {
     const db = freshDb();
@@ -197,25 +165,6 @@ describe("the ledger — idempotent, authoritative, one row per completed day", 
     const row = getDayCompletion(db, day)!;
     expect(row.cardsDone).toBe(9);
     expect(row.lessonsDone).toBe(1);
-    expect(completedDayCount(db)).toBe(1);
-  });
-
-  it("completeDayIfMet writes only when the goal is met, idempotently", () => {
-    const db = freshDb();
-    const today = localDay();
-    // Not met yet → no row.
-    expect(completeDayIfMet(db, today)).toBeNull();
-    expect(completedDayCount(db)).toBe(0);
-
-    // Meet the goal: one card reviewed today, none due.
-    seedCard(db, "done", { intervalDays: 2, due: "datetimeplaceholder", lastGrade: "good" });
-    db.prepare("UPDATE cards SET due = datetime('now','+2 days') WHERE id = 'done'").run();
-
-    const first = completeDayIfMet(db, today)!;
-    expect(first.cardsDone).toBe(1);
-    // A second call is a no-op returning the same (first-recorded) row.
-    const second = completeDayIfMet(db, today)!;
-    expect(second.completedAt).toBe(first.completedAt);
     expect(completedDayCount(db)).toBe(1);
   });
 });

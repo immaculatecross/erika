@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { completeDayIfMet } from "@/lib/day-ledger";
+import { completeDayIfMet, completionFigures } from "@/lib/session/day";
 import { localDay } from "@/lib/local-day";
 
 // Record today complete (E-31, D-24). A POST — recording a completed day is a
@@ -13,10 +13,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export function POST() {
-  const completion = completeDayIfMet(getDb(), localDay());
+  const db = getDb();
+  const completion = completeDayIfMet(db, localDay());
   if (!completion) return NextResponse.json({ complete: false });
-  return NextResponse.json({
-    complete: true,
-    completion: { cardsDone: completion.cardsDone, lessonsDone: completion.lessonsDone },
-  });
+  return NextResponse.json({ complete: true, completion: completionFigures(db, completion) });
 }

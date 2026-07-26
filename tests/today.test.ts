@@ -1,14 +1,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { buildToday } from "@/lib/today";
-import { completeDayIfMet } from "@/lib/day-ledger";
+import { openSession, markStepDone } from "@/lib/session/store";
+import { completeDayIfMet } from "@/lib/session/day";
 import { localDay } from "@/lib/local-day";
 
-// The Learn TODAY read-model (E-31): the composed plan reduced to the calm home
-// surface, and the once-per-day completion transition.
+// The Learn home read-model (E-31, rewritten at E-44). One screen, one action: the
+// ring, the one factual line, the streak, and a single control.
 
 const dirs: string[] = [];
 function freshDb(): Db {
@@ -20,51 +21,87 @@ afterEach(() => {
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
-/** A card reviewed today (due in the future) — no scaffolding beyond a session+finding. */
-function seedReviewedCard(db: Db): void {
+let keyBefore: string | undefined;
+beforeEach(() => {
+  keyBefore = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "sk-test-key";
+});
+afterEach(() => {
+  if (keyBefore === undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY = keyBefore;
+});
+
+/** Mark the learner placed (E-35): `placementStatus` is true once the evidence log
+ *  carries any `source:'placement'` row. Without it the one control is "Find your
+ *  level", which is its own test below. */
+function place(db: Db): void {
   db.prepare(
-    "INSERT INTO sessions (id, original_filename, format, size_bytes, duration_seconds) VALUES ('s1','t.wav','wav',1,60)",
-  ).run();
-  db.prepare(
-    `INSERT INTO findings (id, session_id, content_hash, quote, correction, category, explanation, severity, start_ms, end_ms)
-     VALUES ('f1','s1','h','q','c','grammar','why','low',0,1)`,
-  ).run();
-  db.prepare(
-    `INSERT INTO cards (id, finding_id, session_id, front, back, category, start_ms, ease, interval_days, repetitions, due, last_grade, suspended)
-     VALUES ('c1','f1','s1','fr','bk','grammar',0,2.5,2,1, datetime('now','+2 days'),'good',0)`,
+    "INSERT INTO evidence (id, item_id, source, source_ref, polarity, mode, weight) " +
+      "VALUES ('e1', 'rule:alfabeto-suoni', 'placement', 'placement:r1', 1, 'recognition', 0.3)",
   ).run();
 }
 
+/** E-43's v29 record of a conversation that met its minimum on `day`. */
+function creditConversation(db: Db, day: string): void {
+  db.prepare(
+    "INSERT INTO tutor_conversations (id, min_seconds, met_minimum, ended_at, local_day) " +
+      "VALUES ('t1', 600, 1, datetime('now'), ?)",
+  ).run(day);
+}
+
 describe("buildToday", () => {
-  it("surfaces the composer's new-item counts and a clear (empty) goal on a fresh DB", () => {
+  it("offers a real day on a fresh database — never an empty state (D-27)", () => {
     const db = freshDb();
-    const view = buildToday(db, "2026-07-24");
-    expect(view.newItems.vocab).toBe(10); // default cap, real seeded lexicon
-    expect(view.newItems.rules).toBeGreaterThan(0);
-    expect(view.newItems.rules).toBeLessThanOrEqual(3);
-    expect(view.goal).toEqual({ done: 0, total: 0 });
+    place(db);
+    const view = buildToday(db, "2026-07-25");
+
+    expect(view.steps.length).toBeGreaterThan(0);
+    expect(view.goal.total).toBe(view.steps.length);
+    expect(view.goal.done).toBe(0);
     expect(view.complete).toBe(false);
-    expect(view.dueCount).toBe(0);
+    expect(view.summary).toContain("A lesson on");
+    expect(view.action.kind).toBe("start");
     db.close();
   });
 
-  it("reflects the once-per-day completion once the ledger records it", () => {
+  it("switches the one control to Continue once the session is open", () => {
     const db = freshDb();
-    seedReviewedCard(db);
+    place(db);
     const day = localDay();
+    expect(buildToday(db, day).action.kind).toBe("start");
+    openSession(db, day);
+    expect(buildToday(db, day).action.kind).toBe("continue");
+    db.close();
+  });
 
-    // Goal met (one card done, none due) but not yet recorded → not complete.
-    const before = buildToday(db, day);
-    expect(before.goal.done).toBe(1);
-    expect(before.goal.total).toBe(1);
-    expect(before.dueCount).toBe(0);
-    expect(before.complete).toBe(false);
-
-    // Record it (what POST /api/day/complete does) → now complete with figures.
+  it("closes the ring, states the figures once, and offers no control at all", () => {
+    const db = freshDb();
+    place(db);
+    const day = localDay();
+    const session = openSession(db, day);
+    // The conversation step is verified against E-43's durable record, so the only way
+    // to close the ring is for a conversation to have genuinely met its minimum.
+    creditConversation(db, day);
+    for (const step of session.steps) markStepDone(db, day, step);
     completeDayIfMet(db, day);
-    const after = buildToday(db, day);
-    expect(after.complete).toBe(true);
-    expect(after.completion).toEqual({ cardsDone: 1, lessonsDone: 0 });
+
+    const view = buildToday(db, day);
+    expect(view.complete).toBe(true);
+    expect(view.goal.done).toBe(view.goal.total);
+    expect(view.completion).toEqual({ cardsDone: 0, lessonsDone: 1, conversation: true });
+    expect(view.action).toEqual({ kind: "none" });
+    db.close();
+  });
+
+  it("asks an unplaced learner for their level instead — still one control", () => {
+    const db = freshDb();
+    const view = buildToday(db, localDay());
+    expect(view.placed).toBe(false);
+    expect(view.action).toEqual({
+      kind: "place",
+      href: "/practice/placement",
+      label: "Find your level",
+    });
     db.close();
   });
 });

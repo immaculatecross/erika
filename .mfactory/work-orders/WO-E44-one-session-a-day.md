@@ -53,6 +53,169 @@ Append here and **write it before returning**. Include the criterion-by-criterio
 
 ---
 
+```
+RESULT: done
+PR:     feat/e44-one-session-a-day
+```
+
+### Criterion by criterion
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | One screen, one action | **met** — `components/learn-today.tsx` is pure and prop-driven; `tests/learn-today-render.test.tsx` counts interactive elements in the rendered markup: **1** before the session, **1** during, **0** once the day is done. Verified in a browser on four databases. |
+| 2 | A linear, resumable session | **met** — `/practice/session` runs lesson → drills → letter → conversation → done. The resume point is a durable fact (migration **v30** `daily_sessions`), never client state. |
+| 3 | No step ends at a wall | **met** — full enumeration below; five of six modes rendered in a browser. |
+| 4 | The day is complete when the session is | **met** — the cards-only goal and the `lessonsDone: 0` literal are gone. The conversation counts only when `tutor_conversations.met_minimum` says so. |
+| 5 | The letter earns its way into the flow | **met** — a step inside the session when unread, gone from the home. `POST /api/letter/viewed` and the unread marker are untouched. |
+| 6 | One Library entry | **met** — `/library` holds all eleven demoted surfaces; the whole section sub-nav is deleted. Every href resolves (asserted against `app/` on disk *and* driven in a browser: 12/12, zero broken). |
+| 7 | D-24 unchanged, re-proved | **met** — one ring, one factual sentence, streak repair disclosure intact, ban list asserted in the render test. |
+| 8 | Two standing lies go | **met** — `Said N×` now counts a completed playback (fires on `ended`), and playback failure is visible; the "they come back through the lines below" promise is removed. |
+| 9 | The composer keeps composing | **met** — `lib/compose.ts` still pure and model-call-free. `finding` items reach the learner as cards in the drills step; the `slip` plan item is **removed** (argued below). |
+| 10 | A recording-less day is a complete day | **met** — the primary path, driven first, on a database with **zero sessions, zero findings, zero cards**. |
+| 11 | The differentiator is still visible | **answered honestly below — and the honest answer is "barely, on day one"**. |
+
+### What this deletes
+
+- **The seven-section Learn home** → one card, one line, one control.
+- **Thirteen actionable rows** → zero. The review, tutor, lesson, new-items, sounds and letter rows, the map strip and five secondary links are gone; the render test asserts each `data-*` hook is absent.
+- **The entire section sub-navigation layer** (`sectionFor`, `isSectionActive`, `RECORD_SECTION`, `LEARN_SECTION`, `SectionNav`) — a whole navigation tier, replaced by one Library icon.
+- **Four to six destinations as primary routes** → one session route.
+- **The cards-only day goal** and **`recordDayComplete(..., { lessonsDone: 0 })`**.
+- **Every "unavailable right now" wall on this surface** — a step that cannot run is now absent with a stated reason, not a row that refuses.
+- **The `slip` plan item** in `lib/compose.ts`.
+- **The duplicated letter rendering** — `/letter` and the session step share `components/letter-body.tsx`.
+- **The "N sounds at your edge… they come back through the lines below" promise.**
+
+Net concept count is down. Added: the session and its four step kinds (one concept replacing thirteen rows), the Library entry, one migration.
+
+### Criterion 3 — the full failure-mode enumeration
+
+**The invariant, stated before the fix:** *every step either completes or offers a real way forward.* The structural answer is that **a step Erika cannot deliver is not in the session at all** — never a row that refuses, because a row that refuses is a wall with a coat of paint. `planSession` decides this server-side; the UI cannot invent a step.
+
+**The opposite failure — a step that claims success it did not achieve — is guarded separately, and it bit me during the build.** `verifyStep` for drills read `cardsReviewedToday >= plannedCards`, which is **trivially true when the session planned zero cards** — the recording-less day. Reading that as "done" auto-completed the drills step and, with only a lesson beside it, the whole **day**, the instant the learner pressed Start. `observeStep` (a fact in its own right → may complete a step) is now separated from `verifyStep` (a gate on a client claim → may only refuse).
+
+| Step | Failure mode | What the learner sees | Their way forward |
+|---|---|---|---|
+| Lesson | **No API key** | The rule's real lesson — E-26's authored title, description and correct examples — plus *"Erika writes exercises and speaks with you through the OpenAI API, and no API key is set on this machine. Settings says where to put one."* | A working `/settings` link. The lesson completes normally; the day is not blocked. **Verified in a browser.** |
+| Lesson | **Key rejected (401/403)** | Same lesson, plus *"The API key on this machine was refused by OpenAI. It may have been rotated or revoked."* | `/settings` **and** a retry. Deliberately distinct from "no key" — telling someone who configured a key that none is set sends them to check something already correct. |
+| Lesson | **Budget cap reached** | Same lesson, plus *"The monthly budget is spent. It frees up when the month rolls over, or raise the cap in Settings."* | A working `/settings` link. **Verified in a browser.** |
+| Lesson | **Transient model failure** | Same lesson, plus *"Erika could not reach the lesson model just now."* | A retry that **re-runs the call**. **Verified live** — a real `gpt-4.1-mini` reply failed to parse and this is exactly what rendered. |
+| Lesson | **Another tab is generating it** | *"Erika is still writing this lesson."* + retry. | Previously a `202` the client read as success before crashing on the missing body. |
+| Lesson | **Nothing left to teach** | The step is absent; the home says *"Nothing left to teach you today."* | Reviews still return on schedule; stated, not promised. |
+| Drills | **No cards and no exercises** | The step is **absent**; the home's sentence never mentions a drill. | Nothing to do, and nothing pretends otherwise. |
+| Drills | **Nothing due (cards exist elsewhere)** | *"No cards are due today. Cards come from your own recordings and return on their own schedule."* + Continue. | The session continues. |
+| Drills | **A grade fails to save** | *"That answer could not be saved just now — nothing was lost, and it can be sent again."* | A retry that **re-sends the same grade**. The old review screen swallowed this and advanced anyway, losing the review silently. |
+| Letter | **The letter cannot be read** | *"Your letter could not be read. It will be waiting next time — nothing is lost."* + Continue. | The session continues; completion is verified against the viewed marker, so a letter that failed to record as read leaves the step open rather than silently completing the day. |
+| Conversation | **This build cannot record one** (E-43's v29 absent) | The step is **absent**. | The tutor is still in the Library. A step whose completion could never be observed would be a control that does nothing. |
+| Conversation | **No key / cap reached** | The step is **absent**, reason recorded. | `/settings`. |
+| Conversation | **Denied microphone** | *"Your browser is blocking the microphone, so Erika cannot hear you. Allow microphone access for this site in your browser's address-bar permissions, then reload."* The "Start talking" link is **withheld** — it would lead to a page that cannot work. | The exact browser setting is named (the remedy is outside the app, so this is the one notice whose way forward is an instruction rather than a link), plus a re-check control. **Verified in a browser.** |
+| Conversation | **Fell short of the minimum** | The step stays open. No countdown, no warning, no guilt copy (D-24). | The same door. |
+| Any | **Worker not running** | **Nothing in the session depends on the worker.** The session makes no ingest or analysis call; the worker only affects whether *new* findings (and so new cards) arrive. | The drills step simply has exercises and no new cards. Stated rather than discovered. |
+| Home | **`/api/learn/today` fails** | *"Today's session could not be read just now."* + a retry. | The old page substituted a zeroed view, rendering an outage as the confident, false *"Nothing to practice right now."* |
+
+**The copy rules are enforced by tests, not by prose** (`tests/session-notices.test.ts`, 15 assertions): a *standing* condition may never contain "right now"/"just now" (only `model-transient` and `save-failed` may, and both are non-standing); any notice mentioning Settings must carry a `/settings` link that **resolves to a real page on disk**; a retry is offered only where retrying can change the outcome.
+
+### Criterion 11 — what is specific to this learner on a recording-less day
+
+Honestly: **less than the pitch implies, and on the very first day, almost nothing.**
+
+What genuinely personalises a recording-less day:
+
+- **Which syllabus rule they are shown.** The composer walks E-26's prerequisite DAG from the learner's own knowledge state. Observed live: day one taught `alfabeto-suoni`; after its exercises wrote cued evidence, the next session taught `accento-grafico`. That progression is theirs.
+- **Their placement level.** Placement seeds sub-level rules as `introduced`, and `TEACH_ELIGIBLE_PREREQ` consumes that, so a B1-placed learner is offered different rules from an A1 one.
+- **Their due reviews**, when cards exist from earlier recordings — FSRS-ordered, worst retrievability first.
+- **The tutor's targets**, drawn from that same plan.
+- The register dial — a setting, not learner-derived, so it barely counts.
+
+**But on day one, with no recordings and no placement, the session is generic**: rule #1 of the syllabus at A1, no cards, a conversation primed with an empty profile. Nothing distinguishes it from what any other new user would get. The differentiator does not switch on until the learner takes placement or records something. That is a real finding, and it is E-46's to close — precisely why "onboarding is mandatory on an empty database" is a v0.7 milestone.
+
+### Product calls
+
+1. **The lesson step always prefers a grammar rule.** A rule is the only item kind carrying real teachable content with **no model call at all** — E-26 authored a title, description and correct examples for all 266. The lexicon is frequency data with no glosses (D-19 keeps the CC BY-NC glossaries out of the shipped data path), so a lemma lesson cannot degrade to anything. Preferring the rule is what makes the lesson step structurally incapable of ending at a wall. Rejected: teaching whichever item the composer's interleave put first, which would leave the keyless lesson blank.
+2. **A step that cannot run is absent, not disabled.** Rejected: a disabled row with an explanation — that is thirteen "unavailable right now" rows with better copy, and the operator's complaint was concept count.
+3. **The conversation step is omitted where it cannot be credited.** Without E-43's v29 there is no way to observe whether a conversation happened; offering it would be a control that does nothing. **Consequence, stated plainly: until E-43 merges, the shipped session is lesson → drills → done.**
+4. **An unplaced learner's one control is "Find your level", not "Start today".** On a fresh install the three-minute check is the right first action, and making it *the* action keeps the screen at one control instead of adding a second row. E-46 turns this into a hard gate.
+5. **The `slip` plan item is removed** (criterion 9 explicitly permits removal). A slip is a *cluster of findings*; its occurrences are already `finding` items, which mint the cards the drills step serves — the same mistake was consuming two `dailyMax` slots and rendering nothing. Slips are untouched where they live: the dossier, the map's semantics, the tutor's targets.
+6. **Today's thread renders only alongside the completion sentence.** D-24 allows the completion moment to cite one positive production event; rendering it earlier would be a fifth element on a screen criterion 1 caps at four.
+7. **The knowledge map moved to `/focus`** rather than being left unrendered — a component with tests and no consumer is exactly the "concept with no product" criterion 9 condemns.
+8. **The plan is frozen at open.** Every input the planner reads moves while the learner works; a session recomputed on each read would grow and shrink under them, and the home's sentence would be a lie by the time they finished.
+
+### Mutation proofs
+
+Each mutation applied to the source, suite run, mutation reverted.
+
+1. **`reconcileSession` folds in merely-ungated steps** (`observeStep` → `verifyStep`): the drills step auto-completes on a recording-less day. → `tests/session-day.test.ts` *"counts steps, and is not met until every one is done"* fails with `expected 1 to be +0`; `tests/session-store.test.ts` *"returns to the first step not yet done"* fails with `expected null to be 'drills'`. **A live bug caught by the test, not a synthetic mutation.**
+2. **`completeDayIfMet` removed from `buildSessionView`**: `tests/session-day.test.ts` *"records it when the LAST step completes by observation"* fails — `getDayCompletion` is null. **Also a live bug, found by driving the built server.**
+3. **`lessonsDone: 0` restored** in `completeDayIfMet`: *"records real figures — the lessonsDone: 0 literal is gone"* fails (`expected 0 to be 1`).
+4. **Conversation verification made unconditional**: *"leaves the step open while the conversation fell short"* fails — a below-minimum conversation credits the day.
+5. **"right now" reinserted** into the `no-key` notice: *"no-key states a permanent condition permanently"* fails.
+6. **The `/settings` link removed** from the budget notice: *"a notice that MENTIONS Settings also LINKS to Settings"* fails.
+7. **A second link added** to `components/learn-today.tsx`: *"offers one control before the session is started"* fails (`expected 2 to be 1`).
+
+### Proof of which server answered
+
+Every walkthrough bound an **unusual port** (39447 / 39448 / 39449 / 39451, never 3000) and asserted, in **both directions**, that the responder was this build:
+
+- present: `data-primary-action`, `data-library-entry` — exist **only on this branch**;
+- absent: `data-today-cards`, `data-section-nav` — exist **only on master**.
+
+The script exits non-zero if any of the four fails. `.next/BUILD_ID` was read from disk and reported with each run: **`E5YkksjBmJWJfUv-EQM1h`** before the day-ledger fix, **`IN4BibBa9Aa_kke8TeyDY`** after the rebuild — the change of build id is itself proof the post-fix runs did not hit a stale server.
+
+Databases were disposable throughout (`ERIKA_DATA_DIR`/`ERIKA_DB_PATH` under the session scratchpad). `data/erika.db` was never opened.
+
+### What a mid-run learner experiences the day this ships
+
+Their streak is **untouched** — `lib/streak/` reads only `day_ledger.local_day`, no past row is recomputed, and every existing streak test passes unchanged.
+
+What changes is **today**. Yesterday, clearing the card queue completed the day. Today the home says *"A lesson on the congiuntivo, 12 cards, and a conversation"* and the ring counts **steps**, so clearing the cards alone leaves the ring at 1 of 3 and the day open. If they stop there, the day is missed. Their run is then protected by D-24's two silent monthly repairs if a credit is available; if not, the run simply ends — no prompt, no warning, no guilt copy, exactly as D-24 requires.
+
+That is the honest cost of the change, and it is the point: a day that counted a lesson and a ten-minute Italian conversation for nothing is what made everything feel optional.
+
+### Verification
+
+- **Gates**: `npx tsc --noEmit` clean · `npx vitest run` **1217 passed, 141 files** · `npm run build` exit 0 · `.mfactory/hooks/run-tripwires.sh --all` exit 0.
+- **Lint**: `npm run lint` is a **no-op inside a nested worktree** (Next resolves config against the parent checkout and lints nothing). Real signal via `npx eslint app lib components tests e2e scripts --ext .ts,.tsx`: **0 errors, 13 warnings, all pre-existing on master** (verified by diffing against `origin/master`). A bare `npx eslint .` additionally trips on the generated, gitignored `next-env.d.ts`, which is not in the CI lint set.
+- **Browser walkthroughs** on four disposable databases: cold/unplaced, keyless, cap-reached, and the full three-step session. Zero page errors and zero console errors in every run. All 12 Library destinations resolved.
+
+### Live spend
+
+**$0.0024** total — two `gpt-4.1-mini` item-lesson calls ($0.0013592 + $0.001082), against a $0.40 allowance. Both are committed rows in the disposable databases' `spend_ledger`. The key was read from `.env.local` at process start and never printed, logged or committed.
+
+### Findings handed on, not fixed here
+
+1. **E-45 — item-lesson generation truncates against a live model.** Driving the built server with a real key produced a call that **resolved, billed $0.00136, and failed to parse**: `ITEM_LESSON_MAX_OUTPUT_TOKENS = 1400` is not enough for the prompt's own 3–5-exercise contract on longer rules, so the reply is cut mid-JSON. The money spine behaved perfectly (billed-but-unreadable still ledgers; the claim is released so a retry can re-lease) and E-44's degradation absorbed it — but **a learner pays and gets no lesson**. First time this path has run against a live API. E-45 owns lesson generation.
+2. **E-46 — day-one personalisation.** See criterion 11.
+3. **`docs/schema.md` says "Latest version: v30"** while v29 is E-43's and absent here. The migration list is a set, not a range, and the runner sorts by version — but that doc line will conflict when E-43 merges. Trivial rebase resolution.
+
+### Tests changed or removed
+
+- `tests/day-ledger.test.ts` — the `dayGoal` block and the `completeDayIfMet` case were **moved**, not deleted: what completes a day is no longer this module's question. They live in `tests/session-day.test.ts`, expanded.
+- `tests/today.test.ts` — rewritten for the new `TodayView` (steps and one action, not rows and counts).
+- `tests/two-tab-shell.test.ts` — section-sub-nav assertions replaced by Library assertions, per the work order's instruction to extend E-30's route→tab and redirect test. The route→tab matrix and the redirect contract are **unchanged and still asserted**, with new routes added.
+- `tests/compose.test.ts` — the `slip` candidate removed from the fixture and the ordering assertion, plus a positive assertion that no plan item is a slip.
+
+No test was weakened to pass.
+
+### Risks
+
+- The conversation step is unexercised end to end until E-43 merges: its contract is proven against a hand-created v29 table (the exact DDL), and the browser walk stops at "Start talking". **Rebase onto merged E-43 before merge.**
+- `daily_sessions.steps` is JSON in a text column; a corrupt row degrades to "no steps" (tested) rather than throwing.
+- The lesson step's completion is self-reported. Reading an explanation leaves no durable trace, and demanding the exercises' evidence would make the keyless lesson uncompletable — a gate firing precisely when the learner did nothing wrong.
+
+### REBASE — 2026-07-26 · onto merged E-43 (closes the risk above)
+
+`git rebase origin/master` (8 commits, two conflicts, no merge commit). The collision was one file and one doc line, and **nothing behavioural**: each branch had deleted the other's line from `lib/migrations/index.ts`, so both `tutorConversationsMigration` (v29) and `dailySessionsMigration` (v30) are now registered, in that order. **No migration was renumbered** — that is the family of mistake that left v0.6 databases permanently unbootable, and the fix for a set of pending versions is never a renumber. `docs/schema.md` states v30 and keeps both table rows.
+
+The 14 test failures were **entirely scaffolding**. `tests/session-day.test.ts` and `tests/session-plan.test.ts` hand-created `tutor_conversations` because E-43 was unmerged; against the real v29 that DDL throws "table already exists". The helpers are gone. Two knock-ons followed from the table now EXISTING on every fresh database, which makes `conversation` a real step of every planned session: tests that finished a session by looping `markStepDone` over its steps could no longer finish it, because the conversation step is verified server-side and cannot be claimed. They now credit a real conversation first — which is the truthful way to complete a day, and a better test than the one it replaces. `tests/today.test.ts` correspondingly asserts `conversation: true`. The planner's "a build that cannot observe a conversation must not ask for one" test now DROPs the table, the only honest way left to simulate that build.
+
+One product edit, behaviour-identical: `lib/session/conversation-credit.ts` carried a copy of E-43's `metMinimumOnDay` SQL with a comment saying to delete it when E-43 landed — and E-43's own module says E-44 must read through it, never through raw SQL (the E-17 one-reader rule). It now delegates. The capability probe stays: whether this build can observe a conversation at all is not a question E-43 answers.
+
+**Browser walk of the conversation step**, on a disposable database (`ERIKA_DB_PATH`), dev server, migrations reaching v30 with v29 and v30 both applied. Session opens with four steps including `conversation`. A `POST /api/session/step {conversation}` with no record behind it is refused — `doneSteps` stays empty, and that refusal is not an error. After `closeConversation` writes a genuine 640 s conversation through E-43's own writer (`met_minimum = 1`, minimum 600 s), the step flips to done **with no client claim at all**, on reconciliation from the durable record: `complete: true`, and `day_ledger` gains today's row (`cards_done: 4, lessons_done: 1`). The Learn home read-model reports `completion: {cardsDone: 4, lessonsDone: 1, conversation: true}`, `action: none`, streak run 1. Caveat, stated plainly: no browser-automation tool was available in this worktree, so the walk was driven over HTTP against the running app rather than through a rendered page, and the conversation itself was closed through E-43's writer rather than a real spoken call (no key, no microphone) — the durable record is the contract, and it is that record that was exercised.
+
+Gates: `npx tsc --noEmit` clean · `npx vitest run` 149 files, 1332 passed, 3 skipped, 0 failed · `npm run build` clean · `.mfactory/hooks/run-tripwires.sh --all` clean · `npm run lint` clean (three pre-existing unused-import warnings in `lib/analysis/audio-model.ts`, inherited from master).
+
+---
+
 ## Standing clause — product authority (operator directive, 2026-07-25)
 
 Operator, on approving the v0.7 plan: *"aim for a really complete, usable, intuitive consumer product. Each one of those can have solutions — really make product calls, after thinking well and justifying them a little bit."*
