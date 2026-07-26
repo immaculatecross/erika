@@ -5,6 +5,7 @@ import { getCompletedNote } from "@/lib/ask/notes";
 import { askFinding, canAsk, estimateUsd, BudgetExceededError, NoCorpusToCiteError } from "@/lib/ask/engine";
 import { openAiTextModel, TextModelUnavailableError, TextModelParseError } from "@/lib/lessons/text-model";
 import type { AskNote } from "@/lib/ask/notes";
+import { classifyFailure, noticeFor } from "@/lib/session/notices";
 
 // The Ask Erika route (E-23, the v0.3 finale). GET is the read-only status the ask
 // control primes with: whether a note already exists (and, if so, the note plus its
@@ -63,17 +64,24 @@ export async function POST(_request: Request, { params }: Ctx) {
     // 201 only when THIS request generated the note; a cache hit / lost race is 200.
     return NextResponse.json(noteBody(db, finished), { status: generated ? 201 : 200 });
   } catch (err) {
-    if (err instanceof BudgetExceededError) {
-      return NextResponse.json(
-        { error: "Monthly budget reached — no note can be generated until it is raised or the month rolls over." },
-        { status: 402 },
-      );
-    }
     if (err instanceof NoCorpusToCiteError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
-    if (err instanceof TextModelUnavailableError) {
-      return NextResponse.json({ error: "Erika is unavailable right now." }, { status: 502 });
+    // [v0.7 close sweep] "Erika is unavailable right now." was the same lie as the
+    // voice controls': on a keyless machine the condition is permanent, and the cap
+    // named a remedy with no link. Both now come from the shared table.
+    const budgetExceeded = err instanceof BudgetExceededError;
+    if (budgetExceeded || err instanceof TextModelUnavailableError) {
+      const notice = classifyFailure({
+        budgetExceeded,
+        keyConfigured: Boolean(process.env.OPENAI_API_KEY),
+        message: (err as Error).message,
+        transient: "model-transient",
+      });
+      return NextResponse.json(
+        { error: noticeFor(notice).body, notice },
+        { status: budgetExceeded ? 402 : 502 },
+      );
     }
     if (err instanceof TextModelParseError) {
       return NextResponse.json({ error: "Erika's note could not be read — try again." }, { status: 502 });

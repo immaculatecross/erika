@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Play, Volume2, Loader2 } from "lucide-react";
 import { formatUsd } from "@/lib/format";
+import { NoticeLine } from "@/components/session/step-notice";
+import type { NoticeReason } from "@/lib/session/notices";
 
 // The Compare control (E-21): hear the correction, not just read it. It plays your
 // own clip — the segment audio at the finding's timestamp — then Erika's rendition
@@ -28,8 +30,7 @@ type Phase =
   | "generating" // POST in flight
   | "playing-you" // playing the user's own clip
   | "playing-native" // playing the rendition
-  | "budget" // monthly cap reached
-  | "error"; // model or fetch failure
+  | "blocked"; // it cannot play, and the notice says why (v0.7 close sweep)
 
 /** Play `src`; if a window is given, seek to `startSec` and stop at `endSec`. */
 function playClip(
@@ -75,6 +76,8 @@ function playClip(
 
 export function CompareControl({ findingId }: { findingId: string }) {
   const [phase, setPhase] = useState<Phase>("loading");
+  /** Why it cannot play, as the ROUTE classified it (v0.7 close sweep). */
+  const [notice, setNotice] = useState<NoticeReason | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -88,7 +91,11 @@ export function CompareControl({ findingId }: { findingId: string }) {
         setStatus(s);
         setPhase(s.exists ? "exists" : "missing");
       })
-      .catch(() => alive && setPhase("error"));
+      .catch(() => {
+        if (!alive) return;
+        setNotice("voice-transient");
+        setPhase("blocked");
+      });
     return () => {
       alive = false;
       audioRef.current?.pause();
@@ -116,18 +123,20 @@ export function CompareControl({ findingId }: { findingId: string }) {
     setPhase("generating");
     try {
       const res = await fetch(`/api/renditions/${findingId}`, { method: "POST" });
-      if (res.status === 402) {
-        setPhase("budget");
-        return;
-      }
       if (!res.ok) {
-        setPhase("error");
+        // [v0.7 close sweep] The route says WHICH condition; this control no longer
+        // guesses. It used to answer a missing key — permanent — with "The voice
+        // comparison is unavailable right now", and the cap with an unlinked "raise it".
+        const body = (await res.json().catch(() => null)) as { notice?: NoticeReason } | null;
+        setNotice(body?.notice ?? "voice-transient");
+        setPhase("blocked");
         return;
       }
       setStatus((s) => (s ? { ...s, exists: true } : s));
       await compare();
     } catch {
-      setPhase("error");
+      setNotice("voice-transient");
+      setPhase("blocked");
     }
   }, [findingId, compare]);
 
@@ -138,14 +147,8 @@ export function CompareControl({ findingId }: { findingId: string }) {
     <div data-compare data-compare-phase={phase} className="flex items-center gap-2" onClick={stop}>
       {phase === "loading" ? (
         <span className="text-[13px] text-secondary">Checking…</span>
-      ) : phase === "budget" ? (
-        <span data-compare-budget className="text-[13px] text-secondary">
-          Monthly budget reached — raise it or wait for the month to roll over.
-        </span>
-      ) : phase === "error" ? (
-        <span data-compare-error className="text-[13px] text-secondary">
-          The voice comparison is unavailable right now.
-        </span>
+      ) : phase === "blocked" && notice ? (
+        <NoticeLine reason={notice} testId="compare" onRetry={() => void generate()} />
       ) : phase === "missing" ? (
         <button
           type="button"
