@@ -502,3 +502,97 @@ speak` degrading with 200, 4 answerable card fronts.
 
 **Still unverified, unchanged:** a real accented human speaking into a browser
 microphone. The seam is proved live end to end with synthesised speech.
+
+---
+
+## Delta repair — rebase onto E-44, and the guard that was missing, 2026-07-26
+
+### The rebase
+
+Rebased onto `169debd`. Two conflicts, both resolved in favour of **E-44's
+structure carrying E-45's content**, as instructed:
+
+- **`lib/today.ts`** and **`app/practice/page.tsx`** — E-44 rewrote both into the
+  one-screen, one-action home and had already removed the `lesson` field my branch
+  was deleting. Took **E-44's version wholesale**; neither file now references the
+  pattern-lesson surface.
+
+Three consequences the rebase surfaced, all fixed:
+
+1. **`lib/nav.ts` still listed `/practice/lessons` in the Library** — a link to a
+   page this PR deletes. Removed, and `tests/two-tab-shell.test.ts`'s required-href
+   list updated with the reasoning: demote-never-delete holds for every surface that
+   still exists, and this one does not, so leaving it would be exactly the 404 wall
+   E-44's own criterion forbids.
+2. **Two E-44 fixtures used `quote: "q"`, `correction: "c"`** and so no longer minted
+   cards under E-45's shape rule (`tests/session-store.test.ts`,
+   `tests/today-thread.test.ts`). Made realistic rather than relaxing the rule (D-13)
+   — the same call I made for six suites earlier in this milestone.
+3. **B1 was alive in E-44's session step**, which is the surface the learner actually
+   uses. See below.
+
+### `components/session/drills-step.tsx` — a behavioural change, declared
+
+E-44's drills step carried its own placeholder exercise card, whose comment said in
+so many words that click-or-voice was *"E-45's to replace"*. It was multiple-choice
+only, revealed the answer for a typed cloze, and — the part that matters —
+**`resolveExercise` POSTed cued evidence the moment the drill resolved.** That is
+B1, unfixed, in the one surface the daily flow goes through: my repair lived in the
+standalone runner, which the session does not use.
+
+So the step now renders `DrillCard` and runs the shared sequence. I am flagging it
+because it is a behavioural change to another milestone's file rather than a
+mechanical merge — but leaving it would have meant shipping the exact defect the
+review blocked on, in the place it does the most harm.
+
+### The missing guard — D1 and D2 now die
+
+The reviewer is right and the claim in my commit subject was false:
+`lesson-runner-render.test.tsx` imports `DrillCard`, not the runner, so it could
+never have caught either defect. The code was correct; the guard did not exist.
+
+**Why not a component test.** Reaching the runner needs a DOM — `jsdom` plus a
+click-firing library — and this repo has neither (`vitest.config.ts` is
+`environment: "node"`; the render tests use `renderToStaticMarkup`, which cannot
+dispatch an event). Adding two dependencies to cover two state transitions is a large
+answer to a small question, and it would leave the transitions in a component, which
+is the shape that hid them in the first place.
+
+**What I did instead.** The sequence moved out of component state entirely into
+`lib/lessons/drill-progress.ts` — a pure reducer over the two things a learner does
+(resolve a drill, leave it) that **returns** the effect rather than performing it.
+Both surfaces — the standalone runner and E-44's session step — now dispatch to it
+and hold no rule of their own. So D1 and D2 can only be reintroduced by editing that
+file, where `tests/drill-progress.test.ts` (12 cases) sees them; and the two drill
+surfaces share one implementation instead of the two dialects that produced two
+defects in v0.6.
+
+The test drives the real learner sequence, including the wrong-transcript resolve
+that **precedes** every dispute — the step that used to zero the streak and is why
+B2 was unreachable.
+
+### Mutation proof — the reviewer's own two mutants, against the FULL suite
+
+```
+=== BASELINE (full suite)
+   Test Files  154 passed (154)   Tests  1429 passed | 3 skipped (1432)
+
+=== D1  REINTRODUCED: resolve writes evidence immediately (the original B1)
+   Test Files  1 failed | 153 passed (154)   Tests  5 failed | 1424 passed (1432)
+     FAIL  tests/drill-progress.test.ts
+
+=== D2  REINTRODUCED: the streak is reset by the resolve that precedes a dispute
+   Test Files  2 failed | 152 passed (154)   Tests  5 failed | 1427 passed (1432)
+     FAIL  tests/drill-progress.test.ts
+     FAIL  tests/drill-session.test.ts
+
+=== RESTORED
+   Test Files  154 passed (154)   Tests  1429 passed | 3 skipped (1432)
+```
+
+Both now die. Previously both survived all 1330.
+
+### Gates
+
+`tsc` ✓ · **1429 passed, 3 skipped, 154 files** ✓ · `npm run lint` **0 errors** ✓ ·
+`npm run build` ✓ · tripwires ✓ · built server driven on a disposable database.
