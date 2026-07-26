@@ -156,3 +156,50 @@ Pass ledger — one line per dispatched unit: `WO-<slug>: first-pass | repaired 
 **Live spend:** ≈ $2.16 of the operator's $5 ceiling. Largest single item: `spike-6` at $0.74, which proved keeping Realtime for listening was right and re-proved D-3 empirically.
 
 **Preview for the operator:** `/tmp/erika-preview` (local-only merge of E-43+E-44, throwaway DB at `/tmp/erika-preview-data`). Disposable — delete once #79 merges.
+
+---
+
+## E-44 — merged 2026-07-26 (PR #79, `169debd`) · first pass APPROVE
+
+47 files, +4,105/−766. **1332 tests.** Worker $0.0024, rebase worker, reviewer $0.0011.
+
+**The milestone v0.7 is judged on.** Learn is one screen — ring, streak, one control — and behind it a linear resumable session (lesson → drills → weekly letter → conversation → done) at `/practice/session`, with focus, phrasebook, archive, slips, readings, shadow, studio, pattern lessons, the card browser, the tutor and placement all behind one `/library` entry. Nothing deleted; 12/12 deep links verified resolving. The whole **section sub-navigation tier** is gone.
+
+**Its structural answer to "no step may end at a wall" is better than the work order asked for:** *a step Erika cannot deliver is not in the session at all* — never rendered as a row that refuses, because a row that refuses is a wall with a coat of paint. `planSession` decides server-side. The one step that cannot be dropped, the lesson, degrades to **E-26's syllabus content authored for all 266 rules** (title, description, correct examples, committed, verified `0 missing`), so it teaches with no key, no budget and no network. Copy rules are **enforced by tests**, not prose: a standing condition may never be softened to "right now"; a notice mentioning Settings must carry a link resolving to a page **on disk**; a retry is offered only where retrying can change the outcome.
+
+**Two defects found by driving, invisible to the suite:**
+1. **The drills step completed itself** — `cardsReviewedToday >= plannedCards` is trivially true at **zero** planned cards, i.e. exactly the recording-less day D-27 made primary. The whole day closed the instant the learner pressed Start.
+2. **The day was never recorded when the last step completed by observation** — the conversation is the only step with no POST. Session read `complete: true` while `day_ledger` stayed empty: no sentence, no ring, no streak day, for a learner who finished exactly as designed.
+
+Both generalised, not patched: `markStepDone` is the sole writer of `done_steps`, reachable only from `reconcileSession` (observation, may complete) and the step route (a claim, may only refuse). **The distinction is structural, not per-site.**
+
+**Criterion 11, answered honestly rather than hidden:** a learner on day one with no placement and no recordings gets a **generic** session — rule #1 at A1. The differentiator switches on only once they place or record. That admission produced the operator's ruling and **WO-E46 Amendment 1** (day one must be calibrated by the assessment).
+
+**Rebase onto merged E-43** (a separate pass): both v29 and v30 registered with nothing renumbered; a database **at v29 with live rows** proved to upgrade clean; `conversation-credit.ts` stopped carrying a copy of E-43's `metMinimumOnDay` SQL and now delegates (E-17, one reader for one fact). Because v29 then existed everywhere, `conversation` became a real server-verified step, so tests that used to finish a day by looping `markStepDone` no longer could — **they now credit a real conversation first, and no product behaviour was changed to make a test pass.**
+
+**Accepted limitations:** a keyless machine's day reduces to one self-reported lesson step; **the completion beat renders two sentences where DESIGN.md §D-24 says one** → close sweep.
+
+## E-45 — merged 2026-07-26 (PR #82, `26ad52b`) · repaired, then rebased
+
+64 files, +4,094/−2,861 — **nearly as much deleted as added**, which is D-26 working. **1429 tests** at merge.
+
+Deleted: the second lesson system, typed input, the billed rewrite-grading call, the `` `____ · ${category}` `` degradation and the duplicated category label. One lesson format, syllabus-first (D-27), sized by a stated content budget; drills accept **click or voice only**; a new STT biller enters the one ledger, reserving before calling.
+
+**The review found two BLOCKING defects in the voice path — the exact risk flagged at planning time.**
+
+1. **A mishearing wrote an unretractable negative.** STT returning a wrong transcript fired `onResolve("incorrect")` → cued evidence at `polarity: 0`. `evidence` carries `BEFORE UPDATE/DELETE RAISE(ABORT)` triggers, so **the row could never be removed** — a bad transcript of a *correct* answer permanently demoted a lemma the learner knows. The "That's not what I said" button rendered only **after** the write, and the on-screen copy said *"Nothing recorded either way."*
+2. **The third-consecutive-mishearing fallback was dead code** — the event that should have advanced the counter reset it.
+
+**The repair chose the right invariant and refused the easier one.** Offered "never write negative evidence from voice at all", the worker **declined**: that would make the microphone a strictly-positive channel, so identical performance would build a different knowledge model by input mode. Instead, ordering: resolving records nothing and only opens the dispute window; the write happens on leaving, by which time the transcript has been on screen and could have been rejected. The one case we cannot trust — the dispute — now writes nothing **in either direction**. All three lying copy strings made true.
+
+**Then the rebase found the defect was still live where it mattered most.** `components/session/drills-step.tsx` — the surface the **daily flow** actually uses — still POSTed evidence the instant a drill resolved. The approved fix had landed only in the standalone runner. Declared as a cross-milestone change rather than made quietly, and accepted: shipping a blocked defect on the primary surface is not a trade worth making.
+
+**And the owed guard came back better than demanded.** Mutation showed the repair's own new tests could not catch either defect — `lesson-runner-render.test.tsx` imports `DrillCard`, not the runner, so **D1 and D2 both survived all 1330 tests, and the commit subject claiming otherwise was false** (corrected in the merge record). Asked for a test reaching the runner, the worker declined to add jsdom *or* write another skirting test, arguing two dependencies covering two transitions would leave those transitions in a component — **the very shape that hid them**. It moved the sequence into `lib/lessons/drill-progress.ts`, a pure reducer that *returns* the effect rather than performing it; both drill surfaces dispatch to it and hold no rule of their own. D1 → 6 tests red, D2 → 5.
+
+**Recorded known limitation:** no real accented human has spoken into a microphone. The seam is proven end to end with synthesised speech only — the residual risk on the feature named riskiest at planning.
+
+### Lessons
+
+- L: **A fix verified on one surface is not a fix.** E-45's B1 repair passed a delta re-review while the defect stayed live on the daily flow's own drill component; only a rebase surfaced it. → encoded as: when a repair touches a behaviour with more than one caller, **enumerate the callers before declaring it closed** — the "fix invariants, not instances" rule extended from code paths to *surfaces*.
+- L: **An invariant held in React state is verified only by reading it.** Both E-45 defects and E-44's two lived there. The durable fix in each case was moving the rule into a pure module. → encoded as: `lib/lessons/drill-progress.ts` and `lib/session/` reducers; a standing preference for reducers that *return* effects over components that perform them.
+- L: **A worker refusing the dispatcher's suggested fix, with an argument, is the process working.** Twice here — the voice-negative question and the jsdom question — the worker's answer was better than the brief's. → encoded as: D-26's product-authority clause, now validated on a correctness path as well as a design one.
