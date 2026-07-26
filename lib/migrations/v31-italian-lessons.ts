@@ -17,6 +17,9 @@ export const italianLessonsMigration: Migration = {
       ALTER TABLE item_lessons
         ADD COLUMN content_version INTEGER NOT NULL DEFAULT 1;
 
+            ALTER TABLE item_lessons
+              ADD COLUMN claim_token TEXT;
+
       DELETE FROM item_lessons;
     `);
   },

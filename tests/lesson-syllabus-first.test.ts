@@ -145,6 +145,40 @@ describe("the guarantee rests on a measured number, not on hope", () => {
   // the product quietly shipping a rule that cannot make a drill.
   const teachable = RULES.filter(ruleIsTeachable);
 
+  it("pins reviewed authored grammar facts independently of the language detector", () => {
+    const byKey = new Map(RULES.map((rule) => [rule.key, rule]));
+    expect(byKey.get("congiuntivo-congiunzioni")?.description).toContain(
+      "nonostante richiedono il congiuntivo",
+    );
+    expect(byKey.get("congiuntivo-congiunzioni")?.description).not.toContain("richiedano");
+
+    const cause = byKey.get("connettivi-causa")!;
+    expect(cause.description).toContain("perché introduce di norma una causa posposta");
+    expect(cause.description).toContain("siccome e poiché introducono spesso una causa preposta");
+    expect(cause.examples).toEqual([
+      "Siccome pioveva, sono rimasto a casa.",
+      "Non è venuto perché era malato.",
+    ]);
+
+    expect(byKey.get("proverbi-formule-colte")?.description).toContain(
+      "Chi troppo vuole nulla stringe",
+    );
+    expect(byKey.get("proverbi-formule-colte")?.description).not.toContain("nulla string;");
+
+    // Same-class sweep: pin the two machine-literal connective explanations fixed
+    // alongside the review's named semantic/truncation defects.
+    expect(byKey.get("interrogativo-perche")?.description).toContain(
+      "Perché introduce sia domande sulla causa sia risposte causali",
+    );
+    expect(byKey.get("congiunzioni-base")?.description).toContain(
+      "o presenta un'alternativa, ma un contrasto, perché una causa",
+    );
+    expect(byKey.get("plurali-irregolari")?.description).toContain(
+      "Alcuni plurali sono irregolari",
+    );
+    expect(byKey.get("ellissi-stilistica")?.description).not.toContain("gapping");
+  });
+
   it("all 266 rules carry authored Italian teaching content and yield a complete lesson", () => {
     expect(RULES).toHaveLength(266);
     for (const rule of RULES) {

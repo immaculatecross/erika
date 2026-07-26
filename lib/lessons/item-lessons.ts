@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Db } from "../db";
 import { readSettings } from "../settings";
 import { coerceRegister, type Register } from "../register";
@@ -28,33 +29,10 @@ import {
   type NewItemLesson,
 } from "./item-lessons-view";
 
-// Lesson generation for ONE composer-chosen knowledge item, cached per item and
-// paid for through the shared money spine (reserve-before-call, finalize to actual,
-// a parse failure still ledgers the resolved call — lib/lessons/billing.ts). The
-// prompts and the parser live in ./lesson-parse; this module is the money, the
-// lease, and the guarantee.
-//
-// ── THE GUARANTEE (E-45) ─────────────────────────────────────────────────────
-//
-//   A billed generation either produces a usable lesson, or it is not presented
-//   as one — and either way the learner gets a lesson.
-//
-// It did not hold. A live probe found a call that resolved, was billed, and left
-// the learner with "the lesson model returned an unreadable response": the reply
-// had been CUT OFF at the token ceiling, so it was half a JSON object. Three
-// things were wrong at once and all three are fixed here:
-//
-//   1. the ceiling was a picked number, not one derived from what the prompt asks
-//      for — it is now `lessonOutputTokenCeiling()`, computed from the content
-//      budget and checked against live measurement;
-//   2. truncation was invisible, because the client discarded `finish_reason` — it
-//      now raises `TextModelTruncatedError`, which is a different fact from "that
-//      was unreadable" and, unlike it, is something a model can act on;
-//   3. there was no repair. There is now ONE bounded retry (E-16's pattern) that
-//      asks for the minimum lesson with more room, and if that also fails the
-//      caller falls back to the deterministic syllabus lesson.
-//
-// `todaysLesson` is the seam every caller should use: it cannot fail.
+// One composer-chosen item, cached behind an ownership-safe lease and billed through
+// the shared reserve/finalize money spine. Resolved malformed or truncated calls are
+// charged truthfully, repaired once, then completed with authored Italian so the
+// learner always receives a lesson.
 
 // Re-exported so existing importers of this module keep one import site.
 export { grammarLessonPrompt, vocabLessonPrompt, parseItemLessonResponse, posLabel } from "./lesson-parse";
@@ -75,6 +53,7 @@ interface ItemLessonRow {
   register: string;
   body: string;
   content_version: number;
+  claim_token: string | null;
   created_at: string;
 }
 
@@ -120,19 +99,13 @@ export function getItemLesson(db: Db, itemId: string): ItemLesson | null {
   };
 }
 
-/**
- * Claim the `item_id` row idempotently — the item-lesson lease ([T1], mirroring
- * `claimNote`). Inserts a BARE claim (empty `body`) and returns whether THIS call
- * inserted it: `true` = we won (proceed to the one budgeted call), `false` = a
- * concurrent generate claimed it first, so make NO model call and bill nothing.
- * `ON CONFLICT(item_id) DO NOTHING` on the PK makes the claim exclusive, and
- * better-sqlite3 runs statements serially, so at most one call and one ledger row
- * ever result. The engine claims BEFORE it spends.
- */
+/** Claim an empty cache row before spend. The winner receives its ownership token;
+ * `null` means another worker owns the item and this caller must not call the model. */
 export function claimItemLesson(
   db: Db,
   entry: { itemId: string; kind: ItemLessonKind; register: string },
-): boolean {
+): string | null {
+  const claimToken = randomUUID();
   return db.transaction(() => {
     // Defence in depth after v31: an obsolete row manually restored from backup
     // cannot block a v2 claim or be mistaken for an in-flight preparation.
@@ -140,20 +113,21 @@ export function claimItemLesson(
       .run(entry.itemId, ITEM_LESSON_CONTENT_VERSION);
     const info = db
       .prepare(
-        "INSERT INTO item_lessons (item_id, kind, register, body, content_version) VALUES (?, ?, ?, '', ?) ON CONFLICT(item_id) DO NOTHING",
+        "INSERT INTO item_lessons (item_id, kind, register, body, content_version, claim_token) VALUES (?, ?, ?, '', ?, ?) ON CONFLICT(item_id) DO NOTHING",
       )
-      .run(entry.itemId, entry.kind, entry.register, ITEM_LESSON_CONTENT_VERSION);
-    return info.changes > 0;
+      .run(entry.itemId, entry.kind, entry.register, ITEM_LESSON_CONTENT_VERSION, claimToken);
+    return info.changes > 0 ? claimToken : null;
   })();
 }
 
-/**
- * Complete a won claim: write the generated lesson body. Called only by the request
- * that won the claim, only after a successful call, inside the same transaction
- * that finalizes the spend — so a lesson is never stored without its charge nor
- * charged without being stored.
- */
-export function completeItemLesson(db: Db, lesson: NewItemLesson, cacheKey: string = lesson.itemId): ItemLesson {
+/** Fill only the empty row owned by this token; a stale worker cannot overwrite
+ * its successor, while resolved generation spend is still finalized truthfully. */
+export function completeItemLesson(
+  db: Db,
+  lesson: NewItemLesson,
+  claimToken: string,
+  cacheKey: string = lesson.itemId,
+): ItemLesson | null {
   assertItalianLesson(lesson);
   const body: StoredBody = {
     itemId: lesson.itemId,
@@ -164,23 +138,27 @@ export function completeItemLesson(db: Db, lesson: NewItemLesson, cacheKey: stri
     newWords: lesson.newWords,
     deterministic: lesson.deterministic,
   };
-  db.prepare("UPDATE item_lessons SET kind = ?, register = ?, body = ? WHERE item_id = ? AND content_version = ?").run(
-    lesson.kind,
-    lesson.register,
-    JSON.stringify(body),
-    cacheKey,
-    ITEM_LESSON_CONTENT_VERSION,
-  );
+  const updated = db
+    .prepare(
+      "UPDATE item_lessons SET kind = ?, register = ?, body = ? " +
+        "WHERE item_id = ? AND content_version = ? AND body = '' AND claim_token = ?",
+    )
+    .run(
+      lesson.kind,
+      lesson.register,
+      JSON.stringify(body),
+      cacheKey,
+      ITEM_LESSON_CONTENT_VERSION,
+      claimToken,
+    );
+  if (updated.changes === 0) return null;
   return getItemLesson(db, cacheKey)!;
 }
 
-/**
- * Release a claim: delete the bare `item_id` row. Called only on the engine's OWN
- * uncommitted claim when generation does not complete, so a legitimate retry can
- * re-lease. Only ever deletes an EMPTY claim, so a completed lesson is safe.
- */
-export function releaseItemLesson(db: Db, itemId: string): void {
-  db.prepare("DELETE FROM item_lessons WHERE item_id = ? AND body = ''").run(itemId);
+/** Release only this worker's empty claim; completed and successor rows are safe. */
+export function releaseItemLesson(db: Db, itemId: string, claimToken: string): void {
+  db.prepare("DELETE FROM item_lessons WHERE item_id = ? AND body = '' AND claim_token = ?")
+    .run(itemId, claimToken);
 }
 
 // ── generation (money-capped, cached) ─────────────────────────────────────────
@@ -319,8 +297,8 @@ export async function prepareItemLesson(
   const kind = itemLessonKind(itemId);
   if (!kind) throw new Error(`There is no lesson format for ${itemId}.`);
   const register = lessonRegister(db);
-  const won = claimItemLesson(db, { itemId, kind, register });
-  if (!won) {
+  const claimToken = claimItemLesson(db, { itemId, kind, register });
+  if (!claimToken) {
     const resolved = getItemLesson(db, itemId);
     return resolved
       ? { state: "ready", lesson: resolved, cached: true }
@@ -329,7 +307,11 @@ export async function prepareItemLesson(
 
   const authored = authoredLessonFor(db, itemId, register);
   if (!client) {
-    return { state: "ready", lesson: completeItemLesson(db, authored, itemId), cached: false };
+    const completed = completeItemLesson(db, authored, claimToken, itemId);
+    const current = completed ?? getItemLesson(db, itemId);
+    return current
+      ? { state: "ready", lesson: current, cached: completed === null }
+      : { state: "preparing", lesson: null, cached: true };
   }
 
   try {
@@ -337,6 +319,7 @@ export async function prepareItemLesson(
       itemId,
       kind,
       register,
+      claimToken,
       basePrompt: itemLessonPrompt(db, itemId, register),
       fallback: fallbackDrillsFor(itemId),
     });
@@ -346,7 +329,11 @@ export async function prepareItemLesson(
     // invalid JSON, or failed the Italian gate. The claim is deliberately NOT
     // released: filling it with authored content makes the failure final and free
     // on every later home read/open.
-    return { state: "ready", lesson: completeItemLesson(db, authored, itemId), cached: false };
+    const completed = completeItemLesson(db, authored, claimToken, itemId);
+    const current = completed ?? getItemLesson(db, itemId);
+    return current
+      ? { state: "ready", lesson: current, cached: completed === null }
+      : { state: "preparing", lesson: null, cached: true };
   }
 }
 
@@ -376,20 +363,21 @@ export async function generateItemLesson(
   if (!kind) throw new Error(`There is no lesson format for ${itemId}.`);
   const register = lessonRegister(db);
 
-  const won = claimItemLesson(db, { itemId, kind, register });
-  if (!won) return { lesson: getItemLesson(db, itemId), cached: true };
+  const claimToken = claimItemLesson(db, { itemId, kind, register });
+  if (!claimToken) return { lesson: getItemLesson(db, itemId), cached: true };
 
   try {
     const lesson = await callWithBrevityRepair(db, client, {
       itemId,
       kind,
       register,
+      claimToken,
       basePrompt: itemLessonPrompt(db, itemId, register),
       fallback: fallbackDrillsFor(itemId),
     });
     return { lesson, cached: false };
   } catch (err) {
-    releaseItemLesson(db, itemId);
+    releaseItemLesson(db, itemId, claimToken);
     throw err;
   }
 }
@@ -414,6 +402,7 @@ async function callWithBrevityRepair(
     itemId: string;
     kind: ItemLessonKind;
     register: string;
+    claimToken: string;
     basePrompt: string;
     fallback: readonly ItemExercise[];
   },
@@ -467,10 +456,14 @@ async function callWithBrevityRepair(
       throw err;
     }
 
-    return db.transaction(() => {
+    const completed = db.transaction(() => {
       finalizeReservation(db, reservation, costUsd);
-      return completeItemLesson(db, parsed);
+      return completeItemLesson(db, parsed, input.claimToken, input.itemId);
     })();
+    if (completed) return completed;
+    const current = getItemLesson(db, input.itemId);
+    if (current) return current;
+    throw new TextModelParseError("The lesson claim was no longer owned by this request.");
   }
   throw firstFailure ?? new TextModelParseError("The lesson could not be generated.");
 }

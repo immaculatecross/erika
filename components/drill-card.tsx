@@ -78,7 +78,7 @@ function Cue({ exercise }: { exercise: ItemExercise }) {
   return (
     <div className="flex flex-col gap-1.5">
       {exercise.definition ? (
-        <p data-definition className="text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">
+        <p data-definition className="text-[15px] leading-[1.47] text-secondary">
           {exercise.definition}
         </p>
       ) : null}

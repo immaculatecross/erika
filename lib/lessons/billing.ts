@@ -8,7 +8,7 @@ import {
   type SpendReservation,
 } from "../analysis/budget";
 import { TEXT_MODEL, estimateTokens, textCallCost } from "../analysis/rates";
-import type { TextCompletion, TextModelClient } from "./text-model";
+import { TextModelTimeoutError, type TextCompletion, type TextModelClient } from "./text-model";
 
 // The money-safety seam shared by lesson generation and rewrite grading (E-6,
 // D-10). Text calls reuse E-4's budget spine — now via reserve-before-call (E-28
@@ -38,6 +38,10 @@ export interface BilledCall {
   reservation: SpendReservation;
 }
 
+/** Well below the 15-minute item-lesson stale-claim threshold. A live provider
+ * request is therefore aborted and its claim settled before any sweep can reclaim it. */
+export const TEXT_MODEL_REQUEST_TIMEOUT_MS = 2 * 60 * 1000;
+
 /**
  * Run one billable text call under the shared monthly cap via reserve-before-call.
  * Reserves an upper-bound cost (prompt length + the full output allowance) as a
@@ -56,11 +60,23 @@ export async function runBilledTextCall(
   const reservation = reserveSpend(db, { model: TEXT_MODEL, contentHash: input.contentHash, costUsd: estCost }, monthlyBudgetUsd);
   if (!reservation) throw new BudgetExceededError();
   let completion: TextCompletion;
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
-    completion = await client.complete(input);
+    completion = await Promise.race([
+      client.complete({ ...input, signal: controller.signal }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new TextModelTimeoutError(`Text model request exceeded ${TEXT_MODEL_REQUEST_TIMEOUT_MS}ms.`));
+        }, TEXT_MODEL_REQUEST_TIMEOUT_MS);
+      }),
+    ]);
   } catch (err) {
     releaseReservation(db, reservation); // no completion, no charge
     throw err;
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
   const costUsd = textCallCost(TEXT_MODEL, completion.promptTokens, completion.completionTokens);
   return { completion, costUsd, reservation };

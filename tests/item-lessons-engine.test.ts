@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { writeSettings } from "@/lib/settings";
 import { monthToDateSpend, recordSpend } from "@/lib/analysis/budget";
@@ -10,11 +10,12 @@ import { ensureLemmaItem, ensureRuleItem } from "@/lib/knowledge/items";
 import {
   generateItemLesson,
   getItemLesson,
+  ITEM_LESSON_CLAIM_STALE_SECONDS,
   lessonPreparationState,
   prepareItemLesson,
   sweepStaleItemLessonClaims,
 } from "@/lib/lessons/item-lessons";
-import { BudgetExceededError } from "@/lib/lessons/billing";
+import { BudgetExceededError, TEXT_MODEL_REQUEST_TIMEOUT_MS } from "@/lib/lessons/billing";
 import { TextModelParseError, type TextModelClient } from "@/lib/lessons/text-model";
 import { loadSyllabus } from "@/lib/syllabus";
 
@@ -63,6 +64,7 @@ function freshDb(): Db {
   return db;
 }
 afterEach(() => {
+  vi.useRealTimers();
   delete process.env.ERIKA_DATA_DIR;
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
@@ -215,6 +217,36 @@ describe("one-lesson-ahead preparation resolves once and never strands a claim",
     expect(lessonPreparationState(db, RULE_ITEM)).toBe("ready");
     expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger WHERE state = 'committed'").get() as { n: number }).n).toBe(1);
     expect((db.prepare("SELECT body FROM item_lessons WHERE item_id = ?").get(RULE_ITEM) as { body: string }).body.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("times out a held first call before its claim can go stale, so a second preparation never bills", async () => {
+    vi.useFakeTimers();
+    const db = freshDb();
+    let calls = 0;
+    const client: TextModelClient = {
+      complete({ signal }) {
+        calls++;
+        return new Promise((_, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        });
+      },
+    };
+
+    const first = prepareItemLesson(db, client, RULE_ITEM);
+    await vi.advanceTimersByTimeAsync(ITEM_LESSON_CLAIM_STALE_SECONDS * 1000);
+    const resolved = await first;
+
+    expect(resolved.state).toBe("ready");
+    expect(resolved.lesson?.deterministic).toBe(true);
+    expect(TEXT_MODEL_REQUEST_TIMEOUT_MS).toBeLessThan(ITEM_LESSON_CLAIM_STALE_SECONDS * 1000);
+    expect(sweepStaleItemLessonClaims(db)).toBe(0);
+
+    const second = await prepareItemLesson(db, client, RULE_ITEM);
+    expect(second.state).toBe("ready");
+    expect(calls).toBe(1);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM item_lessons WHERE body <> ''").get() as { n: number }).n).toBe(1);
     db.close();
   });
 

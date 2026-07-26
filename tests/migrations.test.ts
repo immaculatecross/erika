@@ -161,7 +161,7 @@ describe("migrations runner", () => {
     const db = openDatabase(tmpDbPath());
     const cols = db.prepare("PRAGMA table_info(item_lessons)").all() as { name: string; pk: number }[];
     expect(cols.map((c) => c.name)).toEqual(
-      expect.arrayContaining(["item_id", "kind", "register", "body", "content_version", "created_at"]),
+      expect.arrayContaining(["item_id", "kind", "register", "body", "content_version", "claim_token", "created_at"]),
     );
     expect(cols.find((c) => c.name === "item_id")?.pk).toBe(1);
     db.close();
@@ -189,6 +189,10 @@ describe("migrations runner", () => {
     const column = (db.prepare("PRAGMA table_info(item_lessons)").all() as { name: string; dflt_value: string }[])
       .find((entry) => entry.name === "content_version");
     expect(column?.dflt_value).toBe("1");
+    expect(
+      (db.prepare("PRAGMA table_info(item_lessons)").all() as { name: string }[])
+        .some((entry) => entry.name === "claim_token"),
+    ).toBe(true);
     expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_items").get()).toEqual({ n: 1 });
     db.close();
   });

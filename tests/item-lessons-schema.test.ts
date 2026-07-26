@@ -4,7 +4,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { ensureLemmaItem } from "@/lib/knowledge/items";
-import { claimItemLesson, completeItemLesson, getItemLesson } from "@/lib/lessons/item-lessons";
+import {
+  claimItemLesson,
+  completeItemLesson,
+  getItemLesson,
+  sweepStaleItemLessonClaims,
+} from "@/lib/lessons/item-lessons";
 import type { NewItemLesson } from "@/lib/lessons/item-lessons-view";
 
 // Migration v20 — the item_lessons cache exists, a lesson round-trips its typed body
@@ -48,7 +53,7 @@ describe("migration v20 schema", () => {
     expect(tables.has("item_lessons")).toBe(true);
     const cols = db.prepare("PRAGMA table_info(item_lessons)").all() as { name: string; pk: number }[];
     expect(cols.map((c) => c.name)).toEqual(
-      expect.arrayContaining(["item_id", "kind", "register", "body", "content_version", "created_at"]),
+      expect.arrayContaining(["item_id", "kind", "register", "body", "content_version", "claim_token", "created_at"]),
     );
     expect(cols.find((c) => c.name === "item_id")?.pk).toBe(1);
     db.close();
@@ -57,8 +62,11 @@ describe("migration v20 schema", () => {
   it("round-trips a lesson's typed body and enforces one lesson per item", () => {
     const db = freshDb();
     // [T1] lease-before-call: claim the item_id row, then complete it with the body.
-    expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBe(true);
-    const stored = completeItemLesson(db, LESSON);
+    const claimToken = claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register });
+    expect(claimToken).not.toBeNull();
+    const stored = completeItemLesson(db, LESSON, claimToken!);
+    expect(stored).not.toBeNull();
+    if (!stored) throw new Error("The owned claim was not completed.");
     expect(stored.intro).toBe(LESSON.intro);
     expect(stored.definition).toBe("Edificio o luogo in cui si abita.");
     expect(stored.exercises).toEqual(LESSON.exercises);
@@ -67,8 +75,36 @@ describe("migration v20 schema", () => {
     expect(read.exercises[1]).toMatchObject({ type: "choice", answer: "casa", invite: "speak", definition: "Luogo in cui si abita." });
 
     // The PK makes a second CLAIM for the same item return false (cache once, one row).
-    expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBe(false);
+    expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBeNull();
     expect((db.prepare("SELECT COUNT(*) AS n FROM item_lessons").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
+
+  it("prevents a reclaimed claim's former owner from overwriting the winner", () => {
+    const db = freshDb();
+    const stale = claimItemLesson(db, {
+      itemId: LESSON.itemId,
+      kind: LESSON.kind,
+      register: LESSON.register,
+    });
+    expect(stale).not.toBeNull();
+    db.prepare("UPDATE item_lessons SET created_at = '2000-01-01 00:00:00' WHERE item_id = ?")
+      .run(LESSON.itemId);
+    expect(sweepStaleItemLessonClaims(db)).toBe(1);
+
+    const winner = claimItemLesson(db, {
+      itemId: LESSON.itemId,
+      kind: LESSON.kind,
+      register: LESSON.register,
+    });
+    expect(winner).not.toBeNull();
+    const winningLesson = {
+      ...LESSON,
+      intro: "La lezione vincente resta nella cache anche se il vecchio proprietario termina più tardi.",
+    };
+    expect(completeItemLesson(db, winningLesson, winner!)).not.toBeNull();
+    expect(completeItemLesson(db, LESSON, stale!)).toBeNull();
+    expect(getItemLesson(db, LESSON.itemId)?.intro).toBe(winningLesson.intro);
     db.close();
   });
 });

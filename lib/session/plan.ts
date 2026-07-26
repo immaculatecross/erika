@@ -3,7 +3,7 @@ import { compose, capsFromSettings } from "../compose";
 import { countDueCards, generateCards } from "../cards";
 import { localDay } from "../local-day";
 import { budgetReached } from "../lessons/billing";
-import { getItemLesson, itemLessonKind } from "../lessons/item-lessons";
+import { itemLessonKind } from "../lessons/item-lessons";
 import { parseItemId } from "../knowledge/items";
 import { loadSyllabus } from "../syllabus";
 import { collectLetterSessions, latestWeekWithFindings } from "../letter";
@@ -84,21 +84,18 @@ export function lessonLabelFor(itemId: string): string | null {
  *
  * A GRAMMAR RULE IS PREFERRED, and that is a product call worth naming: a rule is the
  * only item kind that carries real teachable content with no model call at all.
- * A lemma is taken only when no rule is on today's plan and a lesson for it can be
- * prepared (one is already cached, or a call is possible). If that preparation later
- * fails, E-47 substitutes authored grammar at the learner's edge.
+ * A lemma is taken when no rule is on today's plan. If generation cannot run or
+ * fails, E-47 prepares authored grammar at the learner's edge under that lemma's
+ * cache key, so a keyless/cap-blocked vocabulary-only day remains a real session.
  */
 function chooseLessonItem(
-  db: Db,
   itemIds: { kind: string; itemId: string | null }[],
-  reachable: boolean,
 ): string | null {
   const rule = itemIds.find((i) => i.kind === "rule" && i.itemId)?.itemId ?? null;
   if (rule) return rule;
   const vocab = itemIds.find((i) => i.kind === "vocab" && i.itemId)?.itemId ?? null;
   if (!vocab) return null;
-  if (getItemLesson(db, vocab) !== null) return vocab;
-  return reachable ? vocab : null;
+  return vocab;
 }
 
 /** This week's letter, and whether it is still unread (the E-24 contract, untouched). */
@@ -127,7 +124,7 @@ export function planSession(db: Db, day: string = localDay()): SessionPlan {
   const steps: StepKey[] = [];
 
   // ── the lesson ────────────────────────────────────────────────────────────
-  const lessonItemId = chooseLessonItem(db, composed.items, reach.ok);
+  const lessonItemId = chooseLessonItem(composed.items);
   const lessonLabel = lessonItemId ? lessonLabelFor(lessonItemId) : null;
   if (lessonItemId) steps.push("lesson");
   else omitted.push({ key: "lesson", reason: "nothing-to-teach" });
@@ -137,8 +134,7 @@ export function planSession(db: Db, day: string = localDay()): SessionPlan {
   // not offered at all — an empty step the learner has to tap through is exactly the
   // errand this milestone deletes.
   const plannedCards = countDueCards(db);
-  const canHaveExercises =
-    lessonItemId !== null && (getItemLesson(db, lessonItemId) !== null || reach.ok);
+  const canHaveExercises = lessonItemId !== null;
   if (plannedCards > 0 || canHaveExercises) steps.push("drills");
   else omitted.push({ key: "drills", reason: reach.reason ?? "no-cards" });
 
