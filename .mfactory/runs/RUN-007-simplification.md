@@ -203,3 +203,29 @@ Deleted: the second lesson system, typed input, the billed rewrite-grading call,
 - L: **A fix verified on one surface is not a fix.** E-45's B1 repair passed a delta re-review while the defect stayed live on the daily flow's own drill component; only a rebase surfaced it. → encoded as: when a repair touches a behaviour with more than one caller, **enumerate the callers before declaring it closed** — the "fix invariants, not instances" rule extended from code paths to *surfaces*.
 - L: **An invariant held in React state is verified only by reading it.** Both E-45 defects and E-44's two lived there. The durable fix in each case was moving the rule into a pure module. → encoded as: `lib/lessons/drill-progress.ts` and `lib/session/` reducers; a standing preference for reducers that *return* effects over components that perform them.
 - L: **A worker refusing the dispatcher's suggested fix, with an argument, is the process working.** Twice here — the voice-negative question and the jsdom question — the worker's answer was better than the brief's. → encoded as: D-26's product-authority clause, now validated on a correctness path as well as a design one.
+
+---
+
+## A cross-cutting lesson for mfactory — where this run's findings actually came from
+
+Raised by the operator as a *"mild observation, and I might be totally wrong"*: that we over-focus on synthetic fixtures and under-focus on real use. It is worth more than that hedge, because this run's own ledger settles it.
+
+**Counted by origin, not by impression.**
+
+*Found by touching the real thing — 18:* `whisper-1` silently **correcting** the planted errors (`familia`→`famiglia`), which **overturned D-26's architecture before a line was written**; every `gpt-audio` model missing `"ho andato"` 9 times out of 9 with the answer in its own prompt; the Realtime cost argument running backwards from what was assumed; the TTS rate being wrong in *shape*, not value; `call_id` discarded so the tutor's correction was **never spoken** on 5 of 9 fixtures; **every** tutor conversation refused `422 undecodable_audio` for two versions; the tutor narrating its own bookkeeping aloud; the drills step completing itself at zero planned cards; the day never recorded when the last step completed by observation; an item lesson that **resolves, bills and returns nothing**; the model replying in **prose instead of JSON** on a silent clip; a routing gate **walked past by client-side navigation** (`RSC: 1` → 200 and the page); the tutor reporting a permanently revoked key as *"just now"*; a failed ingest unrecoverable behind raw `ffprobe` stderr; the tutor at the cap with zero controls; B1 still live on the daily flow's own drill component after its repair was approved; `npm run lint` a **no-op in every nested worktree**; and the repo's own cold-start test making a **live billed API call** from a configured machine.
+
+*Found by the test suite — 4:* a vacuous migration-backfill test; dead `isAssumedRunLeaseHash`; two mutants surviving the whole suite; an under-booked rate (caught by arithmetic, then **confirmed by live measurement** that also corrected the reviewer's own prescription).
+
+**The pattern is the finding: all four test-originated items are defects in the TESTS, not in the product.** Mutation testing kept discovering that the tests were wrong. Meanwhile **1,429 green tests coexisted with the flagship milestone lying to users about a permanent failure**, and 1,012 green tests coexisted with v0.6's cold-start failure before that.
+
+**So:** *tests verify what you thought of; driving finds what you didn't; mutation testing verifies the tests, not the product.* The error is treating a green suite as evidence **about the product**.
+
+**What is actually new here.** The repo already half-knows this — D-13 ("fixtures prove mechanism, never judgment") and `HANDOVER.md` ("reading finds wrong logic; driving finds features that do not exist"). What this run adds is that we apply it **last and ceremonially**, as a close gate, when the evidence says it should come **first and cheap**. The economics are not close: total live spend for the entire version was **≈ $2.20**, of which a **$0.74** spike reversed a major architecture decision and a **$0.003** one exposed a mispriced rate. Three separate milestones had their most important defect found by a single live call each.
+
+**Proposal for `factory-retro.md`, advisory only:**
+1. **First contact before first commit.** Where a milestone touches an external system, the *first* verification is one real call — not a fixture, not a mock — and its result is written into the work order before the build proceeds. Two architecture decisions this version would have been wrong without it.
+2. **A green suite is not a claim about the product.** Exit reports should state findings by *origin* (driven / live / test / read), so a milestone verified only by tests is visibly a milestone not yet verified.
+3. **Keep mutation testing, and re-aim it.** It earned its place — but as a check on *tests*, which is what it actually measures. Do not let it stand in for touching the product.
+4. **Budget live verification like a gate, not like a luxury.** $2.20 bought more truth this version than any amount of fixture work, and the fixtures that mattered (D-13's labelled samples) were the ones standing in for reality, not simulating it.
+
+Filed here rather than in mfactory's `runs/` because no mfactory checkout is reachable from this machine; it syncs with the rest of RUN-007.
