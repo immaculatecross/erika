@@ -6,6 +6,27 @@
 
 import type { IngestState } from "./session-types";
 
+/**
+ * What a learner is told when an ingest failed — ONE sentence, in this one place, so
+ * the Record home row and the session detail page cannot say different things.
+ *
+ * [v0.7 close sweep] Both surfaces used the job's STORED error as the user-facing line,
+ * so the gate read "ffprobe exited 1: moov atom not found" on the home screen. That is
+ * a true string and a useless one: "moov atom" means nothing to anyone recording
+ * Italian, and it names no remedy.
+ *
+ * The stored error is NOT discarded — `IngestView.error` still carries it verbatim and
+ * the detail page shows it under "What was recorded", which is where a diagnosis
+ * belongs. This replaces what is SHOWN as the summary, never what is kept.
+ *
+ * What it says is exactly what is true and no more: nothing was extracted, so there is
+ * nothing to analyse, and the work can be re-driven from the audio already uploaded —
+ * which is the way forward `POST /api/sessions/[id]/ingest` now makes real.
+ */
+export function ingestFailureLine(): string {
+  return "Erika could not read this recording's audio, so no speech was extracted from it. Nothing was lost — the file is still here and can be processed again.";
+}
+
 /** One speech segment reduced to what the timeline needs (no content hash). */
 export interface TimelineSegment {
   idx: number;

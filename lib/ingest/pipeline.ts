@@ -273,6 +273,34 @@ export function claimNextJob(db: Db, worker: string = workerId()): string | null
 }
 
 /**
+ * Put a FAILED ingest back on the queue. Returns false when there was nothing to
+ * requeue (no job, or one that did not fail), so the caller can answer truthfully.
+ *
+ * [v0.7 close sweep] The failure-path gate found a failed ingest UNRECOVERABLE: the
+ * detail page offered only *Exclude* and *Delete*, and this module's route was GET-only,
+ * so no route in the app could re-drive a stuck session. E-42 removed the Analyze button
+ * and left nothing in its place. The only escape was to delete the session and upload
+ * the file again.
+ *
+ * Deliberately narrow, and that is the whole safety argument: it only ever moves
+ * `failed` → `queued`, so it cannot disturb a job a worker is running, cannot restart a
+ * finished one, and re-drives nothing that is already in flight. It clears the lease
+ * with the error, so the requeued row is claimable by the next worker tick exactly like
+ * a fresh upload — no second code path, no re-upload, and the audio on disk is untouched.
+ */
+export function requeueFailedJob(db: Db, sessionId: string): boolean {
+  const res = db
+    .prepare(
+      `UPDATE ingest_jobs
+          SET state = 'queued', stage = NULL, progress = 0, error = NULL,
+              worker_id = NULL, heartbeat_at = NULL, updated_at = datetime('now')
+        WHERE session_id = ? AND state = 'failed'`,
+    )
+    .run(sessionId);
+  return res.changes > 0;
+}
+
+/**
  * Ids of jobs a crashed worker left mid-flight — that is, `processing` rows whose
  * lease has gone stale (no heartbeat for JOB_LEASE_STALE_MS). A job a live worker
  * is actively beating on is NOT returned: reclaiming it would re-run work already

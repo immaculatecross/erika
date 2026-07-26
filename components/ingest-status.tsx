@@ -1,6 +1,6 @@
 "use client";
 
-import { STAGE_LABELS, type IngestView, type TimelineSegment } from "@/lib/ingest-view";
+import { ingestFailureLine, STAGE_LABELS, type IngestView, type TimelineSegment } from "@/lib/ingest-view";
 import type { FindingMarkerInput } from "@/lib/session-map";
 import { SegmentTimeline } from "@/components/segment-timeline";
 import { WorkerAbsentNotice } from "@/components/worker-absent-notice";
@@ -56,10 +56,36 @@ export function IngestStatus({
         </div>
       )}
 
+      {/* [v0.7 close sweep] This was `Ingest failed — {view.error}` — raw ffprobe stderr
+          as the one thing the learner was told, beside no way forward at all: the route
+          was GET-only, so nothing in the app could re-drive the job, and the only escape
+          was to delete the session. Now the sentence is human, the requeue is real, and
+          the stored error is kept directly underneath as a diagnosis rather than as the
+          summary. Replace what is SHOWN, never what is recorded. */}
       {view && view.state === "failed" && (
-        <p className="text-[15px] text-severe" role="alert">
-          Ingest failed — {view.error ?? "no error recorded."}
-        </p>
+        <div className="flex flex-col gap-3" data-ingest-failed>
+          <p className="text-[15px] leading-[1.47] text-secondary" role="alert">
+            {ingestFailureLine()}
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            {onRequeue && (
+              <button
+                type="button"
+                data-ingest-requeue
+                onClick={onRequeue}
+                disabled={requeueing}
+                className="rounded-full bg-card px-4 py-2 text-[15px] font-medium text-ink shadow-card transition-transform active:scale-[0.98] disabled:opacity-50"
+              >
+                {requeueing ? "Queued" : "Process it again"}
+              </button>
+            )}
+          </div>
+          {view.error && (
+            <p className="text-[13px] text-secondary" data-ingest-error>
+              What was recorded: <span className="font-mono">{view.error}</span>
+            </p>
+          )}
+        </div>
       )}
 
       {view && view.state === "done" && view.summary.segmentCount === 0 && (
