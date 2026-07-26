@@ -66,7 +66,11 @@ describe("the one Library entry (E-44 criterion 6)", () => {
       "/archive",
       "/slips",
       "/practice/cards",
-      "/practice/lessons",
+      // [E-45] "/practice/lessons" is NOT here: the per-category pattern-lesson
+      // browser is deleted with the format it listed. Demote-never-delete still
+      // holds for every surface that still exists — this one does not, so leaving
+      // it in the Library would be a link to a 404, which is the wall E-44's own
+      // criterion forbids.
       "/practice/learn/studio",
       "/practice/learn/shadow",
       "/practice/reading",

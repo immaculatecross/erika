@@ -7,7 +7,14 @@ import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { Flashcard } from "@/components/flashcard";
 import { StepNotice } from "./step-notice";
 import { GRADES, type CardView, type Grade } from "@/lib/cards-view";
-import { gradeItemExercise, type ItemExercise } from "@/lib/lessons/item-lessons-view";
+import { DrillCard } from "@/components/drill-card";
+import {
+  drillProgress,
+  drillSpeechOffered,
+  initialDrillProgress,
+  type DrillAction,
+  type DrillOutcome,
+} from "@/lib/lessons/drill-progress";
 import type { SessionLessonBody } from "@/lib/session/lesson-body";
 
 // Step two: the drills (E-44). The day's exercises for the rule just taught, then
@@ -28,98 +35,20 @@ import type { SessionLessonBody } from "@/lib/session/lesson-body";
 
 type Phase = "loading" | "exercises" | "cards" | "empty";
 
-function Feedback({ exercise, correct }: { exercise: ItemExercise; correct: boolean }) {
-  return (
-    <div data-feedback className="flex flex-col gap-1.5">
-      <p data-correct={correct} className={`text-[15px] font-medium ${correct ? "text-good" : "text-severe"}`}>
-        {correct ? "Correct" : "Not quite"}
-      </p>
-      <p className="text-[15px] text-ink">
-        <span className="text-secondary">Answer: </span>
-        <span data-answer className="font-medium">{exercise.answer}</span>
-      </p>
-      <p className="text-[15px] text-secondary">{exercise.rationale}</p>
-    </div>
-  );
-}
-
-/** One exercise, answered by tapping. Multiple choice only in the session: a typed
- *  cloze is E-45's to replace with click-or-voice, and offering a text box here would
- *  be building the thing that milestone deletes. A cloze is shown with its answer
- *  revealed as a worked example — honest, and still a real beat. */
-function ExerciseCard({ exercise, onResolve }: { exercise: ItemExercise; onResolve: (c: boolean) => void }) {
-  const [picked, setPicked] = useState<number | null>(null);
-  const [shown, setShown] = useState(false);
-  const options = exercise.options ?? [];
-  const isChoice = exercise.type === "multiple_choice" && options.length > 1;
-  const resolved = isChoice ? picked !== null : shown;
-
-  return (
-    <div className="flex flex-col gap-3">
-      {exercise.gloss && (
-        <p data-gloss className="text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">
-          {exercise.gloss}
-        </p>
-      )}
-      <p className="text-[17px] leading-[1.47] text-ink">{exercise.prompt}</p>
-
-      {isChoice ? (
-        <div className="flex flex-col gap-2">
-          {options.map((option, i) => {
-            const isAnswer = i === exercise.answerIndex;
-            const tone = resolved
-              ? isAnswer
-                ? "border-good bg-good/[0.12] text-ink"
-                : picked === i
-                  ? "border-severe bg-severe/[0.12] text-ink"
-                  : "border-hairline text-secondary"
-              : "border-hairline text-ink hover:border-ink";
-            return (
-              <button
-                key={option}
-                type="button"
-                data-option
-                disabled={resolved}
-                onClick={() => {
-                  if (resolved) return;
-                  setPicked(i);
-                  onResolve(gradeItemExercise(exercise, i));
-                }}
-                className={`rounded-control border px-4 py-3 text-left text-[15px] transition-colors active:scale-[0.99] disabled:cursor-default ${tone}`}
-              >
-                {option}
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        !resolved && (
-          <button
-            type="button"
-            data-reveal
-            onClick={() => {
-              setShown(true);
-              onResolve(true);
-            }}
-            className="self-start rounded-full bg-card px-4 py-2 text-[15px] font-medium text-ink shadow-card transition-transform active:scale-[0.98]"
-          >
-            Show the answer
-          </button>
-        )
-      )}
-
-      {resolved && <Feedback exercise={exercise} correct={isChoice ? picked === exercise.answerIndex : true} />}
-    </div>
-  );
-}
+// [E-45] The placeholder exercise card is gone. E-44 wrote one that was multiple
+// choice only, with "Show the answer" for a typed cloze, and said in its own comment
+// that click-or-voice was E-45's to bring — this is that. `DrillCard` is the one
+// drill surface: options always present, speech offered when the drill invites it,
+// and a dispute window before anything is recorded.
 
 export function DrillsStep({ lesson, onDone }: { lesson: SessionLessonBody | null; onDone: () => void }) {
   const reduced = usePrefersReducedMotion();
   const exercises = lesson?.lesson?.exercises ?? [];
   const [cards, setCards] = useState<CardView[]>([]);
   const [phase, setPhase] = useState<Phase>("loading");
-  const [exIndex, setExIndex] = useState(0);
-  const [exResolved, setExResolved] = useState(false);
+  const [progress, setProgress] = useState(initialDrillProgress);
+  const exIndex = progress.index;
+  const exResolved = progress.pending !== null;
   const [cardIndex, setCardIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [failedGrade, setFailedGrade] = useState<Grade | null>(null);
@@ -143,32 +72,45 @@ export function DrillsStep({ lesson, onDone }: { lesson: SessionLessonBody | nul
     };
   }, [exercises.length]);
 
-  const resolveExercise = useCallback(
-    (correct: boolean) => {
-      setExResolved(true);
-      if (!lesson) return;
-      // Cued evidence into the E-25 knowledge core (E-32's door, unchanged).
-      void fetch("/api/lessons/item/complete", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ itemId: lesson.itemId, correct }),
-      }).catch(() => {});
+  // [E-45] RESOLVING RECORDS NOTHING. This used to POST cued evidence the instant
+  // the drill resolved, which for a spoken answer meant the moment speech-to-text
+  // disagreed — before the learner could say "that's not what I said". `evidence`
+  // is append-only with RAISE(ABORT) triggers, so that row was permanent and one
+  // bad transcript demoted a lemma the learner actually knew (D-19).
+  //
+  // The sequence now runs through the shared pure reducer, which both this step and
+  // the standalone runner use, so the rule cannot drift into two dialects.
+  const dispatch = useCallback(
+    (action: DrillAction) => {
+      setProgress((current) => {
+        const [next, effect] = drillProgress(current, action);
+        if (effect.write !== null && lesson) {
+          void fetch("/api/lessons/item/complete", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ itemId: lesson.itemId, correct: effect.write }),
+          }).catch(() => {});
+        }
+        return next;
+      });
     },
     [lesson],
   );
 
+  const resolveExercise = useCallback(
+    (outcome: DrillOutcome) => dispatch({ type: "resolve", outcome }),
+    [dispatch],
+  );
+
   const nextExercise = useCallback(() => {
-    setExResolved(false);
-    if (exIndex + 1 < exercises.length) {
-      setExIndex((i) => i + 1);
-      return;
-    }
+    dispatch({ type: "advance", total: exercises.length });
+    if (exIndex + 1 < exercises.length) return;
     // Exercises done. Cards next if there are any; otherwise the step is finished —
     // the learner did the work, so the step completes rather than showing an empty
     // state to someone who is not looking at one.
     if (cards.length > 0) setPhase("cards");
     else onDone();
-  }, [exIndex, exercises.length, cards.length, onDone]);
+  }, [dispatch, exIndex, exercises.length, cards.length, onDone]);
 
   const grade = useCallback(
     async (g: Grade) => {
@@ -223,7 +165,12 @@ export function DrillsStep({ lesson, onDone }: { lesson: SessionLessonBody | nul
           data-exercise
           className="rounded-card bg-card p-5 shadow-card"
         >
-          <ExerciseCard exercise={exercise} onResolve={resolveExercise} />
+          <DrillCard
+            key={exIndex}
+            exercise={exercise}
+            speechOffered={drillSpeechOffered(progress)}
+            onResolve={resolveExercise}
+          />
         </motion.div>
         <button
           type="button"

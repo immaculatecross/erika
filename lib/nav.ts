@@ -52,7 +52,6 @@ export const LIBRARY_SECTIONS: { title: string; items: NavDest[] }[] = [
     title: "Practice",
     items: [
       { href: "/practice/cards", label: "All cards", note: "The whole deck, including what is not due." },
-      { href: "/practice/lessons", label: "Pattern lessons", note: "A longer lesson per recurring pattern." },
       { href: "/practice/learn/studio", label: "Pronunciation studio", note: "Hear a line, say it back." },
       { href: "/practice/learn/shadow", label: "Listen and shadow", note: "A correct line, rendered, to repeat." },
       { href: "/practice/reading", label: "Reading", note: "Public-domain Italian at your level." },

@@ -8,13 +8,13 @@ import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { itemLessonScore, type ItemLesson } from "@/lib/lessons/item-lessons-view";
 import {
-  countsAsCorrect,
-  evidenceForOutcome,
-  nextMishearingStreak,
-  speechIsOffered,
-} from "@/lib/lessons/drill-session";
+  drillProgress,
+  drillSpeechOffered,
+  initialDrillProgress,
+  type DrillOutcome,
+} from "@/lib/lessons/drill-progress";
 import { useItemLesson } from "@/lib/use-item-lesson";
-import { DrillCard, type DrillOutcome } from "@/components/drill-card";
+import { DrillCard } from "@/components/drill-card";
 
 // THE lesson runner — the one that survives (E-45 criterion 1). Two runners with
 // two exercise vocabularies became one: `components/item-lesson-runner.tsx` is
@@ -51,46 +51,31 @@ function LessonBody({
   complete: (correct: boolean) => Promise<unknown>;
 }) {
   const reduced = usePrefersReducedMotion();
-  const [index, setIndex] = useState(0);
-  const [correctCount, setCorrectCount] = useState(0);
-  const [step, setStep] = useState<Resolution>({ done: false });
-  const [mishearings, setMishearings] = useState(0);
-  const [finished, setFinished] = useState(false);
+  // The whole sequence lives in the pure reducer (lib/lessons/drill-progress.ts).
+  // This component dispatches and renders; it holds no rule of its own, which is
+  // what makes D1/D2 reachable by a plain unit test instead of only by reading.
+  const [progress, setProgress] = useState(initialDrillProgress);
 
   const total = lesson.exercises.length;
+  const index = progress.index;
   const last = index === total - 1;
-  const speechOffered = speechIsOffered(mishearings);
+  const finished = progress.finished;
+  const correctCount = progress.correctCount;
+  const step: Resolution = progress.pending ? { done: true, outcome: progress.pending } : { done: false };
+  const speechOffered = drillSpeechOffered(progress);
 
-  // RESOLVING A DRILL RECORDS NOTHING. It only moves the screen into its feedback
-  // state, which is also the DISPUTE WINDOW: the transcript is on screen and the
-  // learner can still say "that's not what I said". A drill may resolve several
-  // times — wrong, then disputed — and only the last one is the outcome.
-  //
-  // This is the E-45 repair. Writing on resolve appended `polarity: 0, mode: "cued"`
-  // the instant speech-to-text disagreed, BEFORE the override control had rendered,
-  // and the `evidence` table's BEFORE UPDATE/DELETE triggers make that row
-  // permanent — so one bad transcript demoted a lemma the learner actually knew,
-  // for good (D-19). The invariant is now enforced by ORDER: a voice answer can
-  // only write evidence the learner has not disputed, so the write happens when
-  // they leave the drill, never when we form an opinion about it.
-  function resolve(outcome: DrillOutcome) {
-    setStep({ done: true, outcome });
+  function dispatch(action: Parameters<typeof drillProgress>[1]) {
+    setProgress((current) => {
+      const [next, effect] = drillProgress(current, action);
+      // The reducer decides; the component only performs. `write === null` is a
+      // disputed drill, and it writes nothing in either direction.
+      if (effect.write !== null) void complete(effect.write);
+      return next;
+    });
   }
 
-  function advance() {
-    if (step.done) {
-      const polarity = evidenceForOutcome(step.outcome);
-      if (polarity !== null) void complete(polarity); // cued evidence (best-effort)
-      if (countsAsCorrect(step.outcome)) setCorrectCount((c) => c + 1);
-      setMishearings((n) => nextMishearingStreak(n, step.outcome));
-    }
-    if (!last) {
-      setIndex((i) => i + 1);
-      setStep({ done: false });
-      return;
-    }
-    setFinished(true);
-  }
+  const resolve = (outcome: DrillOutcome) => dispatch({ type: "resolve", outcome });
+  const advance = () => dispatch({ type: "advance", total });
 
   if (finished) {
     const scorePct = Math.round(itemLessonScore(correctCount, total) * 100);
