@@ -15,8 +15,8 @@ import {
   PROMPT_DISTINGUISHING_CLAUSES,
   TUTOR_OUTPUT_CONTRACT,
   buildTutorPrompt,
-  tutorPromptHash,
 } from "@/lib/tutor/prompt-presets";
+import { tutorPromptHash } from "@/lib/tutor/prompt-presets-server";
 import {
   buildSelectedTutorPrompt,
   buildTutorPromptContext,

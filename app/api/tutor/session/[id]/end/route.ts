@@ -11,9 +11,10 @@ import { closeConversation, linkRecordingByCaptureTime } from "@/lib/tutor/conve
 // Finalize a tutor session (E-34, extended at E-43). Two records close here, and they
 // take OPPOSITE sides on the same number, on purpose:
 //
-//   * MONEY — the pending reservations collapse into EXACTLY ONE committed row for
-//     the elapsed cost, clamped to what was reserved. The server-tracked elapsed time
-//     FLOORS the client's ([T2c]), so nobody under-reports a long call to under-pay.
+//   * MONEY — the pending reservations collapse into EXACTLY ONE committed row,
+//     clamped to what was reserved. [T2c] floors duration at server-tracked elapsed
+//     and never commits Realtime below that minute-floor estimate solely because the
+//     client sent a finite usage figure (including 0); higher client usage still wins.
 //   * THE CONVERSATION RECORD (v29) — the duration that decides whether the day is
 //     credited is SERVER-measured and the client may only LOWER it (criterion 7). The
 //     server's elapsed includes connecting and idling; the client knows how much was

@@ -9,7 +9,8 @@ import { localDay } from "../local-day";
 import { REALTIME_FLAGSHIP, type RealtimeModelId } from "../analysis/rates";
 import { maxTutorSessionSeconds } from "./money";
 import { TUTOR_EVIDENCE_MODES } from "./log-evidence";
-import { buildTutorPrompt, tutorPromptHash } from "./prompt-presets";
+import { buildTutorPrompt } from "./prompt-presets";
+import { tutorPromptHash } from "./prompt-presets-server";
 import type { TutorArchitecture, TutorPromptPreset } from "./experiment";
 import type { TutorPersonaInput } from "./persona";
 

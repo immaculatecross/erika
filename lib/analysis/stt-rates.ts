@@ -8,9 +8,10 @@
 //
 // What D-21 has always allowed, and D-28 confirms for E-45, is SCRIPTED assessment:
 // a drill has a KNOWN CORRECT ANSWER, so transcribing the answer is comparing a
-// word to a word, not diagnosing free speech. This model id is reachable from the
-// drill answer route and from nowhere else; it must never be pointed at a capture,
-// a tutor turn, or anything the learner said spontaneously.
+// word to a word, not diagnosing free speech. `STT_MODEL` is reachable from the
+// drill answer route. E-48's opt-in transcript tutor architecture also bills
+// `TUTOR_STT_MODEL` on `/api/tutor/turn` — still never pointed at a capture or at
+// free-speech diagnosis for the Record path (D-3 / D-28 / D-30).
 //
 // Billing rides the same spend_ledger under the same monthly cap, reserved before
 // the call like every other biller.

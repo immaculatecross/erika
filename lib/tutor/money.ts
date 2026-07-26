@@ -240,11 +240,13 @@ export function touchTutorLease(db: Db, tutorId: string, model: RealtimeModelId,
  * overshot). Runs in one transaction so the release and the commit are atomic.
  * Returns the committed USD. A session with nothing reserved commits nothing.
  *
- * [T2c — money] The billed minutes are `max(clientMinutes, serverMinutes)`: the
- * server-tracked elapsed time (now − the lease's open `reserved_at`) FLOORS the
- * client-reported figure, so a client cannot under-report a long call to under-pay.
- * The server figure is read BEFORE the pending rows are deleted. Clamping to the
- * reserved amount still holds, so a floored duration can never overshoot the lease.
+ * [T2c — money] Duration floors at `max(clientMinutes, serverMinutes)` (server
+ * elapsed = now − the lease's open `reserved_at`, read BEFORE pending rows delete).
+ * When the client also reports a Realtime usage figure, the committed amount is
+ * `max(minuteFloorEstimate, clientUsage)` then still `min(..., reserved)` — so a
+ * finite client `0` / under-report cannot wipe a live lease below the minute floor,
+ * while a higher provider usage still bills above that floor. Missing/NaN usage
+ * falls back to the minute floor alone.
  */
 export function finalizeTutorLease(
   db: Db,
@@ -260,10 +262,13 @@ export function finalizeTutorLease(
     const openedAt = tutorLeaseOpenedAtMs(db, tutorId);
     const serverMinutes = openedAt !== null ? Math.max(0, (date.getTime() - openedAt) / 60000) : 0;
     const billedMinutes = Math.max(Math.max(0, actualMinutes), serverMinutes);
-    const actual =
+    const minuteFloor = estimateTutorSessionUsd(model, billedMinutes);
+    const clientUsage =
       typeof usageCostUsd === "number" && Number.isFinite(usageCostUsd)
         ? Math.max(0, usageCostUsd)
-        : estimateTutorSessionUsd(model, billedMinutes);
+        : null;
+    const actual =
+      clientUsage === null ? minuteFloor : Math.max(minuteFloor, clientUsage);
     const committed = Math.min(actual, reserved);
     db.prepare("DELETE FROM spend_ledger WHERE content_hash = ? AND state = 'pending'").run(hash);
     if (committed > 0) {

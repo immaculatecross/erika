@@ -253,4 +253,41 @@ describe("[T2c] finalize floors the billed duration at the server-tracked elapse
     expect(committed).toBeCloseTo(estimateTutorSessionUsd(FLAG, 5), 4);
     db.close();
   });
+
+  it("never commits $0 for a leased native session when client usage is 0 (minute floor wins)", () => {
+    const db = freshDb();
+    openTutorLease(db, "t13", FLAG, 30, 100);
+    db.prepare("UPDATE spend_ledger SET reserved_at = datetime('now','-10 minutes') WHERE content_hash = ?").run(
+      tutorContentHash("t13"),
+    );
+    // Native /end always sends a finite realtimeUsageCostUsd (often 0 when no turn
+    // reported usage). That must not bypass [T2c]'s minute floor.
+    const committed = finalizeTutorLease(db, "t13", FLAG, 10, new Date(), 0);
+    expect(committed).toBeGreaterThan(estimateTutorSessionUsd(FLAG, 9.9));
+    expect(committed).toBeLessThan(estimateTutorSessionUsd(FLAG, 10.5));
+    expect(committedRows(db, "t13").n).toBe(1);
+    expect(monthToDateSpend(db)).toBeCloseTo(committed);
+    db.close();
+  });
+
+  it("bills max(minuteFloor, clientUsage) when provider usage exceeds the floor", () => {
+    const db = freshDb();
+    openTutorLease(db, "t14", FLAG, 30, 100);
+    const floor = estimateTutorSessionUsd(FLAG, 2);
+    const higher = floor + 0.05;
+    const committed = finalizeTutorLease(db, "t14", FLAG, 2, new Date(), higher);
+    expect(committed).toBeCloseTo(higher, 8);
+    db.close();
+  });
+
+  it("falls back to the minute floor when client usage is missing or NaN", () => {
+    const db = freshDb();
+    openTutorLease(db, "t15", FLAG, 30, 100);
+    const withMissing = finalizeTutorLease(db, "t15", FLAG, 3, new Date(), undefined);
+    expect(withMissing).toBeCloseTo(estimateTutorSessionUsd(FLAG, 3), 4);
+    openTutorLease(db, "t16", FLAG, 30, 100);
+    const withNaN = finalizeTutorLease(db, "t16", FLAG, 3, new Date(), Number.NaN);
+    expect(withNaN).toBeCloseTo(estimateTutorSessionUsd(FLAG, 3), 4);
+    db.close();
+  });
 });

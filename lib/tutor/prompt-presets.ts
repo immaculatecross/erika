@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
 import { mistakeClasses, precisionCore } from "../mistakes";
-import { CATEGORY_MAPPING_INSTRUCTION } from "../analysis/prompts";
+import { CATEGORY_MAPPING_INSTRUCTION } from "../analysis/categories";
 import { coerceRegister, registerInstruction } from "../register";
 import { buildTutorPersona, type TutorPersonaInput } from "./persona";
 import type { TutorArchitecture, TutorPromptPreset } from "./experiment";
@@ -118,10 +117,6 @@ export function buildTutorPrompt(input: BuildTutorPromptInput): string {
   if (architecture === "transcript") parts.push(TRANSCRIPT_GUARD);
   parts.push(OUTPUT_CONTRACT);
   return parts.join("\n\n");
-}
-
-export function tutorPromptHash(prompt: string): string {
-  return createHash("sha256").update(prompt).digest("hex");
 }
 
 export const PROMPT_DISTINGUISHING_CLAUSES = {
