@@ -81,3 +81,111 @@ They are right, and the machinery already exists — E-35's placement seeds reco
 11. **A learner who declines or cannot speak is still calibrated.** No microphone, denied permission, no API key, or a learner who simply will not talk on first launch — the vocabulary check alone must still produce a usable level and a non-generic first session. The spoken prompts are an enrichment, never a gate. Test the declined path.
 
 **Not in scope:** changing placement's scoring (`lib/placement/` stays as it is — the operator judged the vocabulary check good), or the composer's ordering (D-27 stands: syllabus backbone, recordings woven in). This amendment is about making sure the level the assessment produces actually reaches the learner's first day.
+
+---
+
+## Exit report — 2026-07-26
+
+```
+RESULT: done
+PR:     feat/e46-first-run-and-progress
+```
+
+### Criterion by criterion
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | met | Gate in `app/(app)/layout.tsx`, pure rule in `lib/onboarding/routing.ts`. Driven: 5 deep links (`/practice/session`, `/library`, `/settings`, `/progress`, `/practice/tutor`) → `/welcome`, light and dark. Populated: 7 paths → themselves. |
+| 2 | met | `lib/onboarding/requirements.ts` + `components/onboarding/requirements-step.tsx`. Key **observed** (`hasAnalysisKey`), cap **read** ($50), automatic analysis and the worker stated as facts. Server-rendered, so no "Loading…" first paint. |
+| 3 | met | Two takes: the spoken prompt (sent to the model, `POST /api/onboarding/spoken`) and the D-22 enrollment take (on-device, never uploaded). Both skippable. Scoring in `lib/placement/` byte-unchanged. |
+| 4 | met | `lib/placement/scoring.ts` and `lib/knowledge/seed-placement.ts` untouched. Re-proved by the existing suites plus new cases: an unmeasurable run still records **no run, no evidence**; the rescued run seeds **grammar only, zero vocabulary**; supersession stays INSERT-only. |
+| 5 | met | Driven: `[data-onboarding-enter]` → `/practice/session`, which rendered the C2 lesson. |
+| 6 | met | `/progress` + `GET /api/progress`. Reached from the goal ring (`[data-open-progress]`) and from the Library. `/dev/knowledge`, its API and `lib/knowledge/inspector.ts` deleted. |
+| 7 | met | Every figure is a row that exists. "Not started" where nothing was observed. `map` is `buildKnowledgeMap` verbatim — one notion of mastery. No trend, no return, no projection (asserted by regex over every sentence). |
+| 8 | met | Phone viewport 390×844, light and dark, `prefers-reduced-motion`. One signature moment (the map settling). Green only in the map. Tabular numerals on every statistic. |
+| 9 | met | `tests/onboarding-day-one.test.ts` asserts the **positive**. Driven live: placed C2 → first session = "C2 · Aspect in compound and progressive forms". |
+| 10 | met | Answered plainly below. |
+| 11 | met | `spokenBand: null` places from the check alone; tested and driven. |
+
+### What this deletes
+
+- `app/dev/knowledge/page.tsx`, `app/api/dev/knowledge/route.ts`, `lib/knowledge/inspector.ts`.
+- `app/practice/placement/page.tsx` — folded into `/welcome`.
+- The dismissible "Find your level" prompt.
+- "Discover the requirements from an error message" — replaced by four sentences said once, up front.
+- `AppShell` from the root layout (it now mounts only inside the gated group).
+
+Net concepts: **down**. One new surface (`/progress`), two deleted (`/dev/knowledge`, `/practice/placement`), one deleted prompt.
+
+### Criterion 1: the invariant, and the enumeration
+
+**(a) FORCE** — while onboarding is incomplete, every navigable page resolves to `/welcome`.
+**(b) NEVER TRAP** — while it is complete, *no* path is ever redirected there.
+
+(b) is checked first and alone, because the opposite failure is a learner with a year of recordings bounced into a vocabulary check on every click. `onboardingComplete` is therefore a **disjunction** — marker OR placement run OR placement evidence OR any session — so a pre-E-46 database, a pre-v27 database and anyone who has ever recorded are all already "complete".
+
+Paths that could violate (a), and how each is closed:
+
+1. Typed URL / bookmark / deep link → the group layout renders before any page.
+2. **Client-side `<Link>` navigation → this leaked, and driving found it.** With the gate in the ROOT layout, `curl -H "RSC: 1" /practice` returned **200 and the practice page**: the App Router caches the root layout, so it is not re-rendered for a navigation. Moving every page into `app/(app)/` fixed it — `/welcome` is outside the group, so entering the group is always a segment change and the layout always runs. The same request now returns `NEXT_REDIRECT;replace;/welcome;307` in the flight payload.
+3. Tab bar / section nav → they live inside the group's layout, so they do not exist until the gate is passed (driven: 0 chrome elements on `/welcome`).
+4. `/welcome` itself → exempt, or the redirect loops.
+5. `/api/*`, `/_next/*` → never render a layout; exempted explicitly so the predicate is total.
+
+A run refused as unmeasurable writes **no run and no evidence** by design, so the gate cannot key on the placement's writes alone — hence the explicit `onboarding_completed_at` marker in `settings` (no migration).
+
+### Criterion 10: what the spoken sample actually changes
+
+The two measurements are combined by one rule in `resolveLevel`: **the placed level is the higher of the two**, and an invalidated check contributes nothing at all.
+
+- **Refused check (the yes-biased advanced learner).** The check produces no level; the spoken band becomes the level, seeds the sub-level grammar, and the first session composes at it. This is the escape RETRO-004 §1 left open. The recognised **words are still not seeded** — a "yes" from a response style carries no information whichever instrument levels the speaker.
+- **Check measured lower than the speech.** The spoken band wins and the first session moves with it.
+- **Check measured at or above the speech.** The level is unchanged. What the take still buys is real and is not nothing: the enrollment take makes E-36 speaker attribution work from day one.
+- **No mic, denied permission, no key, over the cap, or a refusal to speak.** Nothing changes; the check places the learner (criterion 11).
+
+It never lowers a level and it never rescues a check that was merely thin.
+
+### Mutation proofs — 7 applied, 7 killed
+
+| Mutation | Result |
+|---|---|
+| M1 `onboardingRedirect` never redirects | KILLED (2 failed) |
+| M2 drop `if (complete) return null` — **the lockout** | KILLED (1 failed) |
+| M3 `onboardingComplete` always true | KILLED (3 failed) |
+| M4 placed level never reaches `seedPlacement` | KILLED (3 failed) |
+| M5 spoken band ignored | KILLED (4 failed) |
+| M6 progress invents its own green band | KILLED (2 failed) |
+| M7 placement guesses counted as this week's movement | KILLED (1 failed) |
+
+### Proof of which server answered
+
+Port **41467** (unusual), `next start` on a production build, `ERIKA_DATA_DIR`/`ERIKA_DB_PATH` pointed at a scratch directory `rm -rf`'d immediately before. Every response carried the string unique to this build — the `/welcome` h1, `"Erika listens to you speak Italian, and teaches from what it hears."` — which exists on no other branch. The driver also opened the disposable database directly and reported `30786 lemmas seeded, no learner`.
+
+### The look, at 390×844
+
+**Light.** Page `#F5F5F7`, white 18px cards, black accent. `/welcome`: an uppercase caption, a 34/700 display line, four cards, one pill button; only the API-key row carries a mark (green check when found, hollow ring when not) because it is the only fact the server checked. `/progress`: caption → display heading → level line; three cards with 28px tabular numerals over "Words / Grammar / Sounds"; "This week"; "Still fossilized"; then the map as named 2-column cards, each with a hairline bar that tints green only through resolved slips. Driven cold it read "0 Words · 48 in progress", "0 Sounds · Not started", "Nothing has moved in the last seven days" — no green anywhere.
+
+**Dark.** Page `#000`, cards `#1C1C1E`, ink `#F5F5F7`, hairline bars. Same layout, no washed-out text.
+
+**Reduced motion.** All 5 map cells render; every transform degrades to a fade.
+
+### Live verification (spend ≈ $0.018)
+
+Six `gpt-audio-mini` calls, two of them through the real route and ledgered at **$0.00307** each, `state: 'committed'`, nothing left pending.
+
+- Real Italian speech → `{"status":"measured","band":"B2"}`. The contract is validated against the live API, not a mock.
+- A tone with no speech → the model replies in **prose**, not JSON. That is what the repo's one-shot strict-JSON repair exists for, and the call was not using it; `withRepair` was added and a test now pins the prose shape. Found only by making a real call.
+
+### Tests changed
+
+- `tests/learn-today-render.test.tsx` — the one-action count now strips the goal section. **Argued, not quiet:** E-46 makes the ring the way into progress; it adds no row, no label and no pixel, and everything outside the ring is still counted exactly as before. This is another milestone's test and the change is named here for the reviewer.
+- `tests/two-tab-shell.test.ts`, `tests/session-notices.test.ts`, `tests/pronunciation-render.test.tsx`, `tests/pronunciation-route.test.ts` — href→file resolution now goes through `pageFileFor`, which knows about the route group. Behaviour unchanged.
+- `tests/knowledge-yield.test.ts` — the dev-inspector block removed with the inspector.
+
+### Unverified, named plainly
+
+- **The microphone paths were never exercised by a human.** Both recorders were driven only as far as "Skip"; `getUserMedia` cannot run headless. The enrollment take and the spoken take are wired to existing, shipped components (`EnrollmentRecorder`, `useRecorder`) but the round trip record → `/api/onboarding/spoken` → band was proved by `curl` with a file, not by speaking into the browser.
+- **The B2 verdict came from synthetic TTS**, not a real learner. It proves the contract and the parse, not the calibration of the band.
+- **No labelled Italian corpus exists**, so the spoken band is the model's impression, coarse by design, and it is only ever allowed to raise.
+- `/welcome` re-run by a placed learner supersedes their placement — correct and stated on screen, but not driven end to end a second time.
+- Three pre-existing unused-import lint warnings in `lib/analysis/audio-model.ts` predate this branch (verified by stashing); left alone as out of scope.
