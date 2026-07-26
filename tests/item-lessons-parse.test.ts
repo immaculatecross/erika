@@ -1,200 +1,232 @@
 import { describe, expect, it } from "vitest";
 import {
+  BREVITY_RETRY_INSTRUCTION,
   grammarLessonPrompt,
-  vocabLessonPrompt,
   parseItemLessonResponse,
-} from "@/lib/lessons/item-lessons";
+  vocabLessonPrompt,
+} from "@/lib/lessons/lesson-parse";
 import {
-  applyGlossFallback,
-  clozeIsDegraded,
-  gradeItemExercise,
-  MIN_ITEM_EXERCISES,
-  type NewItemLesson,
-} from "@/lib/lessons/item-lessons-view";
+  MAX_DRILLS,
+  MAX_EXAMPLES,
+  MAX_INTRO_WORDS,
+  MIN_DRILLS,
+  lessonFitsBudget,
+} from "@/lib/lessons/lesson-budget";
+import { MIN_ITEM_EXERCISES, drillIsUsable, type ItemExercise } from "@/lib/lessons/item-lessons-view";
 import { TextModelParseError } from "@/lib/lessons/text-model";
 import { loadSyllabus } from "@/lib/syllabus";
+import { ruleDrills } from "@/lib/lessons/syllabus-lesson";
 
-// WO criteria 1 & 2 (shape/parse halves), pure and deterministic — no DB, no
-// network. A generated grammar lesson has an explanation + ≥N exercises, each with
-// a correct answer + rationale and a meaning-first stem (never an error form); a
-// vocab lesson fronts meaning and applies the [P4] gloss-fallback to a degraded
-// cloze; a malformed reply is rejected whole.
+// The GENERATED lesson's prompt and parser (E-45). Pure — no DB, no model call.
+//
+// The parser's job changed shape at E-45 and the tests follow it. It used to reject
+// the WHOLE reply if one exercise of five was malformed, which meant a billed call
+// and nothing on screen; it now drops the bad exercise and TOPS THE LESSON UP from
+// the deterministic syllabus drills, so a partly-bad reply still becomes a complete
+// lesson. Expectations are derived from the fixture we wrote, never from the
+// parser's own answer.
 
-const RULE = loadSyllabus().rules[0]; // a real A1 rule (e.g. "alfabeto-suoni")
-const GRAMMAR_ITEM = { id: `rule:${RULE.key}`, kind: "grammar" as const };
+const RULE = loadSyllabus().rules.find((r) => r.key === "ausiliare-scelta")!;
+const FALLBACK = ruleDrills(RULE);
+const GRAMMAR_ITEM = { id: "rule:ausiliare-scelta", kind: "grammar" as const };
 const VOCAB_ITEM = { id: "lemma:casa#NOUN", kind: "vocab" as const };
 
-const GOOD_GRAMMAR = JSON.stringify({
-  intro: "Italian spelling maps letters to sounds predictably; stress usually falls on the penult.",
-  exercises: [
-    {
-      type: "multiple_choice",
-      prompt: "Which spelling is correct for the word meaning 'house'?",
-      options: ["casa", "kasa"],
-      answerIndex: 0,
-      answer: "casa",
-      rationale: "Italian writes the /k/ before a with the letter c, not k.",
-    },
-    {
-      type: "cloze",
-      prompt: "Completa: la parola 'libro' si divide in li-____.",
-      answer: "bro",
-      derivable: true,
-      rationale: "The syllable break falls before the consonant cluster.",
-    },
-    {
-      type: "cloze",
-      prompt: "Scrivi la sillaba mancante: ca-____ (casa).",
-      answer: "sa",
-      derivable: true,
-      rationale: "casa splits ca-sa.",
-    },
-  ],
-});
+function drill(over: Partial<ItemExercise> = {}): Record<string, unknown> {
+  return {
+    prompt: "Ieri ____ andato al mare.",
+    options: ["sono", "ho"],
+    answerIndex: 0,
+    answer: "sono",
+    invite: "click",
+    rationale: "andare takes essere.",
+    ...over,
+  };
+}
 
-const GOOD_VOCAB = JSON.stringify({
-  intro: "«casa» significa 'home'; è un sostantivo femminile. Esempio: «Torno a casa mia stasera».",
-  glossEn: "house, home",
-  exercises: [
-    {
-      type: "multiple_choice",
-      prompt: "Which word means 'house'?",
-      options: ["casa", "cassa"],
-      answerIndex: 0,
-      answer: "casa",
-      rationale: "«casa» is home; «cassa» is a crate/till.",
-    },
-    // A well-formed cloze: the answer IS derivable from context → no gloss added.
-    {
-      type: "cloze",
-      prompt: "Stasera torno a ____ dopo il lavoro.",
-      answer: "casa",
-      derivable: true,
-      rationale: "The natural completion is 'a casa' (home).",
-    },
-    // A DEGRADED cloze (register upgrade, target not derivable) → gloss-fallback fires.
-    {
-      type: "cloze",
-      prompt: "____",
-      answer: "casa",
-      derivable: false,
-      rationale: "The target word, glossed for the learner.",
-    },
-  ],
-});
+function reply(body: Record<string, unknown>): string {
+  return JSON.stringify(body);
+}
 
-describe("item-lesson prompts are colto-aware and meaning-first (criteria 1, 2, D-23)", () => {
-  it("the grammar prompt injects the register and the rule, and forbids error stems", () => {
-    const p = grammarLessonPrompt("Italian", "colto", RULE);
-    expect(p).toContain("colto");
-    expect(p).toContain(RULE.title);
-    expect(p.toLowerCase()).toContain("meaning-first");
-    expect(p).toMatch(/NEVER put an incorrect or error form/i);
+describe("the prompt states the contract the runner depends on", () => {
+  const prompt = grammarLessonPrompt("Italian", "colto", RULE);
+
+  it("demands options on EVERY exercise, including a spoken one", () => {
+    // The click fallback is what keeps a voice drill from becoming a dead end, so
+    // the model has to be told it is mandatory rather than left to infer it.
+    expect(prompt).toContain('"options" is REQUIRED on every exercise');
+    expect(prompt).toContain("they are the fallback when speech recognition fails");
   });
 
-  it("the vocab prompt asks for a gloss and a correct in-register example", () => {
-    const p = vocabLessonPrompt("Italian", "colto", "casa", "NOUN");
-    expect(p).toContain("colto");
-    expect(p).toContain("casa");
-    expect(p).toContain("glossEn");
+  it("never invites a typed answer", () => {
+    for (const banned of ["fill_in", "rewrite", "cloze", "type the", "typed"]) {
+      expect(prompt.toLowerCase()).not.toContain(banned);
+    }
+  });
+
+  it("states the five-minute budget in numbers the model can obey", () => {
+    expect(prompt).toContain(`at most ${MAX_INTRO_WORDS} words`);
+    expect(prompt).toContain(`at most ${MAX_EXAMPLES} worked examples`);
+    expect(prompt).toContain(`exactly ${MIN_DRILLS}-${MAX_DRILLS} exercises`);
+  });
+
+  it("the brevity retry asks for LESS, which is the only thing that can fix a truncation", () => {
+    expect(BREVITY_RETRY_INSTRUCTION).toContain("cut off");
+    expect(BREVITY_RETRY_INSTRUCTION).toContain("MUCH shorter");
+  });
+
+  it("a vocabulary prompt asks for the English glosses an offline source cannot supply", () => {
+    expect(vocabLessonPrompt("Italian", "colto", "casa", "NOUN")).toContain('"glossEn"');
   });
 });
 
-describe("parsing a grammar lesson (criterion 1)", () => {
-  it("yields the explanation + ≥N exercises, each with a correct answer and rationale", () => {
-    const lesson = parseItemLessonResponse(GRAMMAR_ITEM, "colto", GOOD_GRAMMAR);
-    expect(lesson.kind).toBe("grammar");
-    expect(lesson.glossEn).toBeNull();
-    expect(lesson.intro.length).toBeGreaterThan(0);
+describe("drillIsUsable — each clause, on its own", () => {
+  // A table, one malformation per row, so every clause has a test that goes red
+  // when only that clause is deleted. Grouping them into one "malformed drill"
+  // fixture is how a guard ends up unkillable: an earlier clause catches the input
+  // and the later ones are never reached.
+  const good = {
+    type: "choice" as const,
+    prompt: "Ieri ____ andato.",
+    options: ["sono", "ho"],
+    answerIndex: 0,
+    answer: "sono",
+    invite: "click" as const,
+    rationale: "essere.",
+  };
+
+  it("accepts a well-formed drill", () => {
+    expect(drillIsUsable(good)).toBe(true);
+  });
+
+  const bad: [string, Partial<ItemExercise>][] = [
+    ["no cue", { prompt: "  " }],
+    ["no answer", { answer: "" }],
+    ["no reason", { rationale: "" }],
+    // The click fallback is what keeps a voice drill from becoming a dead end, so
+    // "options are optional" must be a test failure, not a style question.
+    ["one option", { options: ["sono"] }],
+    ["no options at all", { options: undefined as unknown as string[] }],
+    ["answerIndex out of range", { answerIndex: 5 }],
+    ["answerIndex negative", { answerIndex: -1 }],
+    // The answer key must actually point at the answer, or clicking the right
+    // option grades wrong — the same betrayal as a mishearing, from our own bug.
+    ["answer is not the option at answerIndex", { answer: "boh" }],
+    ["duplicate options", { options: ["sono", "sono"], answer: "sono", answerIndex: 0 }],
+  ];
+
+  for (const [name, over] of bad) {
+    it(`rejects: ${name}`, () => {
+      expect(drillIsUsable({ ...good, ...over } as ItemExercise)).toBe(false);
+    });
+  }
+});
+
+describe("parseItemLessonResponse — a usable lesson or a truthful failure", () => {
+  it("parses a well-formed reply into the one exercise shape", () => {
+    const lesson = parseItemLessonResponse(
+      GRAMMAR_ITEM,
+      "colto",
+      reply({
+        intro: "Andare takes essere.",
+        examples: ["Sono andato al mare."],
+        exercises: [drill(), drill({ invite: "speak", prompt: "Ieri ____ corso.", answer: "sono" })],
+      }),
+    );
+    expect(lesson.exercises).toHaveLength(2);
+    expect(lesson.exercises.every(drillIsUsable)).toBe(true);
+    expect(lesson.exercises.map((e) => e.invite)).toEqual(["click", "speak"]);
+    expect(lesson.examples).toEqual(["Sono andato al mare."]);
+    expect(lessonFitsBudget(lesson)).toBe(true);
+  });
+
+  it("re-derives answerIndex from the answer rather than trusting a mis-numbered reply", () => {
+    // Ground truth from the fixture: "sono" sits at index 0, the reply says 1.
+    const lesson = parseItemLessonResponse(
+      GRAMMAR_ITEM,
+      "colto",
+      reply({ intro: "x", exercises: [drill({ answerIndex: 1 }), drill()] }),
+    );
+    expect(lesson.exercises[0].answerIndex).toBe(0);
+    expect(lesson.exercises[0].options[lesson.exercises[0].answerIndex]).toBe("sono");
+  });
+
+  it("DROPS a malformed exercise and tops the lesson up from the syllabus drills", () => {
+    // One good exercise, two unusable ones (no options; answer absent from options).
+    const lesson = parseItemLessonResponse(
+      GRAMMAR_ITEM,
+      "colto",
+      reply({
+        intro: "Andare takes essere.",
+        exercises: [drill(), { prompt: "p", answer: "a", rationale: "r" }, drill({ answer: "nowhere" })],
+      }),
+      FALLBACK,
+    );
+    // The lesson survives at the floor, and every exercise in it is renderable.
     expect(lesson.exercises.length).toBeGreaterThanOrEqual(MIN_ITEM_EXERCISES);
-    for (const ex of lesson.exercises) {
-      expect(ex.answer.length).toBeGreaterThan(0);
-      expect(ex.rationale.length).toBeGreaterThan(0);
-      expect(ex.prompt.length).toBeGreaterThan(0);
-    }
+    expect(lesson.exercises.every(drillIsUsable)).toBe(true);
+    // The top-up really came from the deterministic set, not from thin air.
+    expect(lesson.exercises.some((e) => FALLBACK.some((f) => f.prompt === e.prompt))).toBe(true);
   });
 
-  it("no exercise stem is an error form: the MC stem is never a wrong option and the target IS the correct one", () => {
-    const lesson = parseItemLessonResponse(GRAMMAR_ITEM, "colto", GOOD_GRAMMAR);
-    for (const ex of lesson.exercises) {
-      if (ex.type === "multiple_choice") {
-        // The retrieval target is the correct option (parser enforces this)…
-        expect(ex.options![ex.answerIndex!]).toBe(ex.answer);
-        // …and the stem is not any of the wrong options (the cue is never the error).
-        const wrong = ex.options!.filter((_, i) => i !== ex.answerIndex);
-        for (const w of wrong) expect(ex.prompt).not.toBe(w);
-      }
-    }
+  it("refuses only when NOTHING usable survives and there is no fallback", () => {
+    expect(() =>
+      parseItemLessonResponse(GRAMMAR_ITEM, "colto", reply({ intro: "x", exercises: [{ prompt: "p" }] })),
+    ).toThrow(TextModelParseError);
   });
 
-  it("rejects a multiple_choice whose answer is not the option at answerIndex (a wrong target)", () => {
-    const bad = JSON.stringify({
-      intro: "x",
-      exercises: [
-        { type: "multiple_choice", prompt: "p", options: ["right", "wrong"], answerIndex: 1, answer: "right", rationale: "r" },
-      ],
-    });
-    expect(() => parseItemLessonResponse(GRAMMAR_ITEM, "colto", bad)).toThrow(TextModelParseError);
+  it("refuses a reply with no intro — there is nothing to teach", () => {
+    expect(() =>
+      parseItemLessonResponse(GRAMMAR_ITEM, "colto", reply({ exercises: [drill(), drill()] }), FALLBACK),
+    ).toThrow(TextModelParseError);
   });
 
-  it("rejects a lesson with too few exercises, or a malformed reply, whole", () => {
-    const tooFew = JSON.stringify({
-      intro: "x",
-      exercises: [{ type: "cloze", prompt: "a ____", answer: "b", rationale: "r" }],
-    });
-    expect(() => parseItemLessonResponse(GRAMMAR_ITEM, "colto", tooFew)).toThrow(TextModelParseError);
-    expect(() => parseItemLessonResponse(GRAMMAR_ITEM, "colto", "not json")).toThrow(TextModelParseError);
-  });
-});
-
-describe("parsing a vocab lesson + the [P4] gloss-fallback (criterion 2)", () => {
-  it("requires a glossEn and fronts meaning", () => {
-    const lesson = parseItemLessonResponse(VOCAB_ITEM, "colto", GOOD_VOCAB);
-    expect(lesson.kind).toBe("vocab");
-    expect(lesson.glossEn).toBe("house, home");
-    const missing = JSON.stringify({ intro: "x", exercises: JSON.parse(GOOD_VOCAB).exercises });
-    expect(() => parseItemLessonResponse(VOCAB_ITEM, "colto", missing)).toThrow(TextModelParseError);
+  it("refuses a vocabulary lesson with no English gloss", () => {
+    expect(() =>
+      parseItemLessonResponse(VOCAB_ITEM, "colto", reply({ intro: "x", exercises: [drill(), drill()] })),
+    ).toThrow(TextModelParseError);
   });
 
-  it("a degraded cloze gets an English gloss front, an answerable one — never a bare ____", () => {
-    const lesson = parseItemLessonResponse(VOCAB_ITEM, "colto", GOOD_VOCAB);
-    const clozes = lesson.exercises.filter((e) => e.type === "cloze");
-    const degraded = clozes.find((e) => e.prompt.trim() === "____")!;
-    expect(degraded.gloss).toBe("house, home"); // gloss attached from the lemma gloss
-    // The well-formed cloze (context makes the answer derivable) is left untouched.
-    const wellFormed = clozes.find((e) => e.prompt.includes("torno a ____"))!;
-    expect(wellFormed.gloss).toBeUndefined();
+  it("carries a vocabulary lesson's words and gloss", () => {
+    const lesson = parseItemLessonResponse(
+      VOCAB_ITEM,
+      "colto",
+      reply({
+        intro: "casa is home.",
+        glossEn: "house",
+        newWords: [{ lemma: "casa", gloss: "house", example: "Torno a casa." }, { lemma: "", gloss: "x" }],
+        exercises: [drill(), drill()],
+      }),
+    );
+    expect(lesson.glossEn).toBe("house");
+    // The malformed word is dropped, the good one kept — same policy as exercises.
+    expect(lesson.newWords).toEqual([{ lemma: "casa", gloss: "house", example: "Torno a casa." }]);
   });
 
-  it("clozeIsDegraded flags a bare blank and a derivable:false flag, not a contextful gap", () => {
-    expect(clozeIsDegraded({ type: "cloze", prompt: "____", answer: "casa", rationale: "r" })).toBe(true);
-    expect(clozeIsDegraded({ type: "cloze", prompt: "x", answer: "y", derivable: false, rationale: "r" })).toBe(true);
-    expect(
-      clozeIsDegraded({ type: "cloze", prompt: "Stasera torno a ____ dopo il lavoro.", answer: "casa", rationale: "r" }),
-    ).toBe(false);
+  it("TRIMS an over-budget reply instead of rejecting work the learner paid for", () => {
+    const lesson = parseItemLessonResponse(
+      GRAMMAR_ITEM,
+      "colto",
+      reply({
+        intro: Array.from({ length: MAX_INTRO_WORDS * 3 }, () => "parola").join(" "),
+        examples: Array.from({ length: MAX_EXAMPLES + 6 }, (_, i) => `Esempio ${i}.`),
+        exercises: Array.from({ length: MAX_DRILLS + 5 }, (_, i) => drill({ prompt: `Cue ${i} ____ .` })),
+      }),
+    );
+    // Expectations from the CAPS, not from what the parser returned.
+    expect(lesson.intro.split(/\s+/).length).toBeLessThanOrEqual(MAX_INTRO_WORDS);
+    expect(lesson.examples.length).toBeLessThanOrEqual(MAX_EXAMPLES);
+    expect(lesson.exercises.length).toBeLessThanOrEqual(MAX_DRILLS);
+    // And the POSITIVE: a real lesson still exists and it fits the promise.
+    expect(lesson.exercises.length).toBeGreaterThanOrEqual(MIN_DRILLS);
+    expect(lessonFitsBudget(lesson)).toBe(true);
   });
 
-  it("applyGlossFallback is a no-op on a grammar lesson (no glossEn to use)", () => {
-    const grammar: NewItemLesson = {
-      itemId: "rule:x",
-      kind: "grammar",
-      register: "colto",
-      intro: "i",
-      glossEn: null,
-      exercises: [{ type: "cloze", prompt: "____", answer: "a", derivable: false, rationale: "r" }],
-    };
-    expect(applyGlossFallback(grammar)).toEqual(grammar);
-  });
-});
-
-describe("deterministic exercise grading (criterion 1/2)", () => {
-  it("grades MC by index and cloze by normalized string match", () => {
-    const lesson = parseItemLessonResponse(GRAMMAR_ITEM, "colto", GOOD_GRAMMAR);
-    const mc = lesson.exercises.find((e) => e.type === "multiple_choice")!;
-    expect(gradeItemExercise(mc, mc.answerIndex!)).toBe(true);
-    expect(gradeItemExercise(mc, mc.answerIndex! === 0 ? 1 : 0)).toBe(false);
-    const cloze = lesson.exercises.find((e) => e.type === "cloze")!;
-    expect(gradeItemExercise(cloze, `  ${cloze.answer.toUpperCase()} `)).toBe(true); // case/space-insensitive
-    expect(gradeItemExercise(cloze, "definitely wrong")).toBe(false);
+  it("tolerates a fenced reply", () => {
+    const lesson = parseItemLessonResponse(
+      GRAMMAR_ITEM,
+      "colto",
+      "```json\n" + reply({ intro: "x", exercises: [drill(), drill()] }) + "\n```",
+    );
+    expect(lesson.exercises).toHaveLength(2);
   });
 });

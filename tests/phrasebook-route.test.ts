@@ -54,7 +54,9 @@ function seed(sessionId: string, n: number) {
       flagged: true,
       deepDone: true,
       findings: [
-        { quote: `q${i}`, correction: `c${i}`, category: "grammar", explanation: `e${i}`, severity: "high", startMs: i * 1000, endMs: i * 1000 + 500 },
+        // Cardable shapes (D-13, E-45): the pin path only mints a card for a finding
+        // whose correction has a localized change to cue from.
+        { quote: `ieri ho andato al posto ${i}`, correction: `ieri sono andato al posto ${i}`, category: "grammar", explanation: `e${i}`, severity: "high", startMs: i * 1000, endMs: i * 1000 + 500 },
       ],
     });
   }

@@ -1,63 +1,83 @@
-import { normalizeAnswer } from "./lessons-view";
 import { DEFAULT_REGISTER as REGISTER_DEFAULT } from "../register";
+import { gradeSpokenAnswer } from "./spoken-answer";
 
-// Client-safe view types and pure helpers for the E-32 item-lesson runner. The
-// server generator (lib/lessons/item-lessons.ts) imports node:crypto and
-// better-sqlite3 at module load, so the browser runner cannot import the lesson
-// shapes from there — this module is their single client-safe home, plus the
-// deterministic checks the runner needs (exercise grading, the completion score)
-// and the [RETRO-002 P4] gloss-fallback that keeps a degraded cloze answerable.
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ONE LESSON FORMAT (E-45 criterion 1) and THE ONE EXERCISE VOCABULARY
+// (criterion 2). Client-safe: the server generator imports node:crypto and
+// better-sqlite3 at module load, so the shapes and the deterministic grading live
+// here, where both the browser runner and the server can use them.
 //
-// An item-lesson targets ONE composer-chosen knowledge item: a grammar rule
-// (`rule:<key>`) or a lemma (`lemma:<lemma>#<POS>`). Grammar lessons carry a rule
-// explanation; vocabulary lessons carry an intro (meaning + a correct colto
-// example) and the lemma's English gloss. Every exercise is meaning-first — an
-// English instruction/gloss or an Italian context gap — never the learner's own
-// erroneous form (D-18); the retrieval target is always the CORRECT form.
+// What this replaces. There were two disjoint lesson systems and four exercise
+// kinds: pattern lessons did `multiple_choice`, a TYPED `fill_in`, and a `rewrite`
+// GRADED BY A BILLED MODEL CALL; item lessons did `multiple_choice` and a TYPED
+// `cloze`. Two runners, two vocabularies, one learner — *"the keyword here is
+// simplify."*
+//
+// There is now ONE exercise, and the simplification is sharper than merging two
+// lists. A drill is a cue, a set of options, and one correct answer. `invite` says
+// how the learner is asked to answer FIRST — tap an option, or say it aloud — and
+// that is a presentation choice, not a second kind of exercise:
+//
+//   * every drill carries `options`, so a spoken drill ALWAYS has a working click
+//     path. That is what makes voice safe to offer: no microphone, no API key, a
+//     denied permission, a bad transcript three times running — every one of those
+//     falls back to tapping instead of ending at a wall (D-26: no route may end at
+//     a wall);
+//   * there is exactly ONE answer key and ONE grading function, so a spoken answer
+//     and a tapped answer cannot disagree about what is correct;
+//   * typing is gone. Not hidden — gone. There is no field to type into.
+//
+// D-18 is unchanged and is why `options` needs a rule of its own: the cue is
+// meaning-first and the retrieval target is always the CORRECT form. Distractors
+// are ordinary wrong Italian, never the learner's own recorded error.
+// ─────────────────────────────────────────────────────────────────────────────
 
-/** The two lesson kinds E-32 generates, keyed to a knowledge item's kind. */
+/** The two lesson kinds, keyed to a knowledge item's kind. */
 export const ITEM_LESSON_KINDS = ["grammar", "vocab"] as const;
 export type ItemLessonKind = (typeof ITEM_LESSON_KINDS)[number];
 
-/** Exercise kinds an item-lesson carries. Both grade DETERMINISTICALLY on the
- *  client (multiple choice by index, cloze by normalized string match), so
- *  completing one needs NO second billable model call — the generation call is the
- *  only money the runner spends (WO: do not fork a second money path). */
-export const ITEM_EXERCISE_TYPES = ["multiple_choice", "cloze"] as const;
+/**
+ * How the learner is invited to answer. BOTH are always possible on every drill —
+ * this only decides which is offered first, so the vocabulary is one exercise with
+ * two front doors, not two exercises (D-26: subtraction wins ties).
+ */
+export const DRILL_INVITES = ["click", "speak"] as const;
+export type DrillInvite = (typeof DRILL_INVITES)[number];
+
+/** Kept as the name the parser and the stored bodies use. One member, because
+ *  there is one exercise; it stays an array so a future kind cannot be added
+ *  without touching the parser, the runner and the budget together. */
+export const ITEM_EXERCISE_TYPES = ["choice"] as const;
 export type ItemExerciseType = (typeof ITEM_EXERCISE_TYPES)[number];
-
-/** The default register for a generated lesson (D-23, default colto). The E-33
- *  register dial (lib/register.ts) is now the live source; lesson generation reads
- *  it from Settings. This default remains for the estimate path and any caller
- *  without a Settings context, and is the single shared constant (no divergence). */
-export const DEFAULT_REGISTER: string = REGISTER_DEFAULT;
-
-export function defaultRegister(): string {
-  return DEFAULT_REGISTER;
-}
 
 export interface ItemExercise {
   type: ItemExerciseType;
-  /** The meaning-first cue: an English instruction/gloss or an Italian context with
-   *  a gap. NEVER an error form (D-18). For a cloze the gap is written `____`. */
+  /** The meaning-first cue: an English instruction/gloss, or an Italian sentence
+   *  with a gap written `____`. NEVER an error form (D-18). */
   prompt: string;
-  /** An English gloss fronting the cue when the target is not inferable from context
-   *  ([RETRO-002 P4] — a register upgrade / whole-phrase rewrite). Attached by the
-   *  gloss-fallback so a degraded cloze is answerable, never a bare `____` (D-18). */
+  /** An English gloss fronting the cue when the target is not inferable from the
+   *  Italian alone — D-18 explicitly permits an English-gloss front. */
   gloss?: string;
-  /** multiple_choice: the options shown; the correct one is `answer`. */
-  options?: string[];
-  /** multiple_choice: 0-based index of the correct option in `options`. */
-  answerIndex?: number;
-  /** The correct retrieval target — the string a cloze expects, or the correct MC
-   *  option's text. The lesson's answer key; always the CORRECT form (D-18). */
+  /** The options shown. ALWAYS present and always ≥2, including on a spoken drill:
+   *  this is the click fallback that keeps voice from ever becoming a dead end. */
+  options: string[];
+  /** 0-based index of the correct option. `options[answerIndex] === answer`. */
+  answerIndex: number;
+  /** The correct retrieval target — always the CORRECT form (D-18). */
   answer: string;
-  /** Whether a cloze's answer is inferable from its surrounding context. `false`
-   *  (or an absent/bare context) triggers the gloss-fallback for vocab lessons. */
-  derivable?: boolean;
-  /** Why the answer is correct — the correction-forward feedback shown after
-   *  grading (D-18: correction headlined at feedback time). */
+  /** How the learner is asked to answer first. */
+  invite: DrillInvite;
+  /** Why the answer is correct — correction-forward feedback (D-18). */
   rationale: string;
+}
+
+/** One word a vocabulary lesson teaches: the Italian, and what it means. */
+export interface LessonWord {
+  lemma: string;
+  /** English gloss. A vocabulary lesson without one teaches nothing. */
+  gloss: string;
+  /** One correct Italian sentence using it, at the D-23 register. */
+  example?: string;
 }
 
 export interface ItemLesson {
@@ -65,12 +85,18 @@ export interface ItemLesson {
   kind: ItemLessonKind;
   /** The register the lesson was written in (D-23) — "colto" by default. */
   register: string;
-  /** Grammar: the rule explanation. Vocab: the intro (meaning + a correct example). */
+  /** The teaching text, in plain English. Bounded by MAX_INTRO_WORDS. */
   intro: string;
-  /** Vocab only: the lemma's English gloss — the gloss-fallback source (P4). NULL for
-   *  grammar lessons (a rule has no single English gloss). */
+  /** Worked Italian examples at the register — "three or four", per the operator. */
+  examples: string[];
+  /** The words a vocabulary lesson teaches — "about ten", per the operator. */
+  newWords: LessonWord[];
+  /** Vocab only: the headline lemma's English gloss. NULL for grammar lessons. */
   glossEn: string | null;
   exercises: ItemExercise[];
+  /** True when this lesson was built from the syllabus with NO model call — the
+   *  keyless path (D-27), and the reason an empty database still gets a lesson. */
+  deterministic?: boolean;
 }
 
 /** A lesson body ready to persist (no created_at yet) — the parsed model output. */
@@ -84,56 +110,60 @@ export interface LearnItemSummary {
   label: string;
   /** A secondary label: a rule's CEFR level, or a lemma's part of speech. */
   detail: string;
-  /** True once the lesson is generated (re-opening it is a free cache hit). */
+  /** True once a lesson exists for it. [E-45] A grammar item is ALWAYS true: the
+   *  syllabus lesson needs no generation, so it is ready before anything is spent. */
   hasLesson: boolean;
-  /** Worst-case generation cost in USD; null once the lesson exists. */
+  /** Worst-case generation cost in USD; null when no call is needed at all. */
   estimateUsd: number | null;
 }
 
-/** How many exercises a well-formed item-lesson must carry (WO criteria 1 & 2). */
-export const MIN_ITEM_EXERCISES = 3;
+/** The fewest exercises a GENERATED lesson must carry to be worth what it cost.
+ *  Below this the deterministic drills top it up rather than the learner being
+ *  handed a lesson with one question in it. */
+export const MIN_ITEM_EXERCISES = 2;
 
-/**
- * A cloze cue is DEGRADED when its answer is not inferable from the surrounding
- * context: the model flagged `derivable === false`, or the prompt is effectively a
- * bare blank (a register upgrade / whole-phrase rewrite where the gap gives no
- * lexical footing). Such a cue needs an English gloss to be answerable (P4).
- */
-export function clozeIsDegraded(ex: ItemExercise): boolean {
-  if (ex.type !== "cloze") return false;
-  if (ex.derivable === false) return true;
-  // "Bare blank": the non-blank context has fewer than two real words, so the gap
-  // cannot be inferred (e.g. "____" or "In colto: ____").
-  const context = ex.prompt.replace(/_{2,}/g, " ").replace(/[^\p{L}\s]/gu, " ").trim();
-  const words = context.split(/\s+/).filter((w) => w.length > 1);
-  return words.length < 2;
+/** The default register for a generated lesson (D-23, default colto). */
+export const DEFAULT_REGISTER: string = REGISTER_DEFAULT;
+
+export function defaultRegister(): string {
+  return DEFAULT_REGISTER;
 }
 
 /**
- * [RETRO-002 P4] Attach an English gloss to any degraded cloze in a VOCAB lesson
- * that lacks one, using the lesson's `glossEn`. Pure and idempotent — a well-formed
- * cloze and a cloze that already carries a gloss are left untouched, and a lesson
- * with no `glossEn` is returned unchanged (nothing to gloss with). D-18 explicitly
- * permits an English-gloss front, so a degraded cue becomes answerable instead of an
- * unanswerable `____`.
+ * Whether an exercise is well-formed enough to put in front of a learner.
+ *
+ * This is the drill-side twin of `frontIsAnswerable` in lib/cards-view.ts, and it
+ * exists for the same reason: a drill nobody can answer is worse than no drill.
+ * Every rule is structural, so a legacy stored body (a typed `cloze` with no
+ * options) fails them and is dropped on read rather than rendered as a broken
+ * control — which is what lets the format change without a migration.
  */
-export function applyGlossFallback(lesson: NewItemLesson): NewItemLesson {
-  if (lesson.kind !== "vocab" || !lesson.glossEn) return lesson;
-  const gloss = lesson.glossEn;
-  const exercises = lesson.exercises.map((ex) =>
-    ex.type === "cloze" && !ex.gloss && clozeIsDegraded(ex) ? { ...ex, gloss } : ex,
-  );
-  return { ...lesson, exercises };
+export function drillIsUsable(ex: ItemExercise): boolean {
+  if (!ex?.prompt?.trim() || !ex?.answer?.trim() || !ex?.rationale?.trim()) return false;
+  if (!Array.isArray(ex.options) || ex.options.length < 2) return false;
+  if (!Number.isInteger(ex.answerIndex) || ex.answerIndex < 0 || ex.answerIndex >= ex.options.length) return false;
+  if (ex.options[ex.answerIndex] !== ex.answer) return false;
+  // Distinct options: two identical choices make one of them unanswerable.
+  return new Set(ex.options.map((o) => o.trim().toLowerCase())).size === ex.options.length;
 }
 
-/** Grade one resolved exercise. Multiple choice by index; cloze by normalized
- *  (case/whitespace-insensitive) string match against the answer — deterministic,
- *  no model call. `response` is the picked index (MC) or typed text (cloze). */
+/** Drop every stored exercise the current format cannot render — a legacy body, or
+ *  a model reply that produced fewer good drills than it promised. */
+export function usableDrills(exercises: readonly ItemExercise[]): ItemExercise[] {
+  return (exercises ?? []).filter(drillIsUsable);
+}
+
+/**
+ * Grade one drill. DETERMINISTIC and never a model call — a tapped index compares
+ * by index; a spoken answer compares by normalized string against the same answer
+ * key (lib/lessons/spoken-answer.ts carries the normalization rules and the
+ * deliberate refusal to do fuzzy matching).
+ *
+ * `response` is the picked index (click) or the transcript (speak).
+ */
 export function gradeItemExercise(ex: ItemExercise, response: number | string): boolean {
-  if (ex.type === "multiple_choice") {
-    return typeof response === "number" && response === ex.answerIndex;
-  }
-  return typeof response === "string" && normalizeAnswer(response) === normalizeAnswer(ex.answer);
+  if (typeof response === "number") return response === ex.answerIndex;
+  return gradeSpokenAnswer(ex.answer, response);
 }
 
 /** The completion score (0..1): fraction of exercises answered correctly. */

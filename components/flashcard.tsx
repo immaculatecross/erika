@@ -15,7 +15,8 @@ import { CompareControl } from "@/components/compare-control";
 // e2e can prove reduced-motion took the crossfade path.
 
 interface Props {
-  /** The meaning-first stimulus (a context gap / category cue) — never the error. */
+  /** The meaning-first stimulus: an Italian context gap toward the correct form —
+   *  never the error, and never a bare category word (E-45). */
   front: string;
   /** The correct form — the retrieval target, headlined on the back. */
   correction: string;
@@ -55,7 +56,7 @@ export function Flashcard({ front, correction, why, error, category, flipped, fi
               {flipped ? (
                 <Back category={category} correction={correction} why={why} error={error} findingId={findingId} />
               ) : (
-                <Front category={category} front={front} />
+                <Front front={front} />
               )}
             </Face>
           </motion.div>
@@ -77,7 +78,7 @@ export function Flashcard({ front, correction, why, error, category, flipped, fi
         transition={SPRING}
       >
         <Face face="front" className="[backface-visibility:hidden] [transform:rotateY(0deg)]">
-          <Front category={category} front={front} />
+          <Front front={front} />
         </Face>
         <Face face="back" className="[backface-visibility:hidden] [transform:rotateY(180deg)]">
           <Back category={category} correction={correction} why={why} error={error} findingId={findingId} />
@@ -114,10 +115,16 @@ function CategoryLabel({ category }: { category: string }) {
   );
 }
 
-function Front({ category, front }: { category: string; front: string }) {
+// [E-45 criterion 4] The front carries NO CategoryLabel. It used to, directly above a
+// front that could itself degrade to "____ · grammar" — so the learner read GRAMMAR
+// over "____ · grammar" and was asked to recall something unrecallable, twice. The
+// degradation is gone (lib/cards-view.ts), and the label above the cue goes with it:
+// the front's whole job is to be the one thing you look at, and the category is a
+// filing word, not a cue. It stays on the BACK, where it labels the correction and is
+// the only place it appears.
+function Front({ front }: { front: string }) {
   return (
     <>
-      <CategoryLabel category={category} />
       <p data-card-front className="text-[28px] font-semibold leading-tight tracking-tight text-ink">
         {front}
       </p>

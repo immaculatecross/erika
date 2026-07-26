@@ -15,11 +15,42 @@ export class TextModelUnavailableError extends Error {}
 /** Thrown when a text response cannot be parsed into the expected shape. */
 export class TextModelParseError extends Error {}
 
+/**
+ * [E-45] Thrown when the reply was CUT OFF at the token ceiling rather than finished.
+ *
+ * This is a distinct failure from `TextModelParseError` and conflating them cost the
+ * learner money. A live probe found an item-lesson call that resolved, was billed, and
+ * produced no lesson: the reply came back `finish_reason: "length"`, so it was a half
+ * a JSON object, `extractJsonObject` failed on it, and the route answered "the lesson
+ * model returned an unreadable response" — which is not what happened and gives nobody
+ * anything to do. Reproduced here at a forced 200-token ceiling: 6 of 6 replies came
+ * back `length` and 6 of 6 failed to parse.
+ *
+ * Naming it separately is what makes the E-16 bounded repair possible: "you ran out of
+ * room, answer more briefly" is a request a model can actually satisfy, where "that was
+ * unreadable" is not.
+ */
+export class TextModelTruncatedError extends Error {}
+
 /** One completion: the reply text plus the token usage that determines its cost. */
 export interface TextCompletion {
   text: string;
   promptTokens: number;
   completionTokens: number;
+  /**
+   * The provider's stop reason — `"length"` means the reply was cut off, not finished.
+   *
+   * The real client used to DISCARD this field, which is the whole root cause above:
+   * with it thrown away, a truncated reply is indistinguishable from a malformed one.
+   * Optional so a hand-built mock without it behaves exactly as before (absent is
+   * simply "we were not told"), never so a real truncation can pass unnoticed.
+   */
+  finishReason?: string | null;
+}
+
+/** Whether a resolved completion was cut off at the ceiling. */
+export function wasTruncated(completion: TextCompletion): boolean {
+  return completion.finishReason === "length";
 }
 
 /** The seam generation and grading depend on. The real impl calls OpenAI; tests mock it. */
@@ -89,15 +120,18 @@ export const openAiTextModel: TextModelClient = {
       throw new TextModelUnavailableError(`${TEXT_MODEL} call failed: ${res.status} ${res.statusText} ${body}`.trim());
     }
     const json = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: { message?: { content?: string }; finish_reason?: string }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
-    const content = json.choices?.[0]?.message?.content;
+    const choice = json.choices?.[0];
+    const content = choice?.message?.content;
     if (typeof content !== "string") throw new TextModelParseError(`${TEXT_MODEL} returned no message content.`);
     return {
       text: content,
       promptTokens: json.usage?.prompt_tokens ?? 0,
       completionTokens: json.usage?.completion_tokens ?? 0,
+      // Carried, not discarded (E-45). See `TextModelTruncatedError`.
+      finishReason: choice?.finish_reason ?? null,
     };
   },
 };

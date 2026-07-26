@@ -10,13 +10,10 @@ import { enqueueAnalysis } from "@/lib/analysis/cascade";
 import { generateCards } from "@/lib/cards";
 import { buildPlan, getViewedLetterWeek, markLetterViewed } from "@/lib/plan";
 import { buildFocusModel } from "@/lib/focus";
-import { insertLesson } from "@/lib/lessons/lessons";
-import { lessonEstimateUsd } from "@/lib/lessons/estimate";
-import { derivePatterns } from "@/lib/lessons/patterns";
-import { listIncludedFindings } from "@/lib/findings-model";
 
-// E-18 criterion 1: /practice composes a daily plan — the due-card count, the
-// one lesson Focus's severity-weighted ranking prescribes next (the ranking is
+// E-18 criterion 1: /practice composes a daily plan — the due-card count and the
+// letter's week. [E-45] The per-category pattern lesson it used to prescribe (and
+// price) is gone with the format; today's lesson is chosen at the knowledge edge
 // REUSED from computeFocus, asserted against buildFocusModel itself, never a
 // second scoring), and the unread letter for the latest ISO week, whose viewed
 // marker persists in the existing settings kv storage (no migration).
@@ -46,8 +43,8 @@ function seed(db: Db, id: string, findings: { category: Category; severity: Seve
     flagged: true,
     deepDone: true,
     findings: findings.map((f, i) => ({
-      quote: `q${i}`,
-      correction: `c${i}`,
+      quote: `ieri ho andato al posto ${i}`,
+      correction: `ieri sono andato al posto ${i}`,
       category: f.category,
       explanation: "why",
       severity: f.severity,
@@ -62,13 +59,17 @@ function seed(db: Db, id: string, findings: { category: Category; severity: Seve
 describe("buildPlan — the daily plan (E-18 criterion 1)", () => {
   it("is quietly empty before anything exists", () => {
     const db = freshDb();
-    expect(buildPlan(db)).toEqual({ dueCount: 0, lesson: null, letterWeek: null, letterUnread: false });
+    expect(buildPlan(db)).toEqual({ dueCount: 0, letterWeek: null, letterUnread: false });
   });
 
-  it("counts the due queue and prescribes the top-ranked qualifying pattern", () => {
+  // [E-45] The per-CATEGORY pattern lesson left the plan with the format it
+  // prescribed: it priced a lesson the learner then had to choose to buy, from a
+  // screen listing several kinds of lesson. The day's lesson is now chosen by the
+  // composer at the learner's knowledge edge (D-27) and is free to open, so the
+  // plan has nothing to prescribe and nothing to price. What survives here is the
+  // due count and the letter — the two things the plan still answers.
+  it("counts the due queue", () => {
     const db = freshDb();
-    // grammar: 3 high (weight 9) — vocabulary: 4 low (weight 4). Both qualify
-    // (>= 3 findings); the severity-weighted ranking puts grammar first.
     seed(db, "s1", [
       ...Array.from({ length: 3 }, () => ({ category: "grammar", severity: "high" }) as const),
       ...Array.from({ length: 4 }, () => ({ category: "vocabulary", severity: "low" }) as const),
@@ -77,45 +78,8 @@ describe("buildPlan — the daily plan (E-18 criterion 1)", () => {
 
     const plan = buildPlan(db);
     expect(plan.dueCount).toBe(7); // every finding became a due card
-    expect(plan.lesson).not.toBeNull();
-    expect(plan.lesson!.category).toBe("grammar");
-    expect(plan.lesson!.count).toBe(3);
-    // The prescription IS Focus's ranking — same first category, reused not rebuilt.
+    // Focus's ranking is untouched by E-45 — the plan simply no longer reads it.
     expect(buildFocusModel(db).ranking[0].category).toBe("grammar");
-    // No lesson generated yet: the honest price via the existing estimate machinery.
-    expect(plan.lesson!.ready).toBe(false);
-    const pattern = derivePatterns(listIncludedFindings(db)).find((p) => p.category === "grammar")!;
-    expect(plan.lesson!.estimateUsd).toBeCloseTo(lessonEstimateUsd(db, pattern), 10);
-    expect(plan.lesson!.estimateUsd!).toBeGreaterThan(0);
-  });
-
-  it("skips a top-ranked category that does not qualify as a pattern", () => {
-    const db = freshDb();
-    // idiom: 2 high (weight 6) outranks grammar: 3 low (weight 3), but only
-    // grammar has >= 3 findings — the plan prescribes what can actually be worked.
-    seed(db, "s1", [
-      ...Array.from({ length: 2 }, () => ({ category: "idiom", severity: "high" }) as const),
-      ...Array.from({ length: 3 }, () => ({ category: "grammar", severity: "low" }) as const),
-    ]);
-    const plan = buildPlan(db);
-    expect(buildFocusModel(db).ranking[0].category).toBe("idiom");
-    expect(plan.lesson!.category).toBe("grammar");
-  });
-
-  it("says 'ready' with no price once the lesson is generated", () => {
-    const db = freshDb();
-    seed(
-      db,
-      "s1",
-      Array.from({ length: 3 }, () => ({ category: "grammar", severity: "high" }) as const),
-    );
-    insertLesson(db, "category:grammar", {
-      explanation: "short",
-      exercises: [{ type: "fill_in", prompt: "p", answer: "a" }],
-    });
-    const plan = buildPlan(db);
-    expect(plan.lesson!.ready).toBe(true);
-    expect(plan.lesson!.estimateUsd).toBeNull();
   });
 
   it("carries the latest week's letter as unread until it is opened, in the settings kv", () => {

@@ -18,7 +18,7 @@ const WHY = "passato prossimo con essere";
 
 describe("Flashcard back — the correction leads, the error is shown once and marked (criterion 1)", () => {
   it("omits the raw error from the front and marks it on the back, with Compare intact (criterion 5)", () => {
-    const faces = deriveFaces(QUOTE, CORRECTION, WHY, "grammar");
+    const faces = deriveFaces(QUOTE, CORRECTION, WHY)!;
     expect(faces.front).not.toContain(QUOTE); // the front is never the error (D-18)
 
     const html = renderToStaticMarkup(

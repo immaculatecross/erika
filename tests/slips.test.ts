@@ -156,7 +156,10 @@ function seed(
       contentHash: hash,
       flagged: true,
       deepDone: true,
-      findings: [{ quote: `${id}-q${i}`, correction, category, explanation: "why", severity: "high", startMs: (i + 1) * HOUR, endMs: (i + 1) * HOUR + 500 }],
+      // The quote must differ from the correction by ONE localized token, or the
+      // finding is not cardable (E-45) and [T3]'s "card every finding and grade it
+      // good" drill has nothing to grade.
+      findings: [{ quote: `ho ${correction}`, correction: `sono ${correction}`, category, explanation: "why", severity: "high", startMs: (i + 1) * HOUR, endMs: (i + 1) * HOUR + 500 }],
     });
   });
   const job = enqueueAnalysis(db, id);

@@ -60,8 +60,8 @@ function mockClient(): AudioModelClient {
       return {
         findings: [
           {
-            quote: "q",
-            correction: "c",
+            quote: "ieri ho andato al mare",
+            correction: "ieri sono andato al mare",
             category: "grammar",
             explanation: "why",
             severity: "low",

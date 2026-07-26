@@ -1,16 +1,23 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { itemExists } from "@/lib/knowledge/items";
-import { generateItemLesson, getItemLesson, itemLessonKind } from "@/lib/lessons/item-lessons";
+import { itemLessonKind, todaysLesson } from "@/lib/lessons/item-lessons";
 import { openAiTextModel } from "@/lib/lessons/text-model";
-import { BudgetExceededError } from "@/lib/lessons/billing";
-import { lessonModelErrorResponse } from "../../errors";
 
-// Generate (or return the cached) micro-lesson for a composer-chosen knowledge item
-// (E-32, D-10/D-18/D-23). A billable text-model call, so the budget cap is enforced
-// inside `generateItemLesson` (reserve-before-call) — a cache hit bills nothing.
-// POST only; the body names the item by id. The real client is used here; every
-// unit test drives the engine with a mock instead.
+// TODAY'S LESSON for a composer-chosen knowledge item (E-45 criteria 1 & 2, D-27).
+//
+// The route answers with `todaysLesson`, which CANNOT FAIL: the cached lesson, else
+// a freshly generated one, else the deterministic syllabus lesson — which needs no
+// key, no budget and no network. So there is no 402 branch and no 502 branch here
+// any more, and the runner has no "unavailable right now" screen to render.
+//
+// That is the point of the change rather than a side effect. The old route returned
+// 402 when the monthly cap was reached and 502 when a reply was unreadable, and both
+// were dead ends for a lesson the learner could always have had for free. A billed
+// generation now either produces a usable lesson or is quietly not used.
+//
+// Generation is still billable and still capped — the cap lives inside
+// `generateItemLesson` (reserve-before-call), and a cache hit bills nothing.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -25,19 +32,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No such knowledge item." }, { status: 404 });
   }
 
-  try {
-    const { lesson, cached } = await generateItemLesson(db, openAiTextModel, itemId);
-    // [T1] A racing loser wins nothing but may return before the winner completes;
-    // re-read so the response always carries the finished lesson when one exists.
-    const finished = lesson ?? getItemLesson(db, itemId);
-    if (!finished) {
-      return NextResponse.json({ error: "The lesson is still being generated." }, { status: 202 });
-    }
-    return NextResponse.json({ lesson: finished, cached });
-  } catch (err) {
-    if (err instanceof BudgetExceededError) {
-      return NextResponse.json({ error: err.message }, { status: 402 });
-    }
-    return lessonModelErrorResponse(err);
+  const lesson = await todaysLesson(db, openAiTextModel, itemId);
+  if (!lesson) {
+    // The only remaining refusal: a vocabulary item with no key and no cached
+    // lesson. There is no offline Italian-English gloss source, so a vocabulary
+    // lesson genuinely needs a model — this is a truthful "not this one", and the
+    // composer has grammar items that always work.
+    return NextResponse.json(
+      { error: "This word's lesson needs an API key. Today's grammar lesson is ready without one." },
+      { status: 404 },
+    );
   }
+  return NextResponse.json({ lesson, cached: !lesson.deterministic });
 }

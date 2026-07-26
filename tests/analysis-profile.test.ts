@@ -12,9 +12,9 @@ import {
 } from "@/lib/analysis/profile";
 import { computeFocus } from "@/lib/focus";
 import { deepPrompt, parseDeepResponse, RECURRENCE_INSTRUCTION, triagePrompt } from "@/lib/analysis/audio-model";
-import { lessonPrompt } from "@/lib/lessons/generate";
+import { grammarLessonPrompt } from "@/lib/lessons/lesson-parse";
+import { loadSyllabus } from "@/lib/syllabus";
 import type { Category, Finding, Severity } from "@/lib/analysis/findings";
-import type { Pattern } from "@/lib/lessons/patterns";
 
 // E-19 criteria 1–2: the pure profile builder (bounded, no model call, no
 // reimplemented math — rates come straight from computeFocus) and the exact
@@ -121,34 +121,20 @@ describe("renderProfileLines is hard-bounded (criterion 1)", () => {
   });
 });
 
+// [E-45] The pattern-lesson prompt is deleted; the surviving lesson prompt is built
+// from a SYLLABUS RULE (D-27 - the syllabus is the backbone, the learner's profile
+// is the overlay). The contract under test is unchanged: the L1 line and every
+// profile line reach the lesson prompt exactly as they reach the audio prompts.
+const RULE = loadSyllabus().rules.find((r) => r.key === "ausiliare-scelta")!;
+
 describe("prompt injection (criterion 2)", () => {
   const profile = buildSpeakerProfile(primedInput());
   const lines = renderProfileLines(profile);
-  const pattern: Pattern = {
-    key: "category:grammar",
-    category: "grammar",
-    count: 3,
-    findings: [
-      {
-        id: "f1",
-        sessionId: "s",
-        contentHash: "h",
-        quote: "io ho 25 anni",
-        correction: "ho 25 anni",
-        category: "grammar",
-        explanation: "why",
-        severity: "high",
-        startMs: 0,
-        endMs: 0,
-      },
-    ] as Finding[],
-  };
-
   it("triage, deep-listen, and lesson prompts all carry the exact L1 and profile lines", () => {
     for (const prompt of [
       triagePrompt("Italian", profile),
       deepPrompt("Italian", profile),
-      lessonPrompt("Italian", pattern, profile),
+      grammarLessonPrompt("Italian", "colto", RULE, profile),
     ]) {
       expect(prompt).toContain(l1Line("English"));
       for (const line of lines) expect(prompt).toContain(line);
@@ -166,7 +152,7 @@ describe("prompt injection (criterion 2)", () => {
     for (const prompt of [
       triagePrompt("Italian", fresh),
       deepPrompt("Italian", fresh),
-      lessonPrompt("Italian", pattern, fresh),
+      grammarLessonPrompt("Italian", "colto", RULE, fresh),
     ]) {
       expect(prompt).toContain(l1Line("English"));
       expect(prompt).not.toContain("undefined");

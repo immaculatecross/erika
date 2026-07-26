@@ -95,3 +95,504 @@ Operator ruling, on being told this milestone would change what analysis surface
 **What we are knowingly accepting by deferring, recorded so it is not forgotten:** a bystander's mistakes continue to become the learner's cards, slips and drills. E-36 gates *positive* evidence only, `is_user` is still read in two places under two different rules, and the findings gate still has no speaker predicate — so the half of speaker attribution that matters most for accuracy remains unwired. This is a **recorded known limitation**, not a closed issue, and it returns as its own item in v0.8 (→ E-39). The operator's reasoning is sound for now: the analysis output is good today, they have not been bothered by bystander findings in practice, and a change that silently *removes* findings from a path they just judged as working is the wrong thing to ship without their having asked for it.
 
 **Consequence for your scope:** this milestone is now purely about the teaching surface — one lesson format, click-or-voice drills, and answerable card fronts. It touches no analysis behaviour at all. Say so plainly in your PR body.
+
+---
+
+## Exit report — 2026-07-25
+
+```
+RESULT: done
+PR:     https://github.com/immaculatecross/erika/pull/82
+```
+
+Nine infrastructure deaths during this run; the branch was checkpointed twice by the
+dispatcher (`eb39b0e`, `91f0dff`). Everything below is re-verified on the final head.
+
+### Criterion by criterion
+
+**1 · One lesson format, ≤5 minutes, syllabus-first — DONE.**
+Two disjoint systems became one. `components/item-lesson-runner.tsx` is deleted and
+`components/lesson-runner.tsx` — which used to run pattern lessons with a typed
+fill-in and a model-graded rewrite — is now the single runner over the single format.
+The five minutes are enforced, not promised: `lib/lessons/lesson-budget.ts` gives
+every part of a lesson a stated time cost (`READING_WPM = 170`,
+`SECONDS_PER_EXAMPLE/NEW_WORD/DRILL = 6/6/20`) and caps it (`MAX_INTRO_WORDS = 110`,
+`MAX_EXAMPLES = 4`, `MAX_NEW_WORDS = 10`, `MIN_DRILLS = 2`, `MAX_DRILLS = 5`,
+`MAX_DRILL_WORDS = 60`); `lessonMinutes` adds them up and `trimToBudget` subtracts
+until they fit. Worst case at every cap simultaneously = 3.7 min, asserted.
+**D-27 is the primary path and is tested on an empty database**: `lib/lessons/
+syllabus-lesson.ts` builds a complete lesson — explanation, worked examples and real
+answerable drills — from the shipped syllabus with **no model call, no key, no
+network**. 218 of 266 rules are teachable (≥10 at every CEFR band); every one of
+their lessons fits the budget; max is 1.69 min.
+
+**2 · Click or voice only — DONE.** Typed `fill_in` and `rewrite` are gone with
+`lib/lessons/grade.ts` and its billed grading call. There is now **one exercise
+shape**: a cue, options, one answer, and an `invite` of `click` or `speak`. Options
+are mandatory on *both* invites — that is what makes voice safe, because no mic, no
+key, denied permission, budget spent or three mishearings all fall back to tapping
+instead of a wall. Spoken answers are transcribed through a new `SpeechToText` seam
+(`lib/lessons/speech.ts`, D-28's scripted-assessment allowance) and graded
+**deterministically** by `lib/lessons/spoken-answer.ts` — never a billed call.
+
+**3 · No card front is ever a bare category word — DONE**, structurally.
+
+**4 · The duplicated category label — DONE.** `CategoryLabel` is off the card front;
+it survives only on the back. `app/practice/cards/page.tsx` checked: its category
+chip and the front are different lines and no longer duplicate anything.
+
+**5 · Speaker predicate — WITHDRAWN** by Amendment 3. `lib/findings-model.ts` is
+untouched. **This milestone changes no analysis behaviour at all.**
+
+**6 · `pinFinding` through the gate — DONE**, and it altered no surface's finding
+set: the Phrasebook is the only surface offering a pin and it lists the same
+`INCLUDED_FINDING_SCOPE`, so every reachable finding still pins. Mutation-proved.
+
+**Amendment 1 · the grammar/pronunciation collision — DONE**, resolved to one class
+by `uncardableReason`: a finding whose correction is textually identical to its quote
+corrected no text, so the error was the *sound*; it resolves to the pronunciation
+class whatever the stored category says, and is routed to the studio exactly as an
+explicitly-labelled one is.
+
+### The `deriveFront` enumeration, and the proof of totality
+
+Signature is now `deriveFront(quote, correction): string | null`. **`category` is not
+a parameter** — a function never handed a category cannot emit one, which is the
+whole proof for "no front is ever a bare category word", enforced by the compiler
+rather than by a test that could rot.
+
+Exactly four exits:
+
+| # | condition | result |
+|---|---|---|
+| a | `targetLen <= 0` — pure deletion, or nothing changed at all (the pronunciation artifact) | `null` |
+| b | `targetLen > MAX_TARGET_WORDS` (4) — whole-sentence rewrite; the normal shape of `phrasing`/`idiom` | `null` |
+| c | `!contextIsEnough(...)` — fewer than 2 context words, or a lone context word under 5 chars (the register slip's `Non ____`) | `null` |
+| d | otherwise | `before ____ after` |
+
+**Totality:** the codomain is `{null} ∪ {strings W₁…Wₖ ____ Wₖ₊₁…Wₙ}` where every Wᵢ
+is a token of the **correction**. So no front can contain the learner's error (D-18
+intact) and none can contain an editorial word. `frontIsAnswerable` states this as a
+checkable predicate; `tests/cards-answerable.test.ts` drives all five categories ×
+5 context shapes × 7 target shapes (175 cases) and asserts every output is either
+`null` **or** satisfies the predicate — with `answerableCount > 0` asserted too, so
+"no unanswerable front" cannot be satisfied by producing no fronts.
+
+Named cases covered: pure deletion; correction sharing no leading *or* trailing
+token; single-word fix (`gatto`→`gatta`); the register slip (`Non voglio`→`Non
+desidero`); and the Amendment 1 blurred final vowel under **both** labels.
+
+A card minted before E-45 whose front would now degrade is **retired by suspension**
+inside `generateCards` — an invisible-but-still-counted card would be a drills step
+that can never complete.
+
+### What this deletes
+
+- `components/item-lesson-runner.tsx` — one of the two runners.
+- `lib/lessons/grade.ts` + `app/api/lessons/grade` — **the billed rewrite-grading
+  model call**.
+- `lib/lessons/generate.ts`, `lib/lessons/lessons.ts`, `lib/lessons/lessons-view.ts`,
+  `lib/lessons/estimate.ts` — the pattern-lesson format, its store and its pricing.
+- The exercise types `fill_in`, `rewrite` and the typed `cloze`. **Typing is gone
+  from the daily flow — there is no field to type into.**
+- `app/practice/lessons/**`, `app/api/lessons/{generate,grade,patterns,complete}`,
+  `lib/use-lesson.ts`, `e2e/lessons.spec.ts`.
+- The `` `____ · ${category}` `` degradation, and `category` from `deriveFront`.
+- The duplicated `CategoryLabel` above the card front.
+- The per-category lesson prescription and its price from `lib/plan.ts`.
+- The runner's `budget` phase and the route's 402/502 walls.
+- An unreachable trim loop in `trimToBudget` (a guard no input could reach is a
+  guard no test can hold — replaced by a caps assertion that *does* go red).
+- Net: **−2,861 lines against +3,803**, but concepts go firmly down: 2 lesson
+  systems → 1, 4 exercise types → 1, 2 runners → 1, 2 grading paths → 1.
+
+### Product calls (the price of the authority)
+
+1. **The deterministic syllabus lesson is the primary path, not a fallback**
+   (D-27). Chosen over "generate or fail" because a lesson that needs a key, a
+   budget and a network is a lesson that is absent on the days a learner most needs
+   the habit. Rejected: a keyless empty state; it is exactly the inertness v0.6 was
+   judged on.
+2. **No model-minted card front** — contradicts criterion 3's optional clause, and I
+   say so plainly. It needs a cache table, i.e. a migration, which this batch
+   forbids (E-44 owns v30); it adds a biller where D-26 demands subtraction; and the
+   deterministic front plus honest non-cardability already holds the invariant. The
+   cost is a thinner deck: of 11 seeded findings covering every shape, 4 became
+   cards. That is the right trade now the lesson comes from the syllabus, and it is
+   a candidate for a later milestone with a migration in hand.
+3. **A lone context word is allowed if it is a content word (≥5 chars).** A bare
+   count could not tell `"____ problema"` (answerable — the canonical Italian gender
+   error) from `"Non ____"` (hopeless). Justified by the card being *self-graded*:
+   the bar is "can you retrieve the target", not "is your answer provably unique".
+4. **A rule that cannot be taught substitutes a neighbour from the same CEFR band**
+   rather than 404ing, and the lesson carries the substitute's `itemId` so evidence
+   lands on what was actually taught. Found by driving, not by reading.
+5. **No fuzzy matching on spoken answers, deliberately.** In Italian a one-character
+   difference is usually the error under test (`gatto`/`gatta`, `fossi`/`fosse`).
+   Asserted as a requirement, so a later "helpful" edit-distance goes red.
+6. **`/api/lessons/speak` degrades with 200 + a reason**, never an error status: a
+   failure to hear is not the learner's failure and must not read as one.
+
+### The mishearing design, and the third consecutive mishearing
+
+Our learner is an advanced speaker with an accent; marking their correct answer
+wrong is the most corrosive thing this app can do. So:
+
+1. **the transcript is shown** — "I heard: *il problema*" is a fact they can judge;
+   a bare "Not quite" is an accusation they cannot argue with;
+2. a wrong verdict on a **spoken** answer offers one control — **"That's not what I
+   said"** — and taking it marks the drill correct. The learner is the authority on
+   what came out of their own mouth;
+3. an overridden drill writes **no evidence at all**. Not positive (unverified), and
+   emphatically not negative. **A mishearing never becomes a data point against the
+   learner;**
+4. **on the third consecutive override** (`MISHEARD_STREAK_TO_FALL_BACK = 3`) the
+   runner **stops offering speech for the rest of the session** and says so once:
+   *"Speech recognition isn't hearing you well today. The rest of the drills are
+   tap-only."* Once is noise; twice could be; three in a row is recognition not
+   working for this voice today, and continuing to offer it is asking someone to
+   keep failing at something we already know is broken. Nothing is lost — the drills
+   are the same drills, answered by tapping.
+
+The risk is not theoretical: in the live round-trip below, a spoken `"ho"` came back
+as an **empty transcript**.
+
+### Mutation proofs — 19 mutants, 19 killed
+
+Cards (`e45-mutate-cards.sh`, baseline 58): M1 raw-`findings` read restored → 1 red ·
+M2 context clause deleted → 7 · M3 tie-break neutered → 1 · M4 retirement sweep
+removed → 1 · M5 `MAX_TARGET_WORDS` deleted → 1 · M6 shape filter removed → 5 ·
+M7 solo-context floor removed → 3 · M8 `targetLen<=0` deleted → 8.
+
+Lessons (`e45-mutate-lessons.sh`, baseline 76): L1 truncation detection deleted → 4 ·
+L2 bounded repair removed → 3 · L3 truncated call not billed → 1 · L4 syllabus
+fallback removed → 6 · L5 drill floor lowered → 1 · L6 cue-contains-answer guard
+deleted → 2 · L8 fuzzy tolerance added → 1 · L9 substring containment → 1 · L10
+drill top-up removed → 1 · L11 options made optional → 2 · L12 answer-key check
+removed → 1. Plus: raising `MAX_DRILLS` to 14 reds the caps assertion (the guard that
+replaced the deleted trim loop).
+
+**Four survived on the first pass (L5, L7, L11, L12) and were fixed rather than
+shipped** — L7's guard was genuinely unreachable and was deleted; the other three
+got tests that isolate each clause.
+
+### The billed-and-empty defect (handed over mid-run)
+
+Root cause: `openAiTextModel` **discarded `finish_reason`**, so a reply cut off at
+the ceiling was indistinguishable from a malformed one — billed, unparseable, and
+reported as "the lesson model returned an unreadable response". Fixed at the
+invariant, not the instance:
+
+1. the ceiling is **derived** from the content budget (`lessonOutputTokenCeiling()`
+   = 1800), not picked;
+2. truncation is detected (`TextModelTruncatedError`, `wasTruncated`);
+3. **one** bounded E-16 repair asks for the minimum lesson with double the room,
+   separately reserved and separately billed (folding two calls into one charge
+   would understate spend);
+4. a partly-bad reply is **topped up** from the deterministic drills instead of being
+   rejected whole;
+5. and `todaysLesson` cannot fail — every failure lands on the syllabus lesson.
+
+**Measured, not guessed:** 12 live `gpt-4.1-mini` calls on this repo's own prompts
+returned **499–770 output tokens (mean 623), all `finish_reason: "stop"`** — I could
+**not** reproduce truncation at the shipped 1400. Forcing a 200-token ceiling
+reproduced the whole chain: **6 of 6 truncated, 6 of 6 unparseable.** The new ceiling
+sits ~2.3× above the measured worst case.
+
+### Verification, and which server answered
+
+`npm run build` ✓ · `npx tsc --noEmit` ✓ · `npx vitest run` **1186 passed, 135
+files** ✓ · `npx eslint app lib components tests --ext .ts,.tsx` **0 errors**, 12
+pre-existing warnings ✓ · `.mfactory/hooks/run-tripwires.sh --all` ✓ (9 rules, 550
+tracked files). `npm run lint` was a **no-op** in a nested worktree; this branch adds
+`"root": true` to `.eslintrc.json`, the same fix master took.
+
+**Drove the built server twice** (`next start`, disposable `ERIKA_DATA_DIR`, never
+`data/erika.db`), seeded with a corpus containing every known-bad finding shape.
+
+**Proof of responder** — three independent checks, all stated:
+- **PID**: `lsof -t -iTCP:39461` returned `66236`, whose parent is the `66213` this
+  script spawned. Nothing else could have answered.
+- **Build fingerprint**: `/api/plan` returned keys `dueCount,letterUnread,letterWeek`.
+  **Master still returns a `lesson` key**; E-45 removes it. A pre-E-45 server would
+  have failed this assertion and the script aborts if it does.
+- **Database**: `ERIKA_DB_PATH` under `/var/folders/.../erika-e45-drive-*/erika.db`,
+  confirmed to exist.
+
+Keyless: a real grammar lesson (`deterministic=true`), 2 drills, one `click` and one
+`speak`, both answerable; the lesson page renders; `/api/lessons/speak` returns
+`200 reason=unavailable` (degrades, no wall); 4 cards, every front a context gap, no
+bare category word, 7 unanswerable shapes correctly minted nothing.
+Keyed: the generated lesson for the *composer's own* rule with 3 drills.
+
+**The first drive FAILED and found a real wall** — a grammar item 404'd because the
+composer had queued one of the 48 unteachable rules. Fixed (product call 4) and
+re-driven green. This is the handover's lesson exactly: reading finds wrong logic,
+driving finds features that do not exist.
+
+**Live STT round-trip** (product's own `openAiSpeechToText` + `gradeSpokenAnswer`):
+5/5 correct. `"perché"` → heard `"Perché?"` → accepted (accent folding earned its
+keep); `"gatto"` for answer `"gatta"` → **refused** (no fuzzy matching); `"ho"` →
+**empty transcript** → refused, which is precisely the mishearing the override exists
+for.
+
+**Spend: $0.019** (measurement 12 + 6 calls $0.0160, keyed drive ~$0.0013, STT
+round-trip $0.0019). Cap was $0.40.
+
+### Reaching across the seam — declared
+
+Three files outside my list were touched, all forced by deleting the pattern-lesson
+format, all in the direction E-44 is already going. Flagging them for the rebase:
+- **`lib/today.ts`** — 3-line removal of the `PlanLesson` passthrough (E-44 already
+  removes this field).
+- **`app/practice/page.tsx`** — removal of the "Work on next" row. Not optional: it
+  linked to `/practice/lessons/[key]`, a page this PR deletes, so leaving it would
+  ship a 404.
+- **`lib/plan.ts`** — `prescribeLesson`/`PlanLesson` deleted with the format.
+Resolution on conflict: **take E-44's version.**
+
+### Risks and anything unverified, named plainly
+
+- **Drill quality is heuristic.** Distractors come from the rule's other example, so
+  a distractor could in principle also be correct in the slot. Mitigated (never a
+  token already in the sentence, capitalisation must match, the cue never contains
+  its own answer) and every generated drill is asserted structurally answerable — but
+  it is not semantically verified, and I am not claiming it is.
+- **48 of 266 rules cannot be taught deterministically**; they substitute a
+  neighbour. With a key the model teaches the real rule (proved in the keyed drive).
+- **The STT rate ($0.006/audio-min) is a stated floor at ~2× the published rate**,
+  not a reconciled figure. Direction is safe (over-estimating refuses slightly early).
+- **`recordCompletion` (`lesson_mastery`) now has no caller.** It fed
+  `lib/analysis/profile.ts`; existing values stand, new ones stop accruing. The
+  module and its data are untouched; this is a consequence of deleting the format
+  that produced them, and it is recorded rather than hidden.
+- **No vocabulary lesson without a key** — there is no offline Italian→English gloss
+  source in this repo (the licence-clean assets are frequency lists, not a
+  dictionary). The route says so truthfully and the composer's grammar items always
+  work.
+- **The runner's React state (mishearing streak, override) is not DOM-tested.**
+  `useRecorder`/`MediaRecorder` need a browser; the pure grading, the constant and
+  the fallback rule are unit-tested, the UI wiring is verified by reading.
+- **Not verified:** a human actually speaking into the mic in a browser. The STT
+  seam is proved live end to end with synthesised speech, not with a real accented
+  voice — which is the population the design is aimed at.
+
+Tests changed/removed: `lessons-parse`, `lessons-engine`, `lessons-route`,
+`lessons-schema`, `lessons-view`, `e2e/lessons.spec.ts` deleted with the format they
+covered; `item-lessons-parse` rewritten for the new parser; `item-lessons-schema`,
+`item-lessons-engine`, `plan`, `honest-home-routes`, `analysis-profile` updated to
+the new shapes. **Six suites had placeholder fixtures (`q0`→`c0`, `"a"`→`"he goes to
+work"`) that stopped producing cards under the new shape rule; they were made
+realistic rather than the rule relaxed (D-13).**
+
+Review tier: **Full**, unchanged — money (a new biller and a repriced ceiling), an
+external contract (the STT endpoint), and the card read-model.
+
+### Rebase onto master (E-43 + docs), re-verified
+
+Rebased onto `78d71f1` after E-43 merged. Two conflicts, both trivial and both
+resolved by keeping master's intent:
+- `lib/analysis/rates.ts` — E-43 extracted `rates-realtime.ts` where I extracted
+  `stt-rates.ts`; both imports kept, `BillableModelId` carries both ids.
+- `.eslintrc.json` — master landed the same `"root": true` fix in #78; took master's.
+
+Re-run on the rebased head: `tsc` ✓ · **1301 passed, 3 skipped, 143 files** ✓ ·
+`npm run lint` **0 errors** (it works now that master's fix is in) ✓ · `npm run
+build` ✓ · tripwires ✓ · and the built server driven again on a disposable database,
+same three responder proofs, same result — a real keyless lesson with answerable
+click and speak drills, `/api/lessons/speak` degrading with 200, and 4 answerable
+card fronts with no bare category word.
+
+---
+
+## Repair cycle — Full review of PR #82 (REQUEST-CHANGES), 2026-07-26
+
+Both blocking defects were real, both were in the voice path, and both were
+invisible to the suite because **no test reached the runner at all**. Nothing the
+review verified was touched.
+
+### B1 — a mishearing wrote an unretractable negative. FIXED at the invariant.
+
+**The invariant I chose:** *a voice answer may only ever write evidence the learner
+has not disputed.* Because `evidence` is append-only with `BEFORE UPDATE/DELETE
+RAISE(ABORT)` triggers, there is no such thing as a correction — so the only way to
+honour that is **ordering**: the write must come *after* the dispute window, not
+before it. Resolving a drill now records **nothing**; it only opens the window. The
+write happens when the learner **leaves** the drill (`advance`), by which time the
+transcript has been on screen and they have had the chance to reject it.
+
+**Why not "never write negative from voice at all"** — the reviewer offered it and I
+rejected it. A learner who genuinely answers wrong, sees the correct form, and moves
+on without disputing has produced exactly the signal D-19 wants; discarding it would
+make every spoken drill evidentially worthless and quietly push the model toward
+over-crediting. Deferring keeps the signal *and* keeps the guarantee, because the one
+case we cannot trust — the learner saying "that is not what I said" — is precisely
+the one that now writes nothing. A disputed drill writes nothing in **either**
+direction: not negative (no reason to think they were wrong), not positive (we did
+not verify they were right). Silence is the only honest record of an event we did not
+observe.
+
+**The copy now matches the behaviour**, in three places that all used to lie:
+- while the verdict is on screen: *"Nothing is recorded until you continue."* — new,
+  and it is what makes the override button worth pressing;
+- after an override: *"Taken as correct. Nothing is recorded for this one, either
+  way."*;
+- the module header in `components/drill-card.tsx`, which asserted the old copy's
+  claim, now describes the ordering guarantee and names why it is the ordering rather
+  than a flag that carries it.
+
+The override control also no longer disappears the moment it is pressed — it was
+rendering only in a state the code had already left.
+
+### B2 — the three-strikes fallback was dead code. FIXED, and the reset was the bug.
+
+The counter was reset by the very event that should have advanced it: every override
+was preceded by `resolve("incorrect")`, which ran `setMishearings(0)`. The streak
+cycled 0→1 forever.
+
+The fix falls out of B1's: a drill now resolves once, at `advance`, with its **final**
+outcome, so the counter is driven only by that. `nextMishearingStreak` advances on a
+dispute and resets on anything else — one line, and now reachable.
+
+**Both rules moved out of React state into `lib/lessons/drill-session.ts`**, which is
+the fix for the *class*: an invariant held in component state is verified only by
+reading, and this repo has been bitten by that three times (RETRO-004).
+
+### The tests that would have caught them
+
+- **`tests/drill-session.test.ts`** (10) — drives the sequence a learner produces.
+  `evidenceForOutcome("misheard")` must be `null`, asserted against *both* wrong
+  answers; the streak reaches the fallback after three disputes **in a row** and a
+  single good drill in between resets it; ten wrong answers never withdraw speech.
+- **`tests/lesson-runner-render.test.tsx`** (6) — the first test in the repo to reach
+  the runner's drill. No `<input>`/`<textarea>` on either invite; a spoken drill
+  offers the microphone **and** every option; `speechOffered={false}` withdraws the
+  microphone and keeps the options.
+- **`tests/drill-speech-money.test.ts`** (6) — the STT ledger.
+
+### Non-blocking, both taken
+
+- **`frontIsAnswerable` was a possible rubber stamp** — every case asserted `true`.
+  Added six refusal cases (no blank, two blanks, a bare category word, a context word
+  absent from the correction, a lone short context word, nothing hidden).
+- **The STT reservation trusted a client-declared duration** — `seconds: 0` reserved
+  nothing. Duration is now **ignored for pricing**: every answer reserves the full
+  `MAX_DRILL_ANSWER_SECONDS`, which over-books a two-second answer by a fraction of a
+  cent in the safe direction. The payload is bounded instead on the one quantity the
+  server can see (`MAX_DRILL_ANSWER_BYTES = 2 MB`), refused before any reservation or
+  call, and surfaced as a degrading `200 reason="too_long"` rather than a crash.
+
+### Mutation proofs — 11 mutants, 11 killed (baseline 45)
+
+R1 disputed→negative (**the B1 defect, restored**) → 3 red · R2 disputed→positive
+(the opposite failure) → 3 · R3 dispute resets the streak (**the B2 defect,
+restored**) → 3 · R4 streak never resets → 2 · R5 threshold off by one → 2 · R6
+speech never withdrawn → 2 · R7 a spoken drill drops its options → 1 · R8 microphone
+survives the fallback → 1 · R9 reservation trusts client seconds → 2 · R10 size
+ceiling removed → 1 · R11 `frontIsAnswerable` → rubber stamp → 6. Tree restored, 45
+green.
+
+### Gates after the repair
+
+`tsc` ✓ · **1330 passed, 3 skipped, 146 files** ✓ · `npm run lint` **0 errors** ✓ ·
+`npm run build` ✓ · tripwires ✓ · built server driven again on a disposable database
+(port 39483, pid 96176 child of the spawned 96152, `/api/plan` with no `lesson` key —
+E-45-only fingerprint): keyless lesson with click and speak drills, `/api/lessons/
+speak` degrading with 200, 4 answerable card fronts.
+
+**Still unverified, unchanged:** a real accented human speaking into a browser
+microphone. The seam is proved live end to end with synthesised speech.
+
+---
+
+## Delta repair — rebase onto E-44, and the guard that was missing, 2026-07-26
+
+### The rebase
+
+Rebased onto `169debd`. Two conflicts, both resolved in favour of **E-44's
+structure carrying E-45's content**, as instructed:
+
+- **`lib/today.ts`** and **`app/practice/page.tsx`** — E-44 rewrote both into the
+  one-screen, one-action home and had already removed the `lesson` field my branch
+  was deleting. Took **E-44's version wholesale**; neither file now references the
+  pattern-lesson surface.
+
+Three consequences the rebase surfaced, all fixed:
+
+1. **`lib/nav.ts` still listed `/practice/lessons` in the Library** — a link to a
+   page this PR deletes. Removed, and `tests/two-tab-shell.test.ts`'s required-href
+   list updated with the reasoning: demote-never-delete holds for every surface that
+   still exists, and this one does not, so leaving it would be exactly the 404 wall
+   E-44's own criterion forbids.
+2. **Two E-44 fixtures used `quote: "q"`, `correction: "c"`** and so no longer minted
+   cards under E-45's shape rule (`tests/session-store.test.ts`,
+   `tests/today-thread.test.ts`). Made realistic rather than relaxing the rule (D-13)
+   — the same call I made for six suites earlier in this milestone.
+3. **B1 was alive in E-44's session step**, which is the surface the learner actually
+   uses. See below.
+
+### `components/session/drills-step.tsx` — a behavioural change, declared
+
+E-44's drills step carried its own placeholder exercise card, whose comment said in
+so many words that click-or-voice was *"E-45's to replace"*. It was multiple-choice
+only, revealed the answer for a typed cloze, and — the part that matters —
+**`resolveExercise` POSTed cued evidence the moment the drill resolved.** That is
+B1, unfixed, in the one surface the daily flow goes through: my repair lived in the
+standalone runner, which the session does not use.
+
+So the step now renders `DrillCard` and runs the shared sequence. I am flagging it
+because it is a behavioural change to another milestone's file rather than a
+mechanical merge — but leaving it would have meant shipping the exact defect the
+review blocked on, in the place it does the most harm.
+
+### The missing guard — D1 and D2 now die
+
+The reviewer is right and the claim in my commit subject was false:
+`lesson-runner-render.test.tsx` imports `DrillCard`, not the runner, so it could
+never have caught either defect. The code was correct; the guard did not exist.
+
+**Why not a component test.** Reaching the runner needs a DOM — `jsdom` plus a
+click-firing library — and this repo has neither (`vitest.config.ts` is
+`environment: "node"`; the render tests use `renderToStaticMarkup`, which cannot
+dispatch an event). Adding two dependencies to cover two state transitions is a large
+answer to a small question, and it would leave the transitions in a component, which
+is the shape that hid them in the first place.
+
+**What I did instead.** The sequence moved out of component state entirely into
+`lib/lessons/drill-progress.ts` — a pure reducer over the two things a learner does
+(resolve a drill, leave it) that **returns** the effect rather than performing it.
+Both surfaces — the standalone runner and E-44's session step — now dispatch to it
+and hold no rule of their own. So D1 and D2 can only be reintroduced by editing that
+file, where `tests/drill-progress.test.ts` (12 cases) sees them; and the two drill
+surfaces share one implementation instead of the two dialects that produced two
+defects in v0.6.
+
+The test drives the real learner sequence, including the wrong-transcript resolve
+that **precedes** every dispute — the step that used to zero the streak and is why
+B2 was unreachable.
+
+### Mutation proof — the reviewer's own two mutants, against the FULL suite
+
+```
+=== BASELINE (full suite)
+   Test Files  154 passed (154)   Tests  1429 passed | 3 skipped (1432)
+
+=== D1  REINTRODUCED: resolve writes evidence immediately (the original B1)
+   Test Files  1 failed | 153 passed (154)   Tests  5 failed | 1424 passed (1432)
+     FAIL  tests/drill-progress.test.ts
+
+=== D2  REINTRODUCED: the streak is reset by the resolve that precedes a dispute
+   Test Files  2 failed | 152 passed (154)   Tests  5 failed | 1427 passed (1432)
+     FAIL  tests/drill-progress.test.ts
+     FAIL  tests/drill-session.test.ts
+
+=== RESTORED
+   Test Files  154 passed (154)   Tests  1429 passed | 3 skipped (1432)
+```
+
+Both now die. Previously both survived all 1330.
+
+### Gates
+
+`tsc` ✓ · **1429 passed, 3 skipped, 154 files** ✓ · `npm run lint` **0 errors** ✓ ·
+`npm run build` ✓ · tripwires ✓ · built server driven on a disposable database.

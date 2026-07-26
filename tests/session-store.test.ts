@@ -65,7 +65,9 @@ function seedFinding(db: Db, id: string): void {
     flagged: true,
     deepDone: true,
     findings: [
-      { quote: "q", correction: "c", category: "grammar", explanation: "why", severity: "medium", startMs: 0, endMs: 1 },
+      // A realistic, CARDABLE shape (D-13, E-45): a finding whose correction has no
+      // localized change to cue from yields no answerable front, so it yields no card.
+      { quote: "ieri ho andato al mare", correction: "ieri sono andato al mare", category: "grammar", explanation: "why", severity: "medium", startMs: 0, endMs: 1 },
     ],
   });
   const job = enqueueAnalysis(db, id);

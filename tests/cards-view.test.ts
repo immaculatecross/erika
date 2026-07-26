@@ -9,40 +9,40 @@ import { CLOZE_BLANK, deriveFaces, deriveFront } from "@/lib/cards-view";
 describe("deriveFront — the context gap toward the correct form", () => {
   it("blanks the changed span of the correction, keeping the correct context", () => {
     // A localized fix (essere vs avere): the surrounding correct Italian is the cue.
-    const front = deriveFront("io ho andato a casa", "io sono andato a casa", "grammar");
+    const front = deriveFront("io ho andato a casa", "io sono andato a casa");
     expect(front).toBe("io ____ andato a casa");
     expect(front).toContain(CLOZE_BLANK);
   });
 
   it("never contains the user's raw error — not the whole quote, not the wrong token", () => {
     const quote = "io ho andato a casa";
-    const front = deriveFront(quote, "io sono andato a casa", "grammar");
+    const front = deriveFront(quote, "io sono andato a casa")!;
     expect(front).not.toContain(quote); // the whole error utterance is absent
     expect(front.split(/\s+/)).not.toContain("ho"); // the erroneous token itself is gone
   });
 
   it("cues from trailing context when the change is at the start", () => {
     // make → take: no leading common word, but "a photo" is shared correct context.
-    expect(deriveFront("make a photo", "take a photo", "vocabulary")).toBe("____ a photo");
+    expect(deriveFront("prendo una foto", "faccio una foto")).toBe("____ una foto");
   });
 
-  it("degrades to a category-cued prompt (no error text) when there is no shared context", () => {
-    // A whole rewrite has no correct context to cue from without a model.
-    const front = deriveFront("boh", "una frase completamente diversa", "phrasing");
-    expect(front).toBe(`${CLOZE_BLANK} · phrasing`);
-    expect(front).not.toContain("boh");
+  // [E-45] These two used to DEGRADE to "____ · <category>" — the defect the operator
+  // named. They now refuse: a finding with no correct context to cue from is not a
+  // card at all, and lands in the Phrasebook exactly as a pronunciation finding does.
+  it("refuses (no card) when a whole rewrite leaves no shared context", () => {
+    expect(deriveFront("boh", "una frase completamente diversa")).toBeNull();
   });
 
-  it("degrades on an identical recast (e.g. a pronunciation flag), never echoing it", () => {
+  it("refuses on an identical recast (e.g. a pronunciation flag), never echoing it", () => {
     // The recast spelling equals the utterance (the error was phonetic) — there is
-    // no textual span to blank, so it degrades rather than show the word as answer.
-    expect(deriveFront("gatto", "gatto", "pronunciation")).toBe(`${CLOZE_BLANK} · pronunciation`);
+    // no textual span to blank, and the answer would be the word already said.
+    expect(deriveFront("gatto", "gatto")).toBeNull();
   });
 });
 
 describe("deriveFaces — the four display faces", () => {
   it("resolves front/correction/why/error, error carrying the raw quote for the marked back", () => {
-    const faces = deriveFaces("io ho andato", "io sono andato", "passato prossimo con essere", "grammar");
+    const faces = deriveFaces("io ho andato", "io sono andato", "passato prossimo con essere")!;
     expect(faces.front).not.toContain("io ho andato"); // front omits the raw error
     expect(faces.correction).toBe("io sono andato"); // the retrieval target
     expect(faces.why).toBe("passato prossimo con essere");

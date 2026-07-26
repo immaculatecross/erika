@@ -24,19 +24,25 @@ const LEMMA_ITEM = "lemma:casa#NOUN";
 
 const GOOD_GRAMMAR = JSON.stringify({
   intro: "A short rule explanation for the fixture.",
+  examples: ["Sono andato a casa."],
+  newWords: [],
+  // [E-45] ONE exercise shape: options are mandatory on both invites, because a
+  // spoken drill's options ARE its fallback when speech recognition fails.
   exercises: [
-    { type: "multiple_choice", prompt: "Pick the correct one", options: ["casa", "kasa"], answerIndex: 0, answer: "casa", rationale: "c not k" },
-    { type: "cloze", prompt: "li-____", answer: "bro", derivable: true, rationale: "syllable" },
-    { type: "cloze", prompt: "ca-____", answer: "sa", derivable: true, rationale: "syllable" },
+    { type: "choice", prompt: "Pick the correct one", options: ["casa", "kasa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "c not k" },
+    { type: "choice", prompt: "li-____", options: ["bro", "pro"], answerIndex: 0, answer: "bro", invite: "speak", rationale: "syllable" },
+    { type: "choice", prompt: "ca-____", options: ["sa", "za"], answerIndex: 0, answer: "sa", invite: "click", rationale: "syllable" },
   ],
 });
 const GOOD_VOCAB = JSON.stringify({
   intro: "«casa» means home.",
   glossEn: "house",
+  examples: ["Torno a casa stasera."],
+  newWords: [{ lemma: "casa", gloss: "house" }],
   exercises: [
-    { type: "multiple_choice", prompt: "Which means home?", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", rationale: "home" },
-    { type: "cloze", prompt: "Torno a ____ stasera.", answer: "casa", derivable: true, rationale: "home" },
-    { type: "cloze", prompt: "Sinonimo colto di 'abitazione': ____", answer: "casa", derivable: true, rationale: "home" },
+    { type: "choice", prompt: "Which means home?", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "home" },
+    { type: "choice", prompt: "Torno a ____ stasera.", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "speak", rationale: "home" },
+    { type: "choice", prompt: "Sinonimo colto di 'abitazione': ____", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "home" },
   ],
 });
 

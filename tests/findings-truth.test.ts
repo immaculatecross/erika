@@ -57,8 +57,12 @@ function freshDb(): Db {
 
 function finding(i: number, category: Category = "grammar"): NewFinding {
   return {
-    quote: `q${i}`,
-    correction: `c${i}`,
+    // A realistic, CARDABLE shape (D-13): the card surface is one of the six this
+    // test compares, and since E-45 a finding with no localized correction yields
+    // no card — so a placeholder fixture would make the surfaces disagree for a
+    // reason that has nothing to do with the E-17 scope this test is about.
+    quote: `ieri ho andato al posto ${i}`,
+    correction: `ieri sono andato al posto ${i}`,
     category,
     explanation: "why",
     severity: "high",

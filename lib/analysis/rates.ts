@@ -10,6 +10,11 @@
 
 import type { RealtimeModelId } from "./rates-realtime";
 
+// Drill speech-to-text lives in ./stt-rates (500-line hook) and is re-exported
+// here, so `lib/analysis/rates.ts` remains the one place prices are looked up.
+import type { SttModelId } from "./stt-rates";
+export { STT_MODEL, STT_RATES, sttCallCost, type SttModelId, type SttModelRate } from "./stt-rates";
+
 export const MINI_MODEL = "gpt-audio-mini" as const;
 /** Deep-listen chain: primary first, then the D-3 fallback. */
 export const DEEP_MODELS = ["gpt-audio-1.5", "gpt-audio"] as const;
@@ -224,7 +229,13 @@ export type TextModelId = typeof TEXT_MODEL;
 
 /** Every model that can bill into the shared ledger — audio (E-4), text (E-6),
  *  TTS (E-21), the realtime tutor (E-34), or Azure pronunciation assessment (E-37). */
-export type BillableModelId = ModelId | TextModelId | TtsModelId | RealtimeModelId | PronunciationModelId;
+export type BillableModelId =
+  | ModelId
+  | TextModelId
+  | TtsModelId
+  | RealtimeModelId
+  | PronunciationModelId
+  | SttModelId;
 
 export interface TextModelRate {
   usdPerPromptToken: number;

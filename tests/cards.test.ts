@@ -56,6 +56,10 @@ function seedFindings(db: Db, sessionId: string, findings: NewFinding[]): void {
   }
 }
 
+/** A realistic, CARDABLE finding: a localized fix with correct context around it
+ *  (D-13 — a fixture built to be easy is how two production bugs shipped). Since
+ *  E-45 an un-cardable SHAPE yields no card at all, so a fixture that varied only
+ *  the quote would silently stop testing the deck; `distinct` varies both sides. */
 function finding(over: Partial<NewFinding> = {}): NewFinding {
   return {
     quote: "he go to work",
@@ -67,6 +71,11 @@ function finding(over: Partial<NewFinding> = {}): NewFinding {
     endMs: 6000,
     ...over,
   };
+}
+
+/** N findings that are all cardable and all have DIFFERENT derived fronts. */
+function distinct(word: string): NewFinding {
+  return finding({ quote: `ieri ho ${word} molto`, correction: `ieri sono ${word} molto` });
 }
 
 describe("generateCards", () => {
@@ -83,12 +92,12 @@ describe("generateCards", () => {
   it("carries the finding's text, category, session and timestamp onto the card", () => {
     const db = freshDb();
     seedFindings(db, "s2", [
-      finding({ quote: "I have 20 years", correction: "I am 20 years old", explanation: "Age uses 'to be'.", category: "phrasing", startMs: 42_000 }),
+      finding({ quote: "sono 20 anni", correction: "ho 20 anni", explanation: "Age uses 'avere'.", category: "phrasing", startMs: 42_000 }),
     ]);
     generateCards(db);
     const card = listDueCards(db)[0];
-    expect(card.front).toBe("I have 20 years"); // front = the quote in context
-    expect(card.back).toBe(cardBack("I am 20 years old", "Age uses 'to be'.")); // correction + why
+    expect(card.front).toBe("sono 20 anni"); // the stored column still holds the quote
+    expect(card.back).toBe(cardBack("ho 20 anni", "Age uses 'avere'.")); // correction + why
     expect(card.category).toBe("phrasing");
     expect(card.sessionId).toBe("s2");
     expect(card.startMs).toBe(42_000);
@@ -107,7 +116,7 @@ describe("generateCards", () => {
 describe("listDueCards / countDueCards", () => {
   it("returns due, non-suspended cards most-overdue-first and excludes future & suspended", () => {
     const db = freshDb();
-    seedFindings(db, "q", [finding({ quote: "a" }), finding({ quote: "b" }), finding({ quote: "c" })]);
+    seedFindings(db, "q", [distinct("corso"), distinct("partito"), distinct("salito")]);
     generateCards(db);
     const [a, b, c] = listDueCards(db);
 
@@ -122,12 +131,12 @@ describe("listDueCards / countDueCards", () => {
 
   it("orders by due ascending — the most overdue card comes first", () => {
     const db = freshDb();
-    seedFindings(db, "o", [finding({ quote: "recent" }), finding({ quote: "old" })]);
+    seedFindings(db, "o", [distinct("recente"), distinct("vecchio")]);
     generateCards(db);
     const byFront = new Map(listDueCards(db).map((c) => [c.front, c.id]));
-    db.prepare("UPDATE cards SET due = datetime('now', '-10 days') WHERE id = ?").run(byFront.get("old"));
-    db.prepare("UPDATE cards SET due = datetime('now', '-1 day') WHERE id = ?").run(byFront.get("recent"));
-    expect(listDueCards(db).map((x) => x.front)).toEqual(["old", "recent"]);
+    db.prepare("UPDATE cards SET due = datetime('now', '-10 days') WHERE id = ?").run(byFront.get("ieri ho vecchio molto"));
+    db.prepare("UPDATE cards SET due = datetime('now', '-1 day') WHERE id = ?").run(byFront.get("ieri ho recente molto"));
+    expect(listDueCards(db).map((x) => x.front)).toEqual(["ieri ho vecchio molto", "ieri ho recente molto"]);
   });
 });
 
@@ -292,17 +301,18 @@ describe("createCardForFinding — the phrasebook pin (E-9)", () => {
 describe("browser: listCards, suspend & delete policy (E-5b)", () => {
   it("listCards returns every card — suspended and future included — soonest-due first", () => {
     const db = freshDb();
-    seedFindings(db, "lc", [finding({ quote: "a" }), finding({ quote: "b" }), finding({ quote: "c" })]);
+    seedFindings(db, "lc", [distinct("andato"), distinct("partito"), distinct("uscito")]);
     generateCards(db);
+    const [A, B, C] = ["ieri ho andato molto", "ieri ho partito molto", "ieri ho uscito molto"];
     const byFront = new Map(listCards(db).map((c) => [c.front, c.id]));
-    db.prepare("UPDATE cards SET due = datetime('now', '+5 days') WHERE id = ?").run(byFront.get("a"));
-    db.prepare("UPDATE cards SET due = datetime('now', '-2 days') WHERE id = ?").run(byFront.get("b"));
-    suspendCard(db, byFront.get("c")!, true);
+    db.prepare("UPDATE cards SET due = datetime('now', '+5 days') WHERE id = ?").run(byFront.get(A));
+    db.prepare("UPDATE cards SET due = datetime('now', '-2 days') WHERE id = ?").run(byFront.get(B));
+    suspendCard(db, byFront.get(C)!, true);
 
     const all = listCards(db);
     expect(all).toHaveLength(3); // suspended + future both listed, unlike the due queue
-    expect(all.map((c) => c.front)).toEqual(["b", "c", "a"]); // -2d, now, +5d
-    expect(all.find((c) => c.front === "c")?.suspended).toBe(true);
+    expect(all.map((c) => c.front)).toEqual([B, C, A]); // -2d, now, +5d
+    expect(all.find((c) => c.front === C)?.suspended).toBe(true);
   });
 
   it("suspend drops a card from the due queue; unsuspend restores it", () => {
