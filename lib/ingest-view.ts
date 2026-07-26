@@ -19,12 +19,15 @@ import type { IngestState } from "./session-types";
  * the detail page shows it under "What was recorded", which is where a diagnosis
  * belongs. This replaces what is SHOWN as the summary, never what is kept.
  *
- * What it says is exactly what is true and no more: nothing was extracted, so there is
- * nothing to analyse, and the work can be re-driven from the audio already uploaded —
- * which is the way forward `POST /api/sessions/[id]/ingest` now makes real.
+ * What it says is exactly what is true and NO MORE. In particular it does not offer to
+ * process the recording again: nothing in the app can requeue a failed ingest (the
+ * route is GET-only), so promising a retry here would be the "control that is present
+ * but does nothing" this close sweep exists to delete. The requeue, and the way forward
+ * it would buy, are deferred to v0.8. Until then this states the failure honestly and
+ * says the one reassuring thing that IS true — the recording itself is still saved.
  */
 export function ingestFailureLine(): string {
-  return "Erika could not read this recording's audio, so no speech was extracted from it. Nothing was lost — the file is still here and can be processed again.";
+  return "Erika could not read this recording's audio, so no speech was extracted from it. The recording itself is still saved.";
 }
 
 /** One speech segment reduced to what the timeline needs (no content hash). */

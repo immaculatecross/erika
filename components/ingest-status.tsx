@@ -56,30 +56,19 @@ export function IngestStatus({
         </div>
       )}
 
-      {/* [v0.7 close sweep] This was `Ingest failed — {view.error}` — raw ffprobe stderr
-          as the one thing the learner was told, beside no way forward at all: the route
-          was GET-only, so nothing in the app could re-drive the job, and the only escape
-          was to delete the session. Now the sentence is human, the requeue is real, and
-          the stored error is kept directly underneath as a diagnosis rather than as the
-          summary. Replace what is SHOWN, never what is recorded. */}
+      {/* [v0.7 close sweep] This was `Ingest failed — {view.error}`: raw ffprobe stderr
+          ("moov atom not found") as the only thing a learner was told. The sentence is
+          now human, and the stored error is kept directly underneath as a DIAGNOSIS
+          rather than as the summary — replace what is shown, never what is recorded.
+          The way forward is NOT fixed here: no route in the app can requeue a failed
+          ingest, so this surface still has only Exclude and Delete. That is deferred to
+          v0.8 with the requeue route it needs, and this copy is careful not to promise
+          it — it says the file is still here, which is true, and nothing more. */}
       {view && view.state === "failed" && (
-        <div className="flex flex-col gap-3" data-ingest-failed>
+        <div className="flex flex-col gap-2" data-ingest-failed>
           <p className="text-[15px] leading-[1.47] text-secondary" role="alert">
             {ingestFailureLine()}
           </p>
-          <div className="flex flex-wrap items-center gap-3">
-            {onRequeue && (
-              <button
-                type="button"
-                data-ingest-requeue
-                onClick={onRequeue}
-                disabled={requeueing}
-                className="rounded-full bg-card px-4 py-2 text-[15px] font-medium text-ink shadow-card transition-transform active:scale-[0.98] disabled:opacity-50"
-              >
-                {requeueing ? "Queued" : "Process it again"}
-              </button>
-            )}
-          </div>
           {view.error && (
             <p className="text-[13px] text-secondary" data-ingest-error>
               What was recorded: <span className="font-mono">{view.error}</span>
