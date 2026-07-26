@@ -213,7 +213,7 @@ export function ruleIsTeachable(rule: SyllabusRule): boolean {
  * The whole deterministic lesson for a syllabus rule, or null when the rule's
  * examples cannot produce enough drills (the picker then tries the next rule).
  *
- * The teaching text is the rule's own English description — it is what E-26 wrote
+ * The teaching text is the rule's own Italian description — it is what E-47 wrote
  * the syllabus for, and putting a model in front of it would be paying to
  * paraphrase content we already own. It goes through `trimToBudget` like every
  * other lesson, so the five-minute promise holds on this path too.
@@ -228,7 +228,7 @@ export function buildRuleLesson(rule: SyllabusRule, register: string): ItemLesso
     intro: `${rule.title} (${rule.cefr}). ${rule.description}`,
     examples: rule.examples.slice(0, MAX_EXAMPLES),
     newWords: [],
-    glossEn: null,
+    definition: null,
     exercises,
     deterministic: true,
   });

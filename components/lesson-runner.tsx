@@ -21,7 +21,7 @@ import { DrillCard } from "@/components/drill-card";
 // deleted, and this file, which used to run pattern lessons with a typed fill-in and
 // a MODEL-GRADED rewrite, now runs the single format.
 //
-// A lesson is: an explanation in plain English, a few worked Italian examples at the
+// A lesson is: an explanation in Italian, a few worked Italian examples at the
 // D-23 register, optionally the words it teaches, then drills answered by tapping or
 // by speaking. Sized to five minutes or less by lib/lessons/lesson-budget.ts, which
 // enforces the size on the content rather than promising it in copy.
@@ -139,7 +139,7 @@ function LessonBody({
             {lesson.newWords.map((w) => (
               <li key={w.lemma} className="flex flex-wrap items-baseline gap-2">
                 <span className="text-[17px] font-semibold text-ink">{w.lemma}</span>
-                <span className="text-[15px] text-secondary">{w.gloss}</span>
+                <span className="text-[15px] text-secondary">{w.definition}</span>
               </li>
             ))}
           </motion.ul>

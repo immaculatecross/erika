@@ -4,7 +4,7 @@ import { localDay } from "./local-day";
 import { parseItemId } from "./knowledge/items";
 import { getItem } from "./knowledge/items";
 import { loadSyllabus } from "./syllabus";
-import { getItemLesson, itemLessonEstimateUsd, posLabel } from "./lessons/item-lessons";
+import { posLabel } from "./lessons/item-lessons";
 import type { ItemLessonKind, LearnItemSummary } from "./lessons/item-lessons-view";
 
 // The E-32 read-model behind GET /api/learn/items: today's composer-chosen grammar
@@ -39,15 +39,14 @@ export function buildLearnItems(db: Db, day: string = localDay()): LearnItemsVie
   for (const it of plan.items) {
     if (!RULE_KINDS.has(it.kind) || !it.itemId) continue;
     const kind: ItemLessonKind = it.kind === "rule" ? "grammar" : "vocab";
-    const hasLesson = getItemLesson(db, it.itemId) !== null;
     const { label, detail } = labelFor(db, it.itemId, kind);
     items.push({
       itemId: it.itemId,
       kind,
       label,
       detail,
-      hasLesson,
-      estimateUsd: hasLesson ? null : itemLessonEstimateUsd(db, it.itemId),
+      hasLesson: true,
+      estimateUsd: null,
     });
   }
   return { day, items };

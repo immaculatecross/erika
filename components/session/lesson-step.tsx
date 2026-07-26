@@ -30,7 +30,9 @@ export function LessonStep({
   const reduced = usePrefersReducedMotion();
   const title = data.fallback?.title ?? data.label ?? "Today's lesson";
   const body = data.lesson?.intro ?? data.fallback?.description ?? null;
-  const examples = data.fallback?.examples ?? [];
+  const definition = data.lesson?.definition ?? null;
+  const examples = data.lesson?.examples ?? data.fallback?.examples ?? [];
+  const words = data.lesson?.newWords ?? [];
 
   return (
     <motion.div
@@ -38,7 +40,7 @@ export function LessonStep({
       initial="initial"
       animate="animate"
       data-step-lesson
-      data-lesson-source={data.lesson ? "generated" : "syllabus"}
+      data-lesson-source={data.lesson?.deterministic ? "syllabus" : data.lesson ? "generated" : "syllabus"}
       className="flex flex-col gap-5"
     >
       <motion.div variants={staggerItem(reduced)} className="flex flex-col gap-1">
@@ -60,6 +62,24 @@ export function LessonStep({
         >
           {body}
         </motion.p>
+      )}
+
+      {definition && (
+        <motion.p variants={staggerItem(reduced)} data-lesson-definition className="text-[17px] leading-[1.47] text-ink">
+          {definition}
+        </motion.p>
+      )}
+
+      {words.length > 0 && (
+        <motion.ul variants={staggerItem(reduced)} data-lesson-words className="flex flex-col gap-2">
+          {words.map((word) => (
+            <li key={word.lemma} className="flex flex-col rounded-control bg-card px-4 py-3 shadow-card">
+              <span className="text-[17px] font-semibold text-ink">{word.lemma}</span>
+              <span className="text-[15px] text-secondary">{word.definition}</span>
+              {word.example && <span className="mt-1 text-[15px] text-ink">{word.example}</span>}
+            </li>
+          ))}
+        </motion.ul>
       )}
 
       {examples.length > 0 && (

@@ -56,11 +56,11 @@ const RULE = pickTeachableRule()!;
 
 function goodBody(): string {
   return JSON.stringify({
-    intro: "Andare takes essere in the passato prossimo.",
+    intro: "Andare usa l'ausiliare essere nel passato prossimo.",
     examples: ["Sono andato al mare."],
     exercises: [
-      { prompt: "Ieri ____ andato.", options: ["sono", "ho"], answerIndex: 0, answer: "sono", invite: "click", rationale: "essere." },
-      { prompt: "Ieri ____ corso.", options: ["sono", "ho"], answerIndex: 0, answer: "sono", invite: "speak", rationale: "essere." },
+      { prompt: "Ieri ____ andato.", options: ["sono", "ho"], answerIndex: 0, answer: "sono", invite: "click", rationale: "Andare richiede l'ausiliare essere." },
+      { prompt: "Ieri ____ corso.", options: ["sono", "ho"], answerIndex: 0, answer: "sono", invite: "speak", rationale: "Il movimento verso una meta richiede essere." },
     ],
   });
 }
@@ -225,6 +225,6 @@ describe("the learner gets a lesson whatever the model does", () => {
 
     const lesson = await todaysLesson(db, client, itemId);
     expect(lesson!.deterministic).toBeUndefined();
-    expect(lesson!.intro).toBe("Andare takes essere in the passato prossimo.");
+    expect(lesson!.intro).toBe("Andare usa l'ausiliare essere nel passato prossimo.");
   });
 });

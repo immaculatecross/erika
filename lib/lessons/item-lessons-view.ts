@@ -52,12 +52,11 @@ export type ItemExerciseType = (typeof ITEM_EXERCISE_TYPES)[number];
 
 export interface ItemExercise {
   type: ItemExerciseType;
-  /** The meaning-first cue: an English instruction/gloss, or an Italian sentence
-   *  with a gap written `____`. NEVER an error form (D-18). */
+  /** The meaning-first cue: an Italian definition or a correct Italian sentence
+   *  with a gap written `____`. NEVER an error form (D-18/E-47). */
   prompt: string;
-  /** An English gloss fronting the cue when the target is not inferable from the
-   *  Italian alone — D-18 explicitly permits an English-gloss front. */
-  gloss?: string;
+  /** An Italian definition fronting the cue when context alone is insufficient. */
+  definition?: string;
   /** The options shown. ALWAYS present and always ≥2, including on a spoken drill:
    *  this is the click fallback that keeps voice from ever becoming a dead end. */
   options: string[];
@@ -74,8 +73,8 @@ export interface ItemExercise {
 /** One word a vocabulary lesson teaches: the Italian, and what it means. */
 export interface LessonWord {
   lemma: string;
-  /** English gloss. A vocabulary lesson without one teaches nothing. */
-  gloss: string;
+  /** Its definition in Italian. A vocabulary lesson without one teaches nothing. */
+  definition: string;
   /** One correct Italian sentence using it, at the D-23 register. */
   example?: string;
 }
@@ -85,14 +84,14 @@ export interface ItemLesson {
   kind: ItemLessonKind;
   /** The register the lesson was written in (D-23) — "colto" by default. */
   register: string;
-  /** The teaching text, in plain English. Bounded by MAX_INTRO_WORDS. */
+  /** The teaching text, in Italian. Bounded by MAX_INTRO_WORDS. */
   intro: string;
   /** Worked Italian examples at the register — "three or four", per the operator. */
   examples: string[];
   /** The words a vocabulary lesson teaches — "about ten", per the operator. */
   newWords: LessonWord[];
-  /** Vocab only: the headline lemma's English gloss. NULL for grammar lessons. */
-  glossEn: string | null;
+  /** Vocab only: the headline lemma's Italian definition. NULL for grammar. */
+  definition: string | null;
   exercises: ItemExercise[];
   /** True when this lesson was built from the syllabus with NO model call — the
    *  keyless path (D-27), and the reason an empty database still gets a lesson. */

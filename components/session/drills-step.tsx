@@ -84,11 +84,11 @@ export function DrillsStep({ lesson, onDone }: { lesson: SessionLessonBody | nul
     (action: DrillAction) => {
       setProgress((current) => {
         const [next, effect] = drillProgress(current, action);
-        if (effect.write !== null && lesson) {
+        if (effect.write !== null && lesson?.lesson) {
           void fetch("/api/lessons/item/complete", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ itemId: lesson.itemId, correct: effect.write }),
+            body: JSON.stringify({ itemId: lesson.lesson.itemId, correct: effect.write }),
           }).catch(() => {});
         }
         return next;

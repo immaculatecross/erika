@@ -5,8 +5,8 @@ import type { ItemLesson } from "@/lib/lessons/item-lessons-view";
 import type { KnowledgeStatus } from "@/lib/knowledge/types";
 
 // Client hook driving the lesson runner against the item-lesson routes. On mount it
-// POSTs /api/lessons/item/generate, which answers with `todaysLesson` — the cached
-// lesson, else a generated one, else the deterministic syllabus lesson. It cannot
+// POSTs the legacy-named /api/lessons/item/generate compatibility route, which now
+// only reads a prepared cache body or returns authored Italian in memory. It cannot
 // come back empty, so the hook has no budget branch and no retry control. `complete`
 // posts one graded exercise's result (correct/incorrect) to the evidence bridge —
 // no model call — so finishing an exercise feeds the knowledge core.

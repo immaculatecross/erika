@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { apiError } from "@/lib/api/error";
 import { localDay } from "@/lib/local-day";
 import { openSession } from "@/lib/session/store";
 import { buildSessionView } from "@/lib/session/view";
@@ -16,6 +17,14 @@ export const dynamic = "force-dynamic";
 
 export function POST() {
   const db = getDb();
+  const preview = buildSessionView(db);
+  if (preview.lesson && preview.lesson.preparation !== "ready") {
+    return apiError(
+      "lesson_not_prepared",
+      "Today's lesson is still being prepared. Start remains available as soon as it is ready.",
+      409,
+    );
+  }
   openSession(db, localDay());
   return NextResponse.json(buildSessionView(db));
 }

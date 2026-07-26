@@ -27,15 +27,15 @@ const LESSON: NewItemLesson = {
   itemId: "lemma:casa#NOUN",
   kind: "vocab",
   register: "colto",
-  intro: "«casa» means home.",
+  intro: "«Casa» indica l'edificio in cui una persona abita e, per estensione, il proprio ambiente familiare.",
   examples: ["Torno a casa."],
-  newWords: [{ lemma: "casa", gloss: "house" }],
-  glossEn: "house",
+  newWords: [{ lemma: "casa", definition: "Edificio o luogo in cui si abita." }],
+  definition: "Edificio o luogo in cui si abita.",
   // [E-45] ONE exercise shape, and `options` is mandatory on both invites — a
   // spoken drill's options ARE its fallback when speech recognition fails.
   exercises: [
-    { type: "choice", prompt: "home?", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "home" },
-    { type: "choice", prompt: "Torno a ____.", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "speak", rationale: "home", gloss: "house" },
+    { type: "choice", prompt: "Scegli il luogo in cui si abita.", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "Casa indica il luogo in cui si abita." },
+    { type: "choice", prompt: "Torno a ____.", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "speak", rationale: "La locuzione corretta è tornare a casa.", definition: "Luogo in cui si abita." },
   ],
 };
 
@@ -48,7 +48,7 @@ describe("migration v20 schema", () => {
     expect(tables.has("item_lessons")).toBe(true);
     const cols = db.prepare("PRAGMA table_info(item_lessons)").all() as { name: string; pk: number }[];
     expect(cols.map((c) => c.name)).toEqual(
-      expect.arrayContaining(["item_id", "kind", "register", "body", "created_at"]),
+      expect.arrayContaining(["item_id", "kind", "register", "body", "content_version", "created_at"]),
     );
     expect(cols.find((c) => c.name === "item_id")?.pk).toBe(1);
     db.close();
@@ -60,11 +60,11 @@ describe("migration v20 schema", () => {
     expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBe(true);
     const stored = completeItemLesson(db, LESSON);
     expect(stored.intro).toBe(LESSON.intro);
-    expect(stored.glossEn).toBe("house");
+    expect(stored.definition).toBe("Edificio o luogo in cui si abita.");
     expect(stored.exercises).toEqual(LESSON.exercises);
 
     const read = getItemLesson(db, LESSON.itemId)!;
-    expect(read.exercises[1]).toMatchObject({ type: "choice", answer: "casa", invite: "speak", gloss: "house" });
+    expect(read.exercises[1]).toMatchObject({ type: "choice", answer: "casa", invite: "speak", definition: "Luogo in cui si abita." });
 
     // The PK makes a second CLAIM for the same item return false (cache once, one row).
     expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBe(false);

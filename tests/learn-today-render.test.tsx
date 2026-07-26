@@ -41,6 +41,7 @@ const BASE: TodayView = {
   summary: "A lesson on the congiuntivo, 12 cards, and a conversation.",
   steps: ["lesson", "drills", "conversation"],
   action: { kind: "start", href: "/practice/session", label: "Start today" },
+  lessonPreparation: "ready",
   placed: true,
   streak: { currentRun: 0, repairedDays: [], lastCompletedDay: null },
   thread: null,
@@ -62,6 +63,16 @@ describe("the main column holds exactly one tappable thing", () => {
     );
     expect(interactive(html)).toBe(1);
     expect(html).toContain('data-primary-action="continue"');
+  });
+
+  it("replaces Start with one calm status while billable preparation is in flight", () => {
+    const html = renderToStaticMarkup(
+      <LearnToday view={{ ...BASE, lessonPreparation: "preparing" }} />,
+    );
+    expect(interactive(html)).toBe(0);
+    expect(html).toContain("data-lesson-preparing");
+    expect(html).toContain("Preparing today");
+    expect(html).not.toContain("data-primary-action");
   });
 
   it("offers NOTHING once the day is done — the sentence is the whole surface", () => {

@@ -38,7 +38,7 @@ function drill(over: Partial<ItemExercise> = {}): Record<string, unknown> {
     answerIndex: 0,
     answer: "sono",
     invite: "click",
-    rationale: "andare takes essere.",
+    rationale: "Il verbo andare richiede l'ausiliare essere.",
     ...over,
   };
 }
@@ -74,8 +74,11 @@ describe("the prompt states the contract the runner depends on", () => {
     expect(BREVITY_RETRY_INSTRUCTION).toContain("MUCH shorter");
   });
 
-  it("a vocabulary prompt asks for the English glosses an offline source cannot supply", () => {
-    expect(vocabLessonPrompt("Italian", "colto", "casa", "NOUN")).toContain('"glossEn"');
+  it("a vocabulary prompt requires Italian definitions in the public shape", () => {
+    const vocab = vocabLessonPrompt("Italian", "colto", "casa", "NOUN");
+    expect(vocab).toContain('"definition"');
+    expect(vocab).not.toContain("glossEn");
+    expect(vocab).toContain("Every learner-visible string MUST be Italian");
   });
 });
 
@@ -127,7 +130,7 @@ describe("parseItemLessonResponse — a usable lesson or a truthful failure", ()
       GRAMMAR_ITEM,
       "colto",
       reply({
-        intro: "Andare takes essere.",
+        intro: "Il verbo andare forma il passato prossimo con l'ausiliare essere.",
         examples: ["Sono andato al mare."],
         exercises: [drill(), drill({ invite: "speak", prompt: "Ieri ____ corso.", answer: "sono" })],
       }),
@@ -156,7 +159,7 @@ describe("parseItemLessonResponse — a usable lesson or a truthful failure", ()
       GRAMMAR_ITEM,
       "colto",
       reply({
-        intro: "Andare takes essere.",
+        intro: "Il verbo andare forma il passato prossimo con l'ausiliare essere.",
         exercises: [drill(), { prompt: "p", answer: "a", rationale: "r" }, drill({ answer: "nowhere" })],
       }),
       FALLBACK,
@@ -180,26 +183,31 @@ describe("parseItemLessonResponse — a usable lesson or a truthful failure", ()
     ).toThrow(TextModelParseError);
   });
 
-  it("refuses a vocabulary lesson with no English gloss", () => {
+  it("refuses a vocabulary lesson with no Italian definition", () => {
     expect(() =>
       parseItemLessonResponse(VOCAB_ITEM, "colto", reply({ intro: "x", exercises: [drill(), drill()] })),
     ).toThrow(TextModelParseError);
   });
 
-  it("carries a vocabulary lesson's words and gloss", () => {
+  it("carries a vocabulary lesson's Italian words and definitions", () => {
     const lesson = parseItemLessonResponse(
       VOCAB_ITEM,
       "colto",
       reply({
-        intro: "casa is home.",
-        glossEn: "house",
-        newWords: [{ lemma: "casa", gloss: "house", example: "Torno a casa." }, { lemma: "", gloss: "x" }],
+        intro: "La casa è l'edificio o il luogo in cui una persona abita.",
+        definition: "Edificio o luogo in cui si abita.",
+        newWords: [
+          { lemma: "casa", definition: "Edificio o luogo in cui si abita.", example: "Torno a casa." },
+          { lemma: "", definition: "voce non valida" },
+        ],
         exercises: [drill(), drill()],
       }),
     );
-    expect(lesson.glossEn).toBe("house");
+    expect(lesson.definition).toBe("Edificio o luogo in cui si abita.");
     // The malformed word is dropped, the good one kept — same policy as exercises.
-    expect(lesson.newWords).toEqual([{ lemma: "casa", gloss: "house", example: "Torno a casa." }]);
+    expect(lesson.newWords).toEqual([
+      { lemma: "casa", definition: "Edificio o luogo in cui si abita.", example: "Torno a casa." },
+    ]);
   });
 
   it("TRIMS an over-budget reply instead of rejecting work the learner paid for", () => {

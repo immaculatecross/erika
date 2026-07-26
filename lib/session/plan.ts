@@ -83,14 +83,10 @@ export function lessonLabelFor(itemId: string): string | null {
  * Choose the ONE item today's lesson teaches.
  *
  * A GRAMMAR RULE IS PREFERRED, and that is a product call worth naming: a rule is the
- * only item kind that carries real teachable content with no model call at all —
- * E-26 authored a title, a two-to-four sentence description and correct examples for
- * all 266 of them. So a rule lesson can always be delivered, keyless, at the cap, with
- * the model down; a lemma cannot (the lexicon is frequency data — it has no glosses,
- * by licence: D-19 keeps the CC BY-NC sources out of the shipped data path). Choosing
- * the rule first is therefore what makes the lesson step incapable of ending at a
- * wall. A lemma is taken only when no rule is on today's plan AND a lesson for it can
- * actually be produced (one is already cached, or a call is possible).
+ * only item kind that carries real teachable content with no model call at all.
+ * A lemma is taken only when no rule is on today's plan and a lesson for it can be
+ * prepared (one is already cached, or a call is possible). If that preparation later
+ * fails, E-47 substitutes authored grammar at the learner's edge.
  */
 function chooseLessonItem(
   db: Db,

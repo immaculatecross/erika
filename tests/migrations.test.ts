@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { openDatabase, runMigrations } from "@/lib/db";
 import { migrations } from "@/lib/migrations";
+import { italianLessonsMigration } from "@/lib/migrations/v31-italian-lessons";
 
 const tmpFiles: string[] = [];
 
@@ -160,9 +161,35 @@ describe("migrations runner", () => {
     const db = openDatabase(tmpDbPath());
     const cols = db.prepare("PRAGMA table_info(item_lessons)").all() as { name: string; pk: number }[];
     expect(cols.map((c) => c.name)).toEqual(
-      expect.arrayContaining(["item_id", "kind", "register", "body", "created_at"]),
+      expect.arrayContaining(["item_id", "kind", "register", "body", "content_version", "created_at"]),
     );
     expect(cols.find((c) => c.name === "item_id")?.pk).toBe(1);
+    db.close();
+  });
+
+  it("v31 deletes only the disposable English lesson cache and versions new bodies", () => {
+    const p = tmpDbPath();
+    const db = new Database(p);
+    db.exec(`
+      CREATE TABLE knowledge_items (id TEXT PRIMARY KEY);
+      INSERT INTO knowledge_items (id) VALUES ('lemma:casa#NOUN');
+      CREATE TABLE item_lessons (
+        item_id TEXT PRIMARY KEY REFERENCES knowledge_items(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        register TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO item_lessons (item_id, kind, register, body)
+      VALUES ('lemma:casa#NOUN', 'vocab', 'colto', '{"intro":"The house","glossEn":"house"}');
+    `);
+
+    italianLessonsMigration.up(db);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM item_lessons").get()).toEqual({ n: 0 });
+    const column = (db.prepare("PRAGMA table_info(item_lessons)").all() as { name: string; dflt_value: string }[])
+      .find((entry) => entry.name === "content_version");
+    expect(column?.dflt_value).toBe("1");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM knowledge_items").get()).toEqual({ n: 1 });
     db.close();
   });
 

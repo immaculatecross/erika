@@ -20,7 +20,7 @@ const SPOKEN: ItemExercise = {
   answerIndex: 0,
   answer: "sono",
   invite: "speak",
-  rationale: "andare takes essere.",
+  rationale: "Il verbo andare richiede l'ausiliare essere.",
 };
 
 const CLICKED: ItemExercise = { ...SPOKEN, invite: "click" };
