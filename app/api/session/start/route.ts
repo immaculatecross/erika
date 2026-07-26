@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { apiError } from "@/lib/api/error";
 import { localDay } from "@/lib/local-day";
+import { servableItemLesson } from "@/lib/lessons/lesson-serving";
 import { openSession } from "@/lib/session/store";
 import { buildSessionView } from "@/lib/session/view";
 
@@ -18,10 +19,10 @@ export const dynamic = "force-dynamic";
 export function POST() {
   const db = getDb();
   const preview = buildSessionView(db);
-  if (preview.lesson && preview.lesson.preparation !== "ready") {
+  if (preview.lesson && !servableItemLesson(db, preview.lesson.itemId)) {
     return apiError(
-      "lesson_not_prepared",
-      "Today's lesson is still being prepared. Start remains available as soon as it is ready.",
+      "lesson_not_servable",
+      "Today's lesson is not available yet.",
       409,
     );
   }

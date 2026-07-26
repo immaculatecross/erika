@@ -93,6 +93,31 @@ const REVIEWER_ENGLISH = JSON.stringify({
   ],
 });
 
+// The delta review's aggregate-only adversary: every field is at or below the
+// validator's honest per-field limit, so only the whole-lesson guard can reject it.
+const DELTA_ALL_SHORT_ENGLISH = JSON.stringify({
+  intro: "Modal instruction",
+  examples: ["People speak"],
+  exercises: [
+    {
+      prompt: "Choose form",
+      options: ["can", "could"],
+      answerIndex: 0,
+      answer: "can",
+      invite: "click",
+      rationale: "Shows possibility",
+    },
+    {
+      prompt: "Choose phrase",
+      options: ["might", "must"],
+      answerIndex: 0,
+      answer: "might",
+      invite: "speak",
+      rationale: "Shows uncertainty",
+    },
+  ],
+});
+
 describe("bounded Italian-language validation", () => {
   it("accepts a complete Italian lesson and checks every visible field", () => {
     expect(() => assertItalianLesson(ITALIAN)).not.toThrow();
@@ -128,6 +153,16 @@ describe("bounded Italian-language validation", () => {
         { id: "rule:presente-modali", kind: "grammar" },
         "colto",
         REVIEWER_ENGLISH,
+      ),
+    ).toThrow(ItalianLessonLanguageError);
+  });
+
+  it("rejects the delta review's aggregate-only all-English lesson", () => {
+    expect(() =>
+      parseItemLessonResponse(
+        { id: "rule:presente-modali", kind: "grammar" },
+        "colto",
+        DELTA_ALL_SHORT_ENGLISH,
       ),
     ).toThrow(ItalianLessonLanguageError);
   });

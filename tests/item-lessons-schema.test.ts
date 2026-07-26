@@ -102,8 +102,11 @@ describe("migration v20 schema", () => {
       ...LESSON,
       intro: "La lezione vincente resta nella cache anche se il vecchio proprietario termina più tardi.",
     };
-    expect(completeItemLesson(db, winningLesson, winner!)).not.toBeNull();
+    // The reclaimed former owner resolves FIRST, while the successor row is still
+    // empty. `body = ''` alone cannot save this ordering: only claim-token ownership
+    // prevents the stale body from preempting the real winner.
     expect(completeItemLesson(db, LESSON, stale!)).toBeNull();
+    expect(completeItemLesson(db, winningLesson, winner!)).not.toBeNull();
     expect(getItemLesson(db, LESSON.itemId)?.intro).toBe(winningLesson.intro);
     db.close();
   });

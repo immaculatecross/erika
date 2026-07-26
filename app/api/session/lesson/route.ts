@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { apiError } from "@/lib/api/error";
 import { localDay } from "@/lib/local-day";
-import { authoredLessonFor, getItemLesson } from "@/lib/lessons/item-lessons";
+import { servableItemLesson } from "@/lib/lessons/lesson-serving";
 import { buildSessionView, syllabusFallback } from "@/lib/session/view";
 
 // Today's PREPARED lesson. This route serves both the explanation and drills, but it
@@ -24,7 +24,10 @@ export function GET() {
   }
 
   const { itemId, kind, label } = view.lesson;
-  const lesson = getItemLesson(db, itemId) ?? authoredLessonFor(db, itemId);
+  const lesson = servableItemLesson(db, itemId);
+  if (!lesson) {
+    return apiError("lesson_not_servable", "Today's lesson is not available.", 404);
+  }
   const fallback = syllabusFallback(lesson.itemId);
   return NextResponse.json({ itemId, kind, label, lesson, fallback, notice: null });
 }

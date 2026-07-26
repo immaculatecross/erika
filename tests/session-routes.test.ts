@@ -70,9 +70,13 @@ describe("GET /api/session — the day before it is started", () => {
 });
 
 describe("one-lesson-ahead — the keyless route boundary", () => {
-  it("refuses Start until the home preparation trigger resolves authored Italian", async () => {
-    const blocked = await POST_START();
-    expect(blocked.status).toBe(409);
+  it("starts immediately when authored Italian is servable, then may cache it ahead", async () => {
+    const directlyServed = await GET_LESSON();
+    expect(directlyServed.status).toBe(200);
+    const started = await POST_START();
+    expect(started.status).toBe(200);
+    expect(((await started.json()) as SessionBody).started).toBe(true);
+    expect((await import("@/lib/db")).getDb().prepare("SELECT COUNT(*) AS n FROM spend_ledger").get()).toEqual({ n: 0 });
 
     const prepared = await POST_PREPARE();
     expect(prepared.status).toBe(200);

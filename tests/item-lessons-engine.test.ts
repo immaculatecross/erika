@@ -11,12 +11,13 @@ import {
   generateItemLesson,
   getItemLesson,
   ITEM_LESSON_CLAIM_STALE_SECONDS,
+  itemLessonEstimateUsd,
   lessonPreparationState,
   prepareItemLesson,
   sweepStaleItemLessonClaims,
 } from "@/lib/lessons/item-lessons";
 import { BudgetExceededError, TEXT_MODEL_REQUEST_TIMEOUT_MS } from "@/lib/lessons/billing";
-import { TextModelParseError, type TextModelClient } from "@/lib/lessons/text-model";
+import { TextModelParseError, type TextCompletion, type TextModelClient } from "@/lib/lessons/text-model";
 import { loadSyllabus } from "@/lib/syllabus";
 
 // WO criterion 3 (every money invariant, never-waivable) against a MOCK text client
@@ -220,32 +221,49 @@ describe("one-lesson-ahead preparation resolves once and never strands a claim",
     db.close();
   });
 
-  it("times out a held first call before its claim can go stale, so a second preparation never bills", async () => {
+  it("conservatively commits a late abort-ignoring call before its claim can go stale", async () => {
     vi.useFakeTimers();
     const db = freshDb();
     let calls = 0;
+    let resolveLate!: (completion: {
+      text: string;
+      promptTokens: number;
+      completionTokens: number;
+    }) => void;
     const client: TextModelClient = {
-      complete({ signal }) {
+      complete() {
         calls++;
-        return new Promise((_, reject) => {
-          signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        return new Promise<TextCompletion>((resolve) => {
+          // Deliberately ignore AbortSignal: the accepted provider request can
+          // resolve after the local timeout and must not become invisible spend.
+          resolveLate = resolve;
         });
       },
     };
+    const reservedUpperBound = itemLessonEstimateUsd(db, RULE_ITEM);
 
     const first = prepareItemLesson(db, client, RULE_ITEM);
-    await vi.advanceTimersByTimeAsync(ITEM_LESSON_CLAIM_STALE_SECONDS * 1000);
+    await vi.advanceTimersByTimeAsync(TEXT_MODEL_REQUEST_TIMEOUT_MS);
     const resolved = await first;
 
     expect(resolved.state).toBe("ready");
     expect(resolved.lesson?.deterministic).toBe(true);
     expect(TEXT_MODEL_REQUEST_TIMEOUT_MS).toBeLessThan(ITEM_LESSON_CLAIM_STALE_SECONDS * 1000);
     expect(sweepStaleItemLessonClaims(db)).toBe(0);
+    const beforeLateResolution = db
+      .prepare("SELECT state, cost_usd FROM spend_ledger")
+      .all() as { state: string; cost_usd: number }[];
+    expect(beforeLateResolution).toHaveLength(1);
+    expect(beforeLateResolution[0]).toMatchObject({ state: "committed" });
+    expect(beforeLateResolution[0].cost_usd).toBeCloseTo(reservedUpperBound, 12);
+
+    resolveLate({ text: GOOD_GRAMMAR, promptTokens: 150, completionTokens: 320 });
+    await Promise.resolve();
 
     const second = await prepareItemLesson(db, client, RULE_ITEM);
     expect(second.state).toBe("ready");
     expect(calls).toBe(1);
-    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(1);
     expect((db.prepare("SELECT COUNT(*) AS n FROM item_lessons WHERE body <> ''").get() as { n: number }).n).toBe(1);
     db.close();
   });

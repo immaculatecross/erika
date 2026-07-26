@@ -47,8 +47,9 @@ export const TEXT_MODEL_REQUEST_TIMEOUT_MS = 2 * 60 * 1000;
  * Reserves an upper-bound cost (prompt length + the full output allowance) as a
  * pending row and throws `BudgetExceededError` *before* calling if the cap refuses
  * it. Otherwise it calls the model and returns the completion, its actual cost, and
- * the still-pending reservation. A failed call (nothing billed) releases the
- * reservation before rethrowing.
+ * the still-pending reservation. A definite pre-acceptance failure releases the
+ * reservation. A timeout is ambiguous — the provider may finish after local abort —
+ * so it conservatively commits the reserved upper bound before rethrowing.
  */
 export async function runBilledTextCall(
   db: Db,
@@ -62,18 +63,27 @@ export async function runBilledTextCall(
   let completion: TextCompletion;
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
   try {
     completion = await Promise.race([
       client.complete({ ...input, signal: controller.signal }),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
+          timedOut = true;
           controller.abort();
           reject(new TextModelTimeoutError(`Text model request exceeded ${TEXT_MODEL_REQUEST_TIMEOUT_MS}ms.`));
         }, TEXT_MODEL_REQUEST_TIMEOUT_MS);
       }),
     ]);
   } catch (err) {
-    releaseReservation(db, reservation); // no completion, no charge
+    if (timedOut || err instanceof TextModelTimeoutError) {
+      // The request reached an ambiguous boundary. The only cap-safe direction is
+      // to record the already-admitted maximum; a late completion has no observer
+      // and must not turn into invisible spend.
+      finalizeReservation(db, reservation, reservation.costUsd);
+    } else {
+      releaseReservation(db, reservation);
+    }
     throw err;
   } finally {
     if (timeout) clearTimeout(timeout);
