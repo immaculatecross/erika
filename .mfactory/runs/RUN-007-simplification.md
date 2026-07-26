@@ -237,3 +237,68 @@ Filed here rather than in mfactory's `runs/` because no mfactory checkout is rea
 **2 · Reading did find the money defects, and reading is not driving.** The under-booked rate, the stale-lease partial sweep, and the dead `isAssumedRunLeaseHash` came from a reviewer reading code carefully — then *live measurement corrected the reviewer's own prescription* (700 tok/min would have under-booked; the real figure was 20.0 tok/s). So the sequence that worked was **read to form a hypothesis, then measure to settle it.** Neither half alone would have got there: reading produced a wrong number confidently, and measurement without the reading would not have known to look.
 
 **So the refined rule is not "test less".** It is: **discovery comes from contact with the real system; conservation comes from tests; and a claim about the product is only as good as the last time someone touched the product.** The specific waste this run exhibits is not that tests exist — it is that *driving* was scheduled as a **gate at the end** rather than as the **first verification of each milestone**, so three milestones each shipped a defect that one live call would have exposed on day one.
+
+---
+
+## Final lessons for mfactory — RUN-007
+
+Ratified by the operator at the version's close. Ordered by leverage, not by when they were learned.
+
+### 1 · The most valuable finding class is "a feature that never worked at all" — and only using the product finds it
+
+The three biggest defects this version were not wrong logic. They were **features that did not exist**:
+
+- **Every tutor conversation had been refused `422 undecodable_audio` for two versions.** E-34's own acceptance criterion — *"the call records client-side and lands as a normal session → ingest → deep analysis"* — was marked `done` and was **false from the day it shipped**.
+- **The tutor's corrections were never spoken.** `call_id` was discarded, so on any turn it had something to teach, it fell silent after a holding line.
+- **The onboarding gate was never enforced**, because client-side navigation walks past a root-layout check.
+
+A test cannot find these. A test exercises what you built; these were never built. A review cannot find them either — three independent Full reviews read E-37's branch in v0.6 and missed a page unreachable on every route. **Only meeting the product the way a user does finds a thing that isn't there.**
+
+**Encode:** an acceptance criterion that asserts an **end-to-end outcome** must be verified end to end, once, by observation — never by a unit test of a helper on the path. If nobody watched the outcome happen, the criterion is unproven regardless of the suite.
+
+### 2 · Make driving cheap, maintained and standard — the single highest-leverage change
+
+Every worker and reviewer this run **rebuilt the driving apparatus by hand**: `npm ci`, build, choose an unusual port, start a server, prove the responder, seed a disposable database. Ten-plus times, ~15 minutes and real tokens each, *before any finding*. The proofs were consequently uneven — some asserted the responder in both directions, some in one, one agent had no browser tool in its worktree at all and fell back to HTTP.
+
+Meanwhile **12 Playwright specs sit in `e2e/` that CI has never run** — owed since v0.6, and the direct reason an unreachable page shipped.
+
+**Encode:** a committed, maintained harness — one command that builds, binds a random port, **proves the responder in both directions**, seeds a throwaway database and returns a URL — plus wiring the existing e2e specs into CI. The point is not only cost. A hand-rolled apparatus is a *different* apparatus every time, so its guarantee varies; a maintained one makes the responder proof automatic and uniform. **When driving is cheaper than writing a test, the incentive flips without any new process.** (Operator: *"make it cheap and better because it is maintained, more robust, and not created from scratch every time."*)
+
+### 3 · Tests are conservation, not discovery — budget them that way
+
+18 findings came from contact with the real system; 4 from the suite, and **all four were defects in the tests**. 1,429 green tests coexisted with the flagship milestone lying to users about a permanent failure; 1,012 did the same through v0.6's cold-start failure. Yet the count *underweights* tests: a test that prevents a defect from ever being written leaves no ledger entry, and these tests held the money spine, the `known` gate and the append-only evidence log still while five milestones rewrote the product around them.
+
+**Encode:** stop treating test count as a version signal — v0.6 was, in its own words, *the best-tested and least usable* version of this project. Require **mutation proofs where a guard protects money, data loss, or a stated invariant**, not everywhere. And state findings by **origin** (driven / live / read / test) in every exit report, so a milestone verified only by tests is visibly a milestone not yet verified.
+
+### 4 · Read to form the hypothesis; measure to settle it
+
+The money defects came from a reviewer reading carefully — and then **live measurement corrected the reviewer's own prescription**: it prescribed 700 tokens/minute, the real figure was 20.0 tok/s, and the prescription would have *under-booked* the cap. Reading alone produced a confident wrong number; measuring without the reading would not have known where to look.
+
+**Encode:** where a milestone touches an external system, the **first** verification is one real call — not a fixture, not a mock — and its result goes into the work order before the build proceeds. Two architecture decisions this version would have been wrong without it. Total live spend for the whole version: **≈ $2.20**, of which **$0.74** reversed a major architecture call and **$0.003** exposed a mispriced rate.
+
+### 5 · State intent and grant authority; do not enumerate criteria
+
+The work orders were long and criterion-dense, and the best outcomes came from workers **overriding** them: the voice-negative invariant (the worker's answer was better than the dispatcher's), the jsdom question (it refused to add a dependency that would have left the invariant in a component), the rate override (live data beat the reviewer's prescription). Each time the criterion was the weaker artefact.
+
+Conversely, criterion-satisfaction produced the worst outcome available: E-46 satisfied *"an empty database forces onboarding"* while leaving the home's one action pointing at a route the same PR deleted.
+
+**Encode:** the operator's product-authority clause (D-26) is the load-bearing part of a work order, not a footer. Lead with the **intent and the bar** — *a person who has never seen this repository can use the thing without asking a question* — grant explicit authority to contradict any criterion with a written argument, and keep criteria few and behavioural. A long criteria list invites satisfying the list.
+
+### 6 · The operator's own use is the highest-signal input in the system
+
+Two of this version's largest course corrections came from the operator using the product for minutes: *"the realtime API listens very well but does not speak super well"* → the whole E-43 arc; and *"for listening… I think realtime might be good"* → which **caught a flaw in D-26 that would have made the tutor detect mistakes from a transcript, exactly what D-3 forbids**, before a line was written. No agent, review or test raised either.
+
+**Encode:** put the operator in front of the product at the *earliest* buildable point, not at the close. Ship them something runnable mid-version and ask for a reaction, not approval.
+
+### 7 · Cuts to make (ratified)
+
+- **Review tiers were declared and then ignored** — all five milestones ran Full. Use the tier; Light exists for additive UI over an existing read-model.
+- **~12 docs PRs, each burning a full CI cycle.** Batch the ritual and the record into one PR per milestone, or one per version.
+- **Reviewers re-ran the whole gate suite CI had already run.** Review the diff and drive the product; trust CI for the gates.
+- **The 500-line hook fired twice mid-run** and produced good seams both times — keep it.
+
+### 8 · Dispatcher failure modes, recorded against myself
+
+- **A rescope message was misaddressed** to the E-44 worker instead of the E-43 money reviewer; it cost real time and the worker had to be told to disregard it. **Name the recipient's milestone in the first line of every agent message.**
+- **A rescue ran `git add -A` inside a live agent's worktree**, leaving it a staged index it had not created. **Capture patches to scratch; never stage another agent's tree.**
+- **~16 agent deaths** (network, one spend limit, the rest stream-watchdog stalls on long turns) cost **nothing durable**, because of three habits worth keeping: push after every *file* rather than every milestone; write review verdicts to disk incrementally; and rescue a worktree before relaunching. **The lost-signal backstop and the "probe before declaring an agent dead" rule both earned their place again.**
