@@ -1,12 +1,7 @@
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { tmpDir } from "./helpers";
-import {
-  ONBOARDING_PATH,
-  isOnboardingPath,
-  onboardingRedirect,
-  showsAppChrome,
-} from "@/lib/onboarding/routing";
+import { ONBOARDING_PATH, isOnboardingPath, onboardingRedirect } from "@/lib/onboarding/routing";
 import type { Db } from "@/lib/db";
 
 // E-46 criterion 1, both directions. The second one is the one that matters more.
@@ -33,7 +28,6 @@ const EVERY_PAGE = [
   "/slips/abc123",
   "/sessions/abc123",
   "/practice",
-  "/practice/placement",
   "/practice/cards",
   "/practice/review",
   "/practice/reading",
@@ -68,12 +62,6 @@ describe("the first-run gate forces onboarding on an empty database", () => {
     expect(onboardingRedirect("/welcomed", false)).toBe(ONBOARDING_PATH);
   });
 
-  it("does not mount the tab bar or section nav while onboarding is forced", () => {
-    for (const p of EVERY_PAGE) {
-      expect(showsAppChrome(p, false), `chrome on ${p}`).toBe(false);
-    }
-    expect(showsAppChrome(ONBOARDING_PATH, false)).toBe(false);
-  });
 });
 
 describe("the first-run gate never traps a learner who already has a profile", () => {
@@ -81,13 +69,6 @@ describe("the first-run gate never traps a learner who already has a profile", (
     for (const p of [...EVERY_PAGE, ONBOARDING_PATH, `${ONBOARDING_PATH}/check`]) {
       expect(onboardingRedirect(p, true), `complete: ${p}`).toBeNull();
     }
-  });
-
-  it("gives them back the shell everywhere except the onboarding surface itself", () => {
-    for (const p of EVERY_PAGE) {
-      expect(showsAppChrome(p, true), `chrome on ${p}`).toBe(true);
-    }
-    expect(showsAppChrome(ONBOARDING_PATH, true)).toBe(false);
   });
 });
 

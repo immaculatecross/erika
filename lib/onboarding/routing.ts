@@ -20,12 +20,15 @@
 // only guarantees that once it is true, nothing here can override it.
 //
 // Enumerated paths that could violate (a), and how each is closed:
-//   · a deep link / typed URL / bookmark → the gate runs in the ROOT LAYOUT, so
-//     it renders before any page's own code (app/layout.tsx).
-//   · a client-side <Link> navigation → the root layout is re-rendered on the
-//     server for the RSC payload, so `redirect()` still fires.
-//   · the tab bar and section nav → suppressed entirely while incomplete
-//     (app/layout.tsx does not mount the shell), so there is nothing to click.
+//   · a deep link / typed URL / bookmark → the gate runs in the layout of the
+//     route group every page lives in, so it renders before any page's own code.
+//   · a client-side <Link> navigation → measured, not assumed. In the ROOT layout
+//     this leaked: the App Router caches the root layout, so an RSC navigation
+//     returned 200 and the page without re-rendering it. The gate therefore lives
+//     one level down, in `app/(app)/layout.tsx`, which is outside the client's
+//     cached tree whenever the learner is on `/welcome` and must be rendered.
+//   · the tab bar and section nav → they live inside the gated route group's own
+//     layout, so they are not even rendered until the gate has been passed.
 //   · `/welcome` itself → exempt, or the redirect would loop.
 //   · `/api/*`, `/_next/*`, files → never reach a layout; exempted here anyway so
 //     the predicate is total and a future caller cannot misuse it.
@@ -76,16 +79,4 @@ export function onboardingRedirect(pathname: string, complete: boolean): string 
   if (isOnboardingPath(pathname)) return null;
   if (isNonPage(pathname)) return null;
   return ONBOARDING_PATH;
-}
-
-/**
- * Should the two-tab shell chrome (header, section nav, tab bar) be mounted?
- *
- * No, on two occasions: while onboarding is incomplete (there is nowhere to go,
- * and a visible tab bar on a forced flow is an invitation to escape it), and on
- * the onboarding surface itself even after it is complete — a learner re-taking
- * the check should see the same undistracted screen the first one was.
- */
-export function showsAppChrome(pathname: string, complete: boolean): boolean {
-  return complete && !isOnboardingPath(pathname);
 }

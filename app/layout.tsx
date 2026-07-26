@@ -1,10 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
-import { getDb } from "@/lib/db";
-import { onboardingComplete } from "@/lib/onboarding/state";
-import { PATHNAME_HEADER, onboardingRedirect, showsAppChrome } from "@/lib/onboarding/routing";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,41 +13,29 @@ export const viewport: Viewport = {
   ],
 };
 
-// The first-run gate (E-46 criterion 1, D-26). It lives in the ROOT layout on
-// purpose: every page in the app renders inside it, so a deep link, a bookmark, a
-// typed URL and a client-side <Link> all pass through here, and there is no page
-// whose own code runs first. The rule itself is pure and lives in
-// lib/onboarding/routing.ts, where it can be tested and mutated; this file only
-// supplies the two facts it needs — where the request was going, and whether the
-// database has ever met anybody.
+// The document shell, and nothing else. The two-tab chrome and the first-run gate
+// both moved down one level, into `app/(app)/layout.tsx` (E-46 criterion 1).
 //
-// The chrome is suppressed in the same breath. A forced flow with a tab bar under
-// it is not forced; it is a suggestion with a visible way out.
+// WHY THE GATE IS NOT HERE, measured rather than assumed. A redirect in the ROOT
+// layout gates every document request, and it was verified doing so — but the
+// App Router keeps the root layout in its client-side cache, so a `<Link>`
+// navigation asks the server only for the segments below the first one that
+// changed. Probed against the built server: `curl -H "RSC: 1" /practice` from a
+// client sitting on `/welcome` returned **200 and the practice page**, with the
+// root layout never re-rendered. That is the whole hole: the gate held for typed
+// URLs and held for deep links and would have leaked on exactly the navigation a
+// learner performs by clicking.
 //
-// A database that cannot be opened at all is treated as "not onboarded" rather
-// than crashing every route — the v0.4 cold-start blocker (#47) was exactly a
-// fresh-database failure that only appeared inside Next's server bundle, and this
-// is now the one code path every page render passes through.
+// `app/(app)/` is a route group, so `/welcome` sits OUTSIDE it and every path
+// inside it does not. Entering the group is always a change at this level, so its
+// layout is always rendered, so the gate always runs. Moving between two paths
+// inside the group reuses it — which is correct and not a hole, because reaching
+// the inside of the group at all requires having passed the gate.
 
-function isOnboarded(): boolean {
-  try {
-    return onboardingComplete(getDb());
-  } catch {
-    return false;
-  }
-}
-
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const pathname = (await headers()).get(PATHNAME_HEADER) ?? "/";
-  const complete = isOnboarded();
-  const destination = onboardingRedirect(pathname, complete);
-  if (destination) redirect(destination);
-
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>
-        {showsAppChrome(pathname, complete) ? <AppShell>{children}</AppShell> : children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
