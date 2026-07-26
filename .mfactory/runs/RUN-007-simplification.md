@@ -61,18 +61,25 @@ Ratified as **D-26** and scoped as **v0.7 = E-42…E-46** in FEATURES.md. Operat
 
 | Signal | Value |
 |---|---|
-| Sessions: workers / reviews / other | |
-| Outcomes: first-pass approvals / repairs / escalations | |
-| Routing misses · hook blocks · interruptions | |
-| Cold-start walkthrough | pending |
-| Failure-path walkthrough | pending |
-| Live API spend (ceiling $5.00) | |
-| Wall clock per role (workers / reviews / dispatcher) | |
-| Tokens per role, where the harness reports them | |
+| Sessions: workers / reviews / other | 8 workers (incl. 2 rebase passes) / 9 review passes / 4 spikes + 1 recon + 2 gate attempts |
+| Outcomes: first-pass approvals / repairs / escalations | **2** (#66, #79) / **4** (#71, #74, #82, #85) / **0** |
+| Routing misses · hook blocks · interruptions | 1 misaddressed agent message (dispatcher) · tripwire ×1, 500-line ×3, commit-msg ×1 · operator steered ~15 times, all incorporated |
+| Cold-start walkthrough | **NOT RUN — 4 attempts killed by platform failures (529 Overloaded ×3, watchdog stall ×1) before producing a verdict. v0.7 is therefore NOT CLOSED.** |
+| Failure-path walkthrough | **RAN. 3 WALLs, 6 LIEs.** Worst: the tutor reporting a permanently revoked key as *"just now"* with no control — the v0.6 defect, on the milestone built to replace it. 5 fixed on `fix/v07-failure-paths`; 4 cut by operator ruling as demoted-surface polish. |
+| Live API spend (ceiling $5.00) | **≈ $2.60** — spike-6 $0.74, E-43 $0.68 across two passes, spike-7 $0.18, reviewers $0.13, E-46 $0.018, E-42 $0.086, others <$0.01. Largest single item reversed an architecture decision. |
+| Agent deaths | **≈ 19** — 4 network, 1 Claude spend limit, 3 × 529 Overloaded, the rest watchdog stalls on long turns. **Nothing durable lost**, via push-after-every-file, incremental verdict files, and worktree rescue before relaunch. |
+| Wall clock per role (workers / reviews / dispatcher) | not instrumented — n/a |
+| Tokens per role, where the harness reports them | subagent totals reported per completion; ≈ 6.0M across all agents |
 
-Pass ledger — one line per dispatched unit: `WO-<slug>: first-pass | repaired | escalated`.
+Pass ledger:
 
-- `PR-66 (WO-E39 workstream A, inherited)`: pending
+- `PR-66 (WO-E39 workstream A, inherited)`: **first-pass**
+- `WO-E42-capture-without-buttons`: **repaired** (1 cycle: 3 blocking → delta APPROVE)
+- `WO-E43-tutor-voice-loop`: **repaired** ×2 (an operator-directed architecture reversal, then 1 repair cycle on the money review)
+- `WO-E44-one-session-a-day`: **first-pass** (APPROVE, no blocking; a separate rebase pass after E-43 merged)
+- `WO-E45-lesson-and-deck`: **repaired** (1 cycle: 2 blocking in the voice path → delta APPROVE; then a rebase that found the defect still live on the daily flow's own component)
+- `WO-E46-first-run-and-progress`: **repaired** (1 cycle: 1 blocking → **delta re-review never completed**, verified by reading — the version's weakest proof, recorded as such)
+- `fix/v07-failure-paths`: **open** — 4 of 5 findings pushed, scope cut to land
 
 ## Lessons (D-09: each names its encoding, or is marked OPEN)
 
