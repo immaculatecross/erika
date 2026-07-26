@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { BudgetExceededError } from "@/lib/lessons/billing";
-import { openAiSpeechToText, SpeechUnavailableError, transcribeDrillAnswer } from "@/lib/lessons/speech";
+import {
+  DrillAnswerTooLargeError,
+  openAiSpeechToText,
+  SpeechUnavailableError,
+  transcribeDrillAnswer,
+} from "@/lib/lessons/speech";
 
 // Transcribe ONE spoken drill answer (E-45 criterion 2, D-28). The learner said a
 // word; this returns what the recogniser heard. It does not grade — grading is
@@ -50,6 +55,9 @@ export async function POST(request: Request) {
   } catch (err) {
     if (err instanceof BudgetExceededError) return unavailable("budget");
     if (err instanceof SpeechUnavailableError) return unavailable("unavailable");
+    // Too much audio is a refusal, not a crash — and the learner still has the
+    // options in front of them, so it degrades like every other failure here.
+    if (err instanceof DrillAnswerTooLargeError) return unavailable("too_long");
     throw err;
   }
 }

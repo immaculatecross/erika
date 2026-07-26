@@ -57,6 +57,23 @@ export interface SpeechToText {
  */
 export const MAX_DRILL_ANSWER_SECONDS = 15;
 
+/**
+ * The byte ceiling for one drill answer, and the reason the duration is not trusted.
+ *
+ * [Full review, non-blocking] The reservation used to be priced on a `seconds` value
+ * the CLIENT declared, so a client claiming `seconds: 0` reserved nothing and then
+ * sent whatever it liked — the cap guarded a number the caller chose. Duration is now
+ * ignored for pricing entirely (see `transcribeDrillAnswer`) and the payload is
+ * bounded here instead, on the one quantity the server can actually see.
+ *
+ * 16-bit mono PCM at 48 kHz is ~96 kB/s, so 15 seconds is ~1.4 MB; 2 MB leaves room
+ * for a WAV header and a higher sample rate without leaving room for a conversation.
+ */
+export const MAX_DRILL_ANSWER_BYTES = 2 * 1024 * 1024;
+
+/** Thrown when a drill answer is larger than one drill answer can be. */
+export class DrillAnswerTooLargeError extends Error {}
+
 const OPENAI_URL = "https://api.openai.com/v1/audio/transcriptions";
 
 function apiKey(): string {
@@ -109,7 +126,20 @@ export async function transcribeDrillAnswer(
   input: { audioBase64: string; format: string; seconds: number; drillKey: string },
 ): Promise<Transcription> {
   const { monthlyBudgetUsd, targetLanguage } = readSettings(db);
-  const seconds = Math.min(Math.max(0, input.seconds), MAX_DRILL_ANSWER_SECONDS);
+
+  // Bound what we are willing to be sent, on the one quantity the server can see.
+  const bytes = Math.ceil((input.audioBase64.length * 3) / 4);
+  if (bytes > MAX_DRILL_ANSWER_BYTES) {
+    throw new DrillAnswerTooLargeError("That answer is longer than a drill answer can be.");
+  }
+
+  // PRICED AT THE CEILING, NOT AT THE DECLARED DURATION. `input.seconds` comes from
+  // the browser and a caller that declares zero would otherwise reserve zero — a cap
+  // that guards a number the caller chose is not a cap. Charging every answer as if
+  // it ran the full MAX_DRILL_ANSWER_SECONDS over-books by a fraction of a cent on a
+  // two-second answer, which is the safe direction: over-estimating costs a slightly
+  // early refusal, under-estimating makes the cap a lie (lib/analysis/rates.ts).
+  const seconds = MAX_DRILL_ANSWER_SECONDS;
   const costUsd = sttCallCost(STT_MODEL, seconds);
 
   const reservation = reserveSpend(

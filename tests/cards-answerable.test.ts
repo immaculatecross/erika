@@ -96,6 +96,32 @@ describe("deriveFront — every exit, enumerated (E-45 criterion 3)", () => {
   }
 });
 
+describe("frontIsAnswerable REFUSES — the predicate is not a rubber stamp", () => {
+  // [Full review, non-blocking] `frontIsAnswerable` → `return true` survived
+  // mutation: every case asserted it was TRUE and nothing asserted it was ever
+  // false, so the predicate the totality proof rests on could have been a constant.
+  const CORRECTION = "ieri sono andato al mare";
+
+  const REFUSED: [string, string][] = [
+    ["no blank at all", "ieri sono andato al mare"],
+    ["two blanks", `ieri ${CLOZE_BLANK} andato ${CLOZE_BLANK} mare`],
+    ["a bare category word", `${CLOZE_BLANK} · grammar`],
+    ["a context word that is not in the correction", `domani ${CLOZE_BLANK} andato al mare`],
+    ["only one short context word", `ieri ${CLOZE_BLANK}`],
+    ["nothing hidden — the whole correction is on screen", `ieri sono andato al mare ${CLOZE_BLANK}`],
+  ];
+
+  for (const [name, front] of REFUSED) {
+    it(`refuses: ${name}`, () => {
+      expect(frontIsAnswerable(front, CORRECTION)).toBe(false);
+    });
+  }
+
+  it("accepts the shape deriveFront actually produces", () => {
+    expect(frontIsAnswerable(`ieri ${CLOZE_BLANK} andato al mare`, CORRECTION)).toBe(true);
+  });
+});
+
 describe("the front never carries the learner's error or a category word", () => {
   it("no front produced from any category-shaped input contains a category name", () => {
     // Structural sweep: even when the quote and correction are literally the
