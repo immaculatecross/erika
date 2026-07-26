@@ -4,8 +4,8 @@ import { readSettings } from "@/lib/settings";
 import { coerceRegister } from "@/lib/register";
 import { getPassage } from "@/lib/canon";
 import { renderPhrase } from "@/lib/render/phrase";
-import { BudgetExceededError } from "@/lib/render/engine";
-import { openAiTtsModel, TtsModelUnavailableError } from "@/lib/render/tts-model";
+import { openAiTtsModel } from "@/lib/render/tts-model";
+import { voiceFailureResponse } from "@/app/api/voice-errors";
 
 // Render a canon passage's optional LISTEN (E-33). POST renders the passage text
 // through the shared E-21 biller (reserve-before-call, per-phrase cache, ledger) —
@@ -28,15 +28,6 @@ export async function POST(_request: Request, { params }: Ctx) {
     const { generated } = await renderPhrase(db, openAiTtsModel, { text: passage.text, register });
     return NextResponse.json({ exists: true, generated }, { status: generated ? 201 : 200 });
   } catch (err) {
-    if (err instanceof BudgetExceededError) {
-      return NextResponse.json(
-        { error: "Monthly budget reached — no render can be generated until it is raised or the month rolls over." },
-        { status: 402 },
-      );
-    }
-    if (err instanceof TtsModelUnavailableError) {
-      return NextResponse.json({ error: "The voice model is unavailable right now." }, { status: 502 });
-    }
-    throw err;
+    return voiceFailureResponse(err);
   }
 }

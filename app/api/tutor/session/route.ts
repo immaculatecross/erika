@@ -8,6 +8,7 @@ import { buildTutorSessionConfig } from "@/lib/tutor/session-config";
 import { openTutorLease, releaseTutorLease, defaultTutorMinutes, estimateTutorSessionUsd } from "@/lib/tutor/money";
 import { openAiClientSecretMinter, MinterUnavailableError } from "@/lib/tutor/mint";
 import { closeAbandonedConversations, openConversation, tutorMinimumSeconds } from "@/lib/tutor/conversations";
+import { classifyFailure, noticeFor } from "@/lib/session/notices";
 
 // The tutor session's mint + lease route (E-34, rebuilt at E-43). The secret-exposure
 // + spend boundary, both never-waivable.
@@ -70,6 +71,9 @@ export async function POST() {
           code: "budget",
           message: `A conversation is estimated at ${estimateUsd.toFixed(2)} USD, which would exceed the monthly budget. No conversation was started.`,
         },
+        // The sentence above is true and the gate confirmed it; what it had was no way
+        // forward at all. The notice carries the remedy and the link that resolves.
+        notice: "budget",
         estimateUsd,
       },
       { status: 402 },
@@ -83,15 +87,19 @@ export async function POST() {
     // No completion, no charge — release the lease so the cap is freed.
     releaseTutorLease(db, tutorId);
     if (err instanceof MinterUnavailableError) {
+      // [v0.7 close sweep] This branch used to collapse EVERY failure-with-a-key into
+      // "could not reach the conversation service just now. Try again in a moment." —
+      // so a rotated or revoked key, which is standing until the operator edits a file
+      // and restarts, invited an unbounded retry and named no remedy. E-44 had already
+      // written the `key-rejected` notice; the tutor simply never adopted it. It does
+      // now, through the one classifier every surface shares.
+      const notice = classifyFailure({
+        keyConfigured: Boolean(process.env.OPENAI_API_KEY),
+        message: err.message,
+        transient: "conversation-transient",
+      });
       return NextResponse.json(
-        {
-          error: {
-            code: "tutor_unavailable",
-            message: process.env.OPENAI_API_KEY
-              ? "Erika could not reach the conversation service just now. Try again in a moment."
-              : "Erika needs an OpenAI API key to hold a conversation. Add one in Settings and come back.",
-          },
-        },
+        { error: { code: "tutor_unavailable", message: noticeFor(notice).body }, notice },
         { status: 503 },
       );
     }

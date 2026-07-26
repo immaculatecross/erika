@@ -6,6 +6,8 @@ import { Sparkles, Loader2, ArrowUpRight } from "lucide-react";
 import { SPRING } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { formatEstimate } from "@/lib/format";
+import { NoticeLine } from "@/components/session/step-notice";
+import type { NoticeReason } from "@/lib/session/notices";
 
 // Ask Erika (E-23, the v0.3 finale): ask any finding for a deeper note. Erika
 // returns a persisted explanation that ties this correction to at least one OTHER
@@ -31,7 +33,7 @@ interface Status {
   cited?: Cite[];
 }
 
-type Phase = "loading" | "missing" | "unavailable" | "asking" | "note" | "budget" | "error";
+type Phase = "loading" | "missing" | "unavailable" | "asking" | "note" | "blocked";
 
 /** Jump to a cited finding elsewhere on the page (its `data-entry-id`) and flash it. */
 function defaultNavigate(findingId: string) {
@@ -53,6 +55,8 @@ export function AskErika({
   const reduced = usePrefersReducedMotion();
   const [phase, setPhase] = useState<Phase>("loading");
   const [status, setStatus] = useState<Status | null>(null);
+  /** Why the ask cannot run, as the ROUTE classified it (v0.7 close sweep). */
+  const [notice, setNotice] = useState<NoticeReason | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -63,7 +67,11 @@ export function AskErika({
         setStatus(s);
         setPhase(s.exists ? "note" : s.canAsk ? "missing" : "unavailable");
       })
-      .catch(() => alive && setPhase("error"));
+      .catch(() => {
+        if (!alive) return;
+        setNotice("model-transient");
+        setPhase("blocked");
+      });
     return () => {
       alive = false;
     };
@@ -73,13 +81,21 @@ export function AskErika({
     setPhase("asking");
     try {
       const res = await fetch(`/api/ask/${findingId}`, { method: "POST" });
-      if (res.status === 402) return setPhase("budget");
-      if (!res.ok) return setPhase("error");
+      if (!res.ok) {
+        // [v0.7 close sweep] This branch used to call a missing key "unavailable right
+        // now" — permanent, told as momentary — and the cap's remedy carried no link.
+        // The route classifies; the shared table decides the wording, the link, and
+        // whether a retry is honest.
+        const body = (await res.json().catch(() => null)) as { notice?: NoticeReason } | null;
+        setNotice(body?.notice ?? "model-transient");
+        return setPhase("blocked");
+      }
       const s: Status = await res.json();
       setStatus(s);
       setPhase("note");
     } catch {
-      setPhase("error");
+      setNotice("model-transient");
+      setPhase("blocked");
     }
   }, [findingId]);
 
@@ -106,14 +122,8 @@ export function AskErika({
           <Loader2 size={16} strokeWidth={1.5} aria-hidden className="animate-spin" />
           Erika is writing…
         </span>
-      ) : phase === "budget" ? (
-        <span data-ask-budget className="text-[13px] text-secondary">
-          Monthly budget reached — raise it or wait for the month to roll over.
-        </span>
-      ) : phase === "error" ? (
-        <span data-ask-error className="text-[13px] text-secondary">
-          Ask is unavailable right now.
-        </span>
+      ) : phase === "blocked" && notice ? (
+        <NoticeLine reason={notice} testId="ask" onRetry={() => void ask()} />
       ) : (
         <AnimatePresence initial={false}>
           <motion.div

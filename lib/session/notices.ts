@@ -1,5 +1,13 @@
-// Every notice the session can show when something cannot run (E-44 criterion 3),
-// in ONE place. Pure and client-safe.
+// Every notice the app can show when something cannot run (E-44 criterion 3), in ONE
+// place. Pure and client-safe.
+//
+// [v0.7 close sweep] It began as the SESSION's notices and the v0.7 failure-path gate
+// found exactly that boundary: "a standing condition never softened" held everywhere
+// inside the daily session and failed on every surface the module never reached — the
+// tutor, the listen/compare/ask controls, the studio, the reading page. The fix was to
+// widen this file, not to write a second one. Every surface that can fail now names its
+// condition from this table, through `classifyFailure` on the server and `noticeFor` /
+// `NoticeLine` on the client.
 //
 // The invariant this file exists to hold: **every step either completes or offers a
 // real way forward.** Three rules follow from it, and each is asserted by a test
@@ -24,6 +32,8 @@ export type NoticeReason =
   | "key-rejected"
   | "budget"
   | "model-transient"
+  | "voice-transient"
+  | "conversation-transient"
   | "mic-denied"
   | "save-failed"
   | "in-flight"
@@ -81,6 +91,25 @@ const NOTICES: Record<NoticeReason, Notice> = {
   "model-transient": {
     reason: "model-transient",
     body: "Erika could not reach the lesson model just now.",
+    action: null,
+    retryable: true,
+    standing: false,
+  },
+  // The same momentary condition on the two surfaces outside the session, each naming
+  // the subject it actually failed to reach. THREE transient rows rather than one
+  // generic "unavailable" is the point: a learner tapping Listen is not told the
+  // lesson model is down. All three are momentary, so all three may say "just now"
+  // and all three retry — that is the whole licence the wording carries.
+  "voice-transient": {
+    reason: "voice-transient",
+    body: "Erika could not reach the voice just now.",
+    action: null,
+    retryable: true,
+    standing: false,
+  },
+  "conversation-transient": {
+    reason: "conversation-transient",
+    body: "Erika could not reach the conversation service just now.",
     action: null,
     retryable: true,
     standing: false,
@@ -146,6 +175,40 @@ const NOTICES: Record<NoticeReason, Notice> = {
 
 export function noticeFor(reason: NoticeReason): Notice {
   return NOTICES[reason];
+}
+
+/**
+ * Classify a failed model call into one of the reasons above. THE one classifier, for
+ * every surface — the session's lesson, the tutor's mint, and every voice control.
+ *
+ * The v0.7 failure-path gate found the session disciplined and every surface outside
+ * it saying "unavailable right now" over a permanent condition, because each surface
+ * had written its own collapse of "it did not work". Two dialects of one rule is the
+ * defect shape this repo has shipped twice, so there is exactly one function and the
+ * table above is the only vocabulary.
+ *
+ * Pure and client-safe: the caller reads its own environment and passes the FACT in.
+ *
+ * The order matters and is the whole content:
+ *   - a budget refusal is the caller's own error type, so the caller states it;
+ *   - NO key is a different condition, and a different remedy, from a key OpenAI
+ *     REFUSED (401/403) — telling someone who configured a key that none is set sends
+ *     them to check something already correct;
+ *   - anything else really may work on the next tap, and only that may say "just now".
+ */
+export function classifyFailure(input: {
+  /** The caller recognised its own budget error. */
+  budgetExceeded?: boolean;
+  /** Is a key configured on this server at all? */
+  keyConfigured: boolean;
+  /** The upstream error text, read ONLY to spot a 401/403 rejection. Never shown. */
+  message?: string | null;
+  /** Which transient row this surface uses, so it names what it could not reach. */
+  transient: Extract<NoticeReason, `${string}transient`>;
+}): NoticeReason {
+  if (input.budgetExceeded) return "budget";
+  if (!input.keyConfigured) return "no-key";
+  return /\b(401|403)\b/.test(input.message ?? "") ? "key-rejected" : input.transient;
 }
 
 /** Every notice, for the tests that enforce the three rules above. */

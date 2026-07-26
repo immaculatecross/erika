@@ -138,13 +138,29 @@ describe("SessionRow — every phase says its own true thing", () => {
     expect(render(item({ jobState: "processing" }))).not.toContain("data-analysis-bar");
   });
 
-  it("a failed ingest shows its own stored reason, not the analysis job's", () => {
+  // [v0.7 close sweep] This used to assert the row showed the job's STORED string, and
+  // it did: the failure-path gate read "ffprobe exited 1: moov atom not found" on the
+  // home screen, as the row's whole user-facing summary. It is a true string and a
+  // useless one — "moov atom" means nothing to anyone recording Italian. The row now
+  // says what happened in a sentence; the stored error is still recorded, and the
+  // session detail page still shows it verbatim as a diagnosis.
+  it("a failed ingest says what happened in words, not in ffprobe's", () => {
     const html = render(
-      item({ jobState: "failed", ingestError: "ffmpeg could not read this file", analysisError: "unrelated" }),
+      item({
+        jobState: "failed",
+        ingestError: "ffprobe exited 1: moov atom not found",
+        analysisError: "unrelated",
+      }),
     );
     expect(html).toContain('data-phase="ingest-failed"');
-    expect(html).toContain("ffmpeg could not read this file");
+    expect(html).toContain("could not read this recording&#x27;s audio");
+    // The internal string is not the summary any more.
+    expect(html).not.toContain("moov atom");
+    expect(html).not.toContain("ffprobe");
     expect(html).not.toContain("unrelated");
+    // And it promises nothing the app cannot do: there is no requeue route, so the
+    // sentence must not offer to process it again (deferred to v0.8).
+    expect(html).not.toMatch(/try again|process it again/i);
   });
 
   it("a missing key is described as permanent and points at the fix", () => {

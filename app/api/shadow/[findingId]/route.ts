@@ -5,8 +5,8 @@ import { coerceRegister } from "@/lib/register";
 import { shadowTarget } from "@/lib/shadow";
 import { renderPhrase, phraseRenderEstimateUsd } from "@/lib/render/phrase";
 import { getPhraseRender, phraseHash } from "@/lib/render/phrase-renders";
-import { BudgetExceededError } from "@/lib/render/engine";
-import { openAiTtsModel, TtsModelUnavailableError } from "@/lib/render/tts-model";
+import { openAiTtsModel } from "@/lib/render/tts-model";
+import { voiceFailureResponse } from "@/app/api/voice-errors";
 
 // One shadow drill (E-33, D-18/D-21). GET is the read-only status the drill primes
 // with: the correct target phrase, whether its render already exists, and the render
@@ -50,15 +50,6 @@ export async function POST(_request: Request, { params }: Ctx) {
     const { generated } = await renderPhrase(db, openAiTtsModel, { text: drill.target, register });
     return NextResponse.json({ exists: true, generated }, { status: generated ? 201 : 200 });
   } catch (err) {
-    if (err instanceof BudgetExceededError) {
-      return NextResponse.json(
-        { error: "Monthly budget reached — no render can be generated until it is raised or the month rolls over." },
-        { status: 402 },
-      );
-    }
-    if (err instanceof TtsModelUnavailableError) {
-      return NextResponse.json({ error: "The voice model is unavailable right now." }, { status: 502 });
-    }
-    throw err;
+    return voiceFailureResponse(err);
   }
 }

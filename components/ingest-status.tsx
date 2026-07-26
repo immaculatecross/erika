@@ -1,6 +1,6 @@
 "use client";
 
-import { STAGE_LABELS, type IngestView, type TimelineSegment } from "@/lib/ingest-view";
+import { ingestFailureLine, STAGE_LABELS, type IngestView, type TimelineSegment } from "@/lib/ingest-view";
 import type { FindingMarkerInput } from "@/lib/session-map";
 import { SegmentTimeline } from "@/components/segment-timeline";
 import { WorkerAbsentNotice } from "@/components/worker-absent-notice";
@@ -56,10 +56,25 @@ export function IngestStatus({
         </div>
       )}
 
+      {/* [v0.7 close sweep] This was `Ingest failed — {view.error}`: raw ffprobe stderr
+          ("moov atom not found") as the only thing a learner was told. The sentence is
+          now human, and the stored error is kept directly underneath as a DIAGNOSIS
+          rather than as the summary — replace what is shown, never what is recorded.
+          The way forward is NOT fixed here: no route in the app can requeue a failed
+          ingest, so this surface still has only Exclude and Delete. That is deferred to
+          v0.8 with the requeue route it needs, and this copy is careful not to promise
+          it — it says the file is still here, which is true, and nothing more. */}
       {view && view.state === "failed" && (
-        <p className="text-[15px] text-severe" role="alert">
-          Ingest failed — {view.error ?? "no error recorded."}
-        </p>
+        <div className="flex flex-col gap-2" data-ingest-failed>
+          <p className="text-[15px] leading-[1.47] text-secondary" role="alert">
+            {ingestFailureLine()}
+          </p>
+          {view.error && (
+            <p className="text-[13px] text-secondary" data-ingest-error>
+              What was recorded: <span className="font-mono">{view.error}</span>
+            </p>
+          )}
+        </div>
       )}
 
       {view && view.state === "done" && view.summary.segmentCount === 0 && (

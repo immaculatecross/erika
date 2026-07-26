@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { allNotices, noticeFor, TRANSIENT_WORDS } from "@/lib/session/notices";
+import { allNotices, classifyFailure, noticeFor, TRANSIENT_WORDS } from "@/lib/session/notices";
 import { pageFileFor } from "./helpers";
 
 // CRITERION 3, MECHANISED. RETRO-004 named the same defect thirteen times: every row
@@ -29,8 +29,82 @@ describe("rule 1 — a standing condition is never called 'right now'", () => {
     const softened = allNotices().filter((n) =>
       TRANSIENT_WORDS.some((w) => n.body.toLowerCase().includes(w)),
     );
-    expect(softened.map((n) => n.reason).sort()).toEqual(["model-transient", "save-failed"]);
+    expect(softened.map((n) => n.reason).sort()).toEqual([
+      "conversation-transient",
+      "model-transient",
+      "save-failed",
+      "voice-transient",
+    ]);
     for (const n of softened) expect(n.standing).toBe(false);
+  });
+});
+
+// [v0.7 close sweep] The gate's finding was not that the rules were wrong — it was that
+// they stopped at the session boundary. So the classifier every surface now shares is
+// asserted here, on the same three rules, condition by condition.
+describe("classifyFailure — one classifier for every surface", () => {
+  const surfaces = ["model-transient", "voice-transient", "conversation-transient"] as const;
+
+  it("a budget refusal is standing, links to Settings, and offers no retry", () => {
+    for (const transient of surfaces) {
+      const reason = classifyFailure({ budgetExceeded: true, keyConfigured: true, transient });
+      expect(reason).toBe("budget");
+      const notice = noticeFor(reason);
+      expect(notice.standing).toBe(true);
+      expect(notice.retryable).toBe(false);
+      expect(notice.action?.href).toBe("/settings");
+    }
+  });
+
+  it("no key at all is 'no-key' on every surface, never a transient", () => {
+    for (const transient of surfaces) {
+      const reason = classifyFailure({ keyConfigured: false, message: "OPENAI_API_KEY is not set.", transient });
+      expect(reason).toBe("no-key");
+      expect(noticeFor(reason).standing).toBe(true);
+    }
+  });
+
+  // The v0.6 defect, on the v0.7 flagship: a REVOKED key reported as momentary. This is
+  // the assertion that would have failed on `app/api/tutor/session/route.ts` as shipped.
+  it("a key OpenAI refused is 'key-rejected' — never softened, never 'no key is set'", () => {
+    for (const transient of surfaces) {
+      for (const message of [
+        "client_secrets mint failed: 401 Unauthorized {\"error\":{\"code\":\"invalid_api_key\"}}",
+        "gpt-4o-mini-tts call failed: 403 Forbidden",
+      ]) {
+        const reason = classifyFailure({ keyConfigured: true, message, transient });
+        expect(reason).toBe("key-rejected");
+        const notice = noticeFor(reason);
+        expect(notice.standing).toBe(true);
+        for (const word of TRANSIENT_WORDS) expect(notice.body.toLowerCase()).not.toContain(word);
+        expect(notice.action?.href).toBe("/settings");
+        expect(notice.body).not.toEqual(noticeFor("no-key").body);
+      }
+    }
+  });
+
+  it("anything else is the surface's OWN transient — and it names what it could not reach", () => {
+    expect(classifyFailure({ keyConfigured: true, message: "503 Service Unavailable", transient: "voice-transient" })).toBe(
+      "voice-transient",
+    );
+    expect(
+      classifyFailure({ keyConfigured: true, message: "network error", transient: "conversation-transient" }),
+    ).toBe("conversation-transient");
+    // A learner tapping Listen must not be told the LESSON model is down.
+    expect(noticeFor("voice-transient").body.toLowerCase()).toContain("voice");
+    expect(noticeFor("conversation-transient").body.toLowerCase()).toContain("conversation");
+    for (const transient of surfaces) expect(noticeFor(transient).retryable).toBe(true);
+  });
+
+  // A 401 whose body happens to say "budget", or a keyless server whose upstream text
+  // mentions 401, must land on the condition that is actually true.
+  it("the order is budget → no key → refused key → momentary", () => {
+    expect(
+      classifyFailure({ budgetExceeded: true, keyConfigured: true, message: "401", transient: "voice-transient" }),
+    ).toBe("budget");
+    expect(
+      classifyFailure({ keyConfigured: false, message: "401 Unauthorized", transient: "voice-transient" }),
+    ).toBe("no-key");
   });
 });
 

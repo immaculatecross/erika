@@ -8,6 +8,7 @@ import { REGISTERS, type Register } from "@/lib/register";
 import { REALTIME_VOICES, voiceLabel, type RealtimeVoice } from "@/lib/tutor/voices";
 import { REALTIME_TIERS, type RealtimeTier } from "@/lib/analysis/rates";
 import { formatUsd } from "@/lib/format";
+import { keyStatusLine } from "@/lib/analysis-key";
 
 type Status = { kind: "idle" | "saving" | "saved" } | { kind: "error"; message: string };
 
@@ -354,9 +355,12 @@ function WhatErikaNeeds({ keyPresent }: { keyPresent: boolean | null }) {
               className={`text-[15px] ${keyPresent ? "text-secondary" : "text-medium"}`}
               role="status"
             >
-              {keyPresent
-                ? "A key is set — analysis will run."
-                : "No key is set right now, so analysis will not run."}
+              {/* [v0.7 close sweep] This used to be two literals here, and the keyless one
+                  softened a standing condition with "right now" — contradicting the
+                  sentence directly above it, which had just said the condition "stays true
+                  until you add one". The sentence now comes from `lib/analysis-key.ts`,
+                  beside the message and the predicate it has to agree with. */}
+              {keyStatusLine(keyPresent)}
             </p>
           )}
           <p className="text-[15px] leading-[1.47] text-secondary">

@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { tmpDir } from "./helpers";
+import { pageFileFor, tmpDir } from "./helpers";
+import { noticeFor, TRANSIENT_WORDS } from "@/lib/session/notices";
 
 // The ephemeral-mint route (E-34, WO criterion 1) — the secret-exposure boundary,
 // never-waivable. The real OPENAI_API_KEY is used ONLY server-side to mint a
@@ -24,6 +25,9 @@ let writeSettings: typeof import("@/lib/settings").writeSettings;
 
 let lastAuth: string | null = null;
 let mintCalls = 0;
+/** What OpenAI answers the mint with. 200 unless a test is driving a refusal. */
+let mintStatus = 200;
+let mintBody = JSON.stringify({ value: EPHEMERAL, expires_at: 1_900_000_000 });
 
 beforeAll(async () => {
   root = tmpDir("erika-tutor-mint-");
@@ -39,8 +43,9 @@ beforeAll(async () => {
         mintCalls += 1;
         const headers = (init?.headers ?? {}) as Record<string, string>;
         lastAuth = headers.authorization ?? headers.Authorization ?? null;
-        return new Response(JSON.stringify({ value: EPHEMERAL, expires_at: 1_900_000_000 }), {
-          status: 200,
+        return new Response(mintBody, {
+          status: mintStatus,
+          statusText: mintStatus === 401 ? "Unauthorized" : "OK",
           headers: { "content-type": "application/json" },
         });
       }
@@ -56,6 +61,8 @@ beforeAll(async () => {
 afterEach(() => {
   getDb().prepare("DELETE FROM spend_ledger").run();
   lastAuth = null;
+  mintStatus = 200;
+  mintBody = JSON.stringify({ value: EPHEMERAL, expires_at: 1_900_000_000 });
 });
 afterAll(() => {
   vi.unstubAllGlobals();
@@ -114,5 +121,79 @@ describe("POST /api/tutor/session — requires the server principal's key", () =
     const pending = getDb().prepare("SELECT COUNT(*) AS n FROM spend_ledger WHERE state='pending'").get() as { n: number };
     expect(pending.n).toBe(0);
     process.env.OPENAI_API_KEY = REAL_KEY;
+  });
+});
+
+// ── [v0.7 close sweep] the route says WHICH failure it was ──────────────────────
+//
+// The v0.7 failure-path gate drove this route against a real OpenAI 401 and got
+// "Erika could not reach the conversation service just now. Try again in a moment." —
+// a standing condition (a rotated or revoked key) told as momentary, with no Settings
+// link and an open invitation to retry forever. E-44 had already written the
+// `key-rejected` notice; the tutor never adopted it. That is the v0.6 defect on the
+// v0.7 flagship, and prose cannot hold it shut, so these are the assertions.
+describe("POST /api/tutor/session — a permanent failure is named as permanent", () => {
+  it("a key OpenAI REFUSED is key-rejected: standing, linked, never 'just now'", async () => {
+    process.env.OPENAI_API_KEY = REAL_KEY;
+    writeSettings(getDb(), { monthlyBudgetUsd: 100 });
+    mintStatus = 401;
+    mintBody = JSON.stringify({ error: { message: "Incorrect API key provided." } });
+
+    const res = await sessionPOST();
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.notice).toBe("key-rejected");
+
+    const notice = noticeFor(body.notice);
+    expect(notice.standing).toBe(true);
+    expect(notice.action?.href).toBe("/settings");
+    for (const word of TRANSIENT_WORDS) expect(body.error.message.toLowerCase()).not.toContain(word);
+    // Never "no key is set" to someone who has configured one.
+    expect(body.error.message).toBe(notice.body);
+    expect(body.error.message).not.toBe(noticeFor("no-key").body);
+    // And the refusal is still free: no token minted, no reservation left behind.
+    expect(body.clientSecret).toBeUndefined();
+    const pending = getDb().prepare("SELECT COUNT(*) AS n FROM spend_ledger WHERE state='pending'").get() as { n: number };
+    expect(pending.n).toBe(0);
+  });
+
+  it("no key at all is no-key, with its own remedy", async () => {
+    delete process.env.OPENAI_API_KEY;
+    writeSettings(getDb(), { monthlyBudgetUsd: 100 });
+    const res = await sessionPOST();
+    const body = await res.json();
+    expect(body.notice).toBe("no-key");
+    expect(noticeFor("no-key").action?.href).toBe("/settings");
+    process.env.OPENAI_API_KEY = REAL_KEY;
+  });
+
+  it("a genuinely momentary failure is the only one that may say 'just now' — and it retries", async () => {
+    process.env.OPENAI_API_KEY = REAL_KEY;
+    writeSettings(getDb(), { monthlyBudgetUsd: 100 });
+    mintStatus = 503;
+    mintBody = JSON.stringify({ error: { message: "Service Unavailable" } });
+    const res = await sessionPOST();
+    const body = await res.json();
+    expect(body.notice).toBe("conversation-transient");
+    expect(noticeFor(body.notice).standing).toBe(false);
+    expect(noticeFor(body.notice).retryable).toBe(true);
+  });
+
+  // The cap: the gate found TRUE copy with zero controls. True is not enough.
+  it("the cap carries a way forward — a link that resolves, and no retry that cannot help", async () => {
+    process.env.OPENAI_API_KEY = REAL_KEY;
+    writeSettings(getDb(), { monthlyBudgetUsd: 0 });
+    const res = await sessionPOST();
+    expect(res.status).toBe(402);
+    const body = await res.json();
+    expect(body.notice).toBe("budget");
+
+    const notice = noticeFor("budget");
+    expect(notice.action?.href).toBe("/settings");
+    expect(fs.existsSync(pageFileFor("/settings"))).toBe(true);
+    expect(notice.retryable).toBe(false);
+    // The true sentence the gate confirmed is still there, unchanged.
+    expect(body.error.message).toContain("No conversation was started.");
+    writeSettings(getDb(), { monthlyBudgetUsd: 100 });
   });
 });

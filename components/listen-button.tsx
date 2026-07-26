@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Play, Volume2, Loader2 } from "lucide-react";
 import { formatEstimate } from "@/lib/format";
+import { NoticeLine } from "@/components/session/step-notice";
+import { noticeFor, type NoticeReason } from "@/lib/session/notices";
 
 // A listen control for a rendered phrase (E-33), shared by the shadow drill and the
 // reading surface. It plays a cached TTS render of a CORRECT phrase; before the
@@ -11,7 +13,7 @@ import { formatEstimate } from "@/lib/format";
 // then plays. After it exists it plays immediately. DESIGN.md: the ink accent, no
 // green — a render is a quiet fact, not a win; budget/error states are plain lines.
 
-type Phase = "idle" | "generating" | "playing" | "budget" | "error";
+type Phase = "idle" | "generating" | "playing" | "blocked";
 
 /** Play `src` to completion (or rejection). Mirrors the Compare control's helper. */
 function playClip(audio: HTMLAudioElement, src: string): Promise<void> {
@@ -65,6 +67,13 @@ export function ListenButton({
   onUnavailable?: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
+  // [v0.7 close sweep] WHY it cannot play, as the server classified it. This component
+  // used to hold two hand-written strings — "Monthly budget reached — raise it or wait
+  // for the month to roll over." beside a retry that could not clear the cap, and "The
+  // voice is unavailable right now." for a missing key, which is permanent. It no
+  // longer decides: the route names the condition and the shared table decides the
+  // wording, the link and whether a retry is honest.
+  const [notice, setNotice] = useState<NoticeReason | null>(null);
   const [ready, setReady] = useState(exists);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -84,7 +93,9 @@ export function ListenButton({
       setPhase("idle");
       onPlayed?.();
     } catch {
-      setPhase("error");
+      // Playback of a clip that already exists failed — genuinely momentary.
+      setNotice("voice-transient");
+      setPhase("blocked");
       onUnavailable?.();
     }
   }, [audioSrc, onPlayed, onUnavailable]);
@@ -93,61 +104,35 @@ export function ListenButton({
     setPhase("generating");
     try {
       const res = await fetch(renderUrl, { method: "POST" });
-      if (res.status === 402) {
-        setPhase("budget");
-        onUnavailable?.();
-        return;
-      }
       if (!res.ok) {
-        setPhase("error");
+        const body = (await res.json().catch(() => null)) as { notice?: NoticeReason } | null;
+        setNotice(body?.notice ?? "voice-transient");
+        setPhase("blocked");
         onUnavailable?.();
         return;
       }
       setReady(true);
       await play();
     } catch {
-      setPhase("error");
+      setNotice("voice-transient");
+      setPhase("blocked");
       onUnavailable?.();
     }
   }, [renderUrl, play, onUnavailable]);
 
-  // A failed or refused render must never become a dead end. Both states keep a retry
-  // control — the earlier version rendered a bare line and REMOVED the button, so a
-  // surface that gates on `onPlayed` (the E-37 studio) could be stranded with no way
-  // forward — and both notify the surface through `onUnavailable` so it can unlock
-  // whatever it was gating on having heard the clip.
-  if (phase === "budget") {
+  // A failed or refused render must never become a dead end — and, since the v0.7
+  // gate, must not pretend either. The notice carries the way forward: a link where
+  // one helps, a retry ONLY where retrying can change the outcome (so the cap and a
+  // missing key no longer offer one — the earlier version did, on both). Every state
+  // still notifies the surface through `onUnavailable` so a screen gating on `onPlayed`
+  // (the E-37 studio) stops gating.
+  if (phase === "blocked" && notice) {
     return (
-      <span className="inline-flex flex-wrap items-center gap-2">
-        <span data-listen-budget className="text-[13px] text-secondary">
-          Monthly budget reached — raise it or wait for the month to roll over.
-        </span>
-        <button
-          type="button"
-          data-listen-retry
-          onClick={() => void generateAndPlay()}
-          className="text-[13px] font-medium text-ink underline underline-offset-2"
-        >
-          Try again
-        </button>
-      </span>
-    );
-  }
-  if (phase === "error") {
-    return (
-      <span className="inline-flex flex-wrap items-center gap-2">
-        <span data-listen-error className="text-[13px] text-secondary">
-          The voice is unavailable right now.
-        </span>
-        <button
-          type="button"
-          data-listen-retry
-          onClick={() => void (ready ? play() : generateAndPlay())}
-          className="text-[13px] font-medium text-ink underline underline-offset-2"
-        >
-          Try again
-        </button>
-      </span>
+      <NoticeLine
+        reason={notice}
+        testId="listen"
+        onRetry={noticeFor(notice).retryable ? () => void (ready ? play() : generateAndPlay()) : undefined}
+      />
     );
   }
   if (phase === "generating") {

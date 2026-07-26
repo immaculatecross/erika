@@ -13,6 +13,7 @@
 
 import type { Category } from "./analysis/findings";
 import type { Session } from "./session-types";
+import { ingestFailureLine } from "./ingest-view";
 
 /** What an analysed session yielded — the row's honest summary. */
 export interface SessionYield {
@@ -134,7 +135,11 @@ export function progressLine(item: SessionListItem): string {
     case "ingesting":
       return (item.ingestStage && INGEST_STAGE_LINE[item.ingestStage]) || "Finding the speech";
     case "ingest-failed":
-      return item.ingestError ?? "This recording couldn’t be processed";
+      // [v0.7 close sweep] This returned `item.ingestError` — the job's stored string —
+      // so the home screen's summary for a broken upload was raw ffprobe stderr
+      // ("ffprobe exited 1: moov atom not found"). The error is still recorded and still
+      // shown on the detail page as a diagnosis; the ROW says what happened.
+      return ingestFailureLine();
     case "no-speech":
       return "No speech found in this recording";
     case "analysis-queued":
