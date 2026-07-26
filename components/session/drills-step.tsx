@@ -187,6 +187,12 @@ export function DrillsStep({ lesson, onDone }: { lesson: SessionLessonBody | nul
 
   if (phase === "cards") {
     const card = cards[cardIndex];
+    // Grading advances the index first. On the last card that lands one frame with
+    // cardIndex === cards.length before the effect below calls onDone — and that
+    // frame used to crash on `card.front`. Hold a quiet beat instead of rendering.
+    if (!card) {
+      return <p className="text-[15px] text-secondary">Wrapping up…</p>;
+    }
     return (
       <div data-step-drills data-drill-phase="cards" className="flex flex-col items-center gap-6">
         <span className="tabular self-start text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">
