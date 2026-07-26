@@ -229,3 +229,11 @@ Raised by the operator as a *"mild observation, and I might be totally wrong"*: 
 4. **Budget live verification like a gate, not like a luxury.** $2.20 bought more truth this version than any amount of fixture work, and the fixtures that mattered (D-13's labelled samples) were the ones standing in for reality, not simulating it.
 
 Filed here rather than in mfactory's `runs/` because no mfactory checkout is reachable from this machine; it syncs with the rest of RUN-007.
+
+**Two counterpoints, so this does not become a worse doctrine than the one it replaces.**
+
+**1 · Counting findings structurally underweights tests, because prevention is invisible.** A test that stops a defect from ever being written produces no ledger entry. The 1,429 tests in this version are mostly *not* there to find things — they are there so that the next change does not silently break the tutor's money spine, the `known` gate, or the append-only evidence log. This run has no way to count what they held still while five milestones rewrote the product around them, and that number is not zero. The honest claim is narrower than "tests did not find much": **tests are weak at discovery and strong at conservation, and we have been paying for discovery with the wrong instrument.**
+
+**2 · Reading did find the money defects, and reading is not driving.** The under-booked rate, the stale-lease partial sweep, and the dead `isAssumedRunLeaseHash` came from a reviewer reading code carefully — then *live measurement corrected the reviewer's own prescription* (700 tok/min would have under-booked; the real figure was 20.0 tok/s). So the sequence that worked was **read to form a hypothesis, then measure to settle it.** Neither half alone would have got there: reading produced a wrong number confidently, and measurement without the reading would not have known to look.
+
+**So the refined rule is not "test less".** It is: **discovery comes from contact with the real system; conservation comes from tests; and a claim about the product is only as good as the last time someone touched the product.** The specific waste this run exhibits is not that tests exist — it is that *driving* was scheduled as a **gate at the end** rather than as the **first verification of each milestone**, so three milestones each shipped a defect that one live call would have exposed on day one.
