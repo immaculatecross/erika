@@ -6,6 +6,7 @@ import { openDatabase, type Db } from "@/lib/db";
 import { completedDayCount, getDayCompletion, recordDayComplete } from "@/lib/day-ledger";
 import { completeDayIfMet, completionFigures, dayFigures, dayGoal } from "@/lib/session/day";
 import { getSession, markStepDone, openSession, reconcileSession } from "@/lib/session/store";
+import type { StepKey } from "@/lib/session/steps";
 import { buildSessionView } from "@/lib/session/view";
 import { buildStreak } from "@/lib/streak/store";
 import { localDay } from "@/lib/local-day";
@@ -46,6 +47,14 @@ function creditConversation(db: Db, day: string, met: boolean): void {
   ).run(`t-${day}-${met}`, met ? 1 : 0, day);
 }
 
+/** Finish the whole session. The conversation step is verified against E-43's durable
+ *  record and CANNOT be claimed by a client, so a real credit has to exist first —
+ *  marking it without one is a no-op, which is the point of the verification. */
+function finishEveryStep(db: Db, day: string, steps: readonly StepKey[]): void {
+  if (steps.includes("conversation")) creditConversation(db, day, true);
+  for (const step of steps) markStepDone(db, day, step);
+}
+
 describe("the day's goal is the session, not the card queue", () => {
   it("counts steps, and is not met until every one is done", () => {
     const db = freshDb();
@@ -58,7 +67,7 @@ describe("the day's goal is the session, not the card queue", () => {
     expect(before.done).toBe(0);
     expect(before.met).toBe(false);
 
-    for (const step of session.steps) markStepDone(db, day, step);
+    finishEveryStep(db, day, session.steps);
     const after = dayGoal(db, day);
     expect(after.done).toBe(after.total);
     expect(after.met).toBe(true);
@@ -84,7 +93,7 @@ describe("the day's goal is the session, not the card queue", () => {
     const db = freshDb();
     const day = localDay();
     const session = openSession(db, day);
-    for (const step of session.steps) markStepDone(db, day, step);
+    finishEveryStep(db, day, session.steps);
 
     const completion = completeDayIfMet(db, day)!;
     expect(completion.lessonsDone).toBe(1);
@@ -96,7 +105,7 @@ describe("the day's goal is the session, not the card queue", () => {
     const db = freshDb();
     const day = localDay();
     const session = openSession(db, day);
-    for (const step of session.steps) markStepDone(db, day, step);
+    finishEveryStep(db, day, session.steps);
 
     const first = completeDayIfMet(db, day)!;
     const second = completeDayIfMet(db, day)!;

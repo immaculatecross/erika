@@ -1,17 +1,18 @@
 import type { Db } from "../db";
 import { localDay } from "../local-day";
+import { metMinimumOnDay } from "../tutor/conversations";
 
 // The ONE question E-44 asks the tutor: did a conversation meet its minimum duration
 // on this local day (D-26 — "only when this duration is hit, then this will validate
 // the streak")? Nothing else about the tutor is E-44's business, and this module is
 // the whole of the coupling: one table, one column, one boolean.
 //
-// The contract is E-43's `tutor_conversations` (migration v29), read here rather than
-// through `lib/tutor/conversations.ts` for one reason only — E-43 is not merged, so
-// that module does not exist on this branch. When it lands, this file's body becomes
-// a call to its `metMinimumOnDay` and the SQL below is deleted; the SHAPE the rest of
-// E-44 depends on (`conversationCredit`) does not change, which is the point of
-// keeping it behind a function.
+// The contract is E-43's `tutor_conversations` (migration v29), and the "did one count
+// today" question is answered by E-43's OWN reader, `lib/tutor/conversations.ts`
+// `metMinimumOnDay` — one reader, one answer, the `lib/findings-model.ts` rule (E-17).
+// (Until E-43 merged, this file carried a copy of that SQL; the copy is gone.) What
+// stays here is the part E-43 does not own: whether this build can observe a
+// conversation AT ALL.
 //
 // ⚠️ IT DEGRADES BY ABSENCE, AND THAT IS DELIBERATE. On a database where v29 has not
 // been applied there is no record of any conversation, so this build genuinely cannot
@@ -39,18 +40,12 @@ export function conversationRecordAvailable(db: Db): boolean {
 }
 
 /**
- * Did a CLOSED conversation meet its minimum on `day`? Mirrors E-43's
- * `metMinimumOnDay` exactly — `met_minimum` is decided once at close and stored, so
+ * Did a CLOSED conversation meet its minimum on `day`? Delegated to E-43's
+ * `metMinimumOnDay` — `met_minimum` is decided once at close and stored there, so
  * changing the minimum tomorrow can never rewrite a day already credited (the E-38
  * rule: recorded history is never rewritten).
  */
 export function conversationCredit(db: Db, day: string = localDay()): ConversationCredit {
   if (!conversationRecordAvailable(db)) return { available: false, met: false };
-  const row = db
-    .prepare(
-      "SELECT COUNT(*) AS n FROM tutor_conversations " +
-        "WHERE local_day = ? AND ended_at IS NOT NULL AND met_minimum = 1",
-    )
-    .get(day) as { n: number };
-  return { available: true, met: row.n > 0 };
+  return { available: true, met: metMinimumOnDay(db, day) };
 }

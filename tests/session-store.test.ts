@@ -32,6 +32,16 @@ function freshDb(): Db {
   dirs.push(dir);
   return openDatabase(path.join(dir, "erika.db"));
 }
+
+/** E-43's v29 record of a conversation that met its minimum. The conversation step is
+ *  verified against it and cannot be claimed by a client, so finishing a whole session
+ *  in a test means the conversation has to have genuinely happened. */
+function creditConversation(db: Db, day: string): void {
+  db.prepare(
+    "INSERT INTO tutor_conversations (id, min_seconds, met_minimum, ended_at, local_day) " +
+      "VALUES ('t1', 600, 1, datetime('now'), ?)",
+  ).run(day);
+}
 afterEach(() => {
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
@@ -118,7 +128,8 @@ describe("resuming", () => {
   it("refuses a step that is not part of today's session", () => {
     const db = freshDb();
     const day = localDay();
-    openSession(db, day); // no conversation step: E-43's record is absent here
+    db.exec("DROP TABLE tutor_conversations;"); // a build that cannot record one
+    openSession(db, day); // so the plan has no conversation step at all
     markStepDone(db, day, "conversation");
     expect(getSession(db, day)!.doneSteps).not.toContain("conversation");
     db.close();
@@ -128,6 +139,7 @@ describe("resuming", () => {
     const db = freshDb();
     const day = localDay();
     const session = openSession(db, day);
+    creditConversation(db, day);
     for (const step of session.steps.slice(0, -1)) markStepDone(db, day, step);
     expect(getSession(db, day)!.endedAt).toBeNull();
     expect(isSessionComplete(getSession(db, day))).toBe(false);

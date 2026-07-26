@@ -41,6 +41,14 @@ function place(db: Db): void {
   ).run();
 }
 
+/** E-43's v29 record of a conversation that met its minimum on `day`. */
+function creditConversation(db: Db, day: string): void {
+  db.prepare(
+    "INSERT INTO tutor_conversations (id, min_seconds, met_minimum, ended_at, local_day) " +
+      "VALUES ('t1', 600, 1, datetime('now'), ?)",
+  ).run(day);
+}
+
 describe("buildToday", () => {
   it("offers a real day on a fresh database — never an empty state (D-27)", () => {
     const db = freshDb();
@@ -71,13 +79,16 @@ describe("buildToday", () => {
     place(db);
     const day = localDay();
     const session = openSession(db, day);
+    // The conversation step is verified against E-43's durable record, so the only way
+    // to close the ring is for a conversation to have genuinely met its minimum.
+    creditConversation(db, day);
     for (const step of session.steps) markStepDone(db, day, step);
     completeDayIfMet(db, day);
 
     const view = buildToday(db, day);
     expect(view.complete).toBe(true);
     expect(view.goal.done).toBe(view.goal.total);
-    expect(view.completion).toEqual({ cardsDone: 0, lessonsDone: 1, conversation: false });
+    expect(view.completion).toEqual({ cardsDone: 0, lessonsDone: 1, conversation: true });
     expect(view.action).toEqual({ kind: "none" });
     db.close();
   });
