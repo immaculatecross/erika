@@ -53,7 +53,20 @@ export function LearnToday({ view }: { view: TodayView }) {
         data-today-goal
         className="mt-6 flex flex-col items-center gap-4 rounded-card bg-card p-8 text-center shadow-card"
       >
-        <GoalRing done={view.goal.done} total={view.goal.total} />
+        {/* [E-46] The ring is the way in to "what Erika knows about you". It already
+            stands for the whole of your progress, so it is the natural affordance and
+            it costs the home screen no new row, no new label and no new pixel — which
+            is why it does not weaken E-44's one-screen-one-action rule. The primary
+            action below is still the only thing on this screen that TELLS you to do
+            something. */}
+        <Link
+          href="/progress"
+          data-open-progress
+          aria-label="What Erika knows about you"
+          className="rounded-full transition-transform active:scale-[0.98]"
+        >
+          <GoalRing done={view.goal.done} total={view.goal.total} />
+        </Link>
         {view.complete ? (
           <CompletionBeat view={view} />
         ) : (

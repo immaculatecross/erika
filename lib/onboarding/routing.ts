@@ -40,13 +40,12 @@ export const ONBOARDING_PATH = "/welcome";
  * Where onboarding deposits the learner: their first session, composed from what the
  * assessment just learned about them (E-46 criterion 5, Amendment 1 criterion 9).
  *
- * ONE constant, so the seam is a rename rather than a search. On `master` today the
- * day's composed material is `/practice/learn` — the composer's own selection for
- * this local day, at the learner's placed edge. WO-E44 introduces `/practice/session`
- * as the single daily session; when it merges, this constant moves and nothing else
- * does.
+ * ONE constant, so the seam is a rename rather than a search. It is E-44's single
+ * daily session — one screen, one action — composed by `lib/compose.ts` from the
+ * learner's placed level and their knowledge edge. Onboarding does not hand over to
+ * a home page with a prompt on it; it hands over to the day itself.
  */
-export const FIRST_SESSION_PATH = "/practice/learn";
+export const FIRST_SESSION_PATH = "/practice/session";
 
 /** The pathname the root layout reads to know where the request was going. The
  *  middleware stamps it; a layout cannot otherwise see its own URL. */
