@@ -44,6 +44,16 @@ describe("parsing what the model says about a spoken sample", () => {
     expect(parseSpokenPlacement('{"level":"C2","usable":false}')).toEqual({ band: "C2", usable: false });
   });
 
+  it("throws on the PROSE reply a live call actually produces", () => {
+    // Measured, not imagined. `gpt-audio-mini` on a clip it cannot judge answers in
+    // prose — "I could not hear any speech" — rather than with the JSON object it was
+    // asked for. That is what sends the call into the repo's one-shot strict-JSON
+    // repair, and it is why `placementListen` takes `CallOpts` at all.
+    expect(() => parseSpokenPlacement("I'm sorry, I could not hear any speech in that audio.")).toThrow(
+      ModelParseError,
+    );
+  });
+
   it("throws a ModelParseError on a reply that is not JSON at all", () => {
     // The reply resolved and BILLED, so the caller must finalize the charge — that is
     // the contract `reservedCall` keys on. A silent default here would be a free lunch

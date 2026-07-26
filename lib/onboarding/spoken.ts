@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Db } from "../db";
 import { openAiAudioModel, type AudioModelClient } from "../analysis/audio-model";
 import { ModelParseError } from "../analysis/model-errors";
-import { reservedCall, BudgetHalt } from "../analysis/reserved-call";
+import { withRepair, BudgetHalt } from "../analysis/reserved-call";
 import { finalizeReservation } from "../analysis/budget";
 import { callCost, MINI_MODEL } from "../analysis/rates";
 import { hasAnalysisKey } from "../env-file";
@@ -77,14 +77,17 @@ export async function listenForPlacement(
   const contentHash = createHash("sha256").update(sample.audioBase64).digest("hex");
   const listen = client.placementListen.bind(client);
   try {
-    const { result, reservation } = await reservedCall(
+    const { result, reservation } = await withRepair(
       db,
       MINI_MODEL,
       contentHash,
       costUsd,
       settings.monthlyBudgetUsd,
-      () => listen({ audioBase64: sample.audioBase64, format: sample.format, targetLanguage: settings.targetLanguage }),
-      false,
+      (opts) =>
+        listen(
+          { audioBase64: sample.audioBase64, format: sample.format, targetLanguage: settings.targetLanguage },
+          opts,
+        ),
     );
     // The call resolved and is charged; there is no witness row to ride with, so it
     // is committed here rather than left pending for a sweep to guess at.
@@ -92,6 +95,9 @@ export async function listenForPlacement(
     return result.usable && result.band ? { status: "measured", band: result.band } : { status: "unusable" };
   } catch (err) {
     if (err instanceof BudgetHalt) return { status: "unavailable", reason: "over-cap" };
+    // Even after the repair the reply was unreadable. Both attempts resolved and both
+    // are charged (the `reservedCall` contract); the learner is told the take could
+    // not be listened to, and the word check places them.
     if (err instanceof ModelParseError) return { status: "unavailable", reason: "failed" };
     return { status: "unavailable", reason: "failed" };
   }

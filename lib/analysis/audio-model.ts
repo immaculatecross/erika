@@ -138,7 +138,7 @@ export const SPOKEN_PLACEMENT_MAX_OUTPUT_TOKENS = 200;
 export interface AudioModelClient {
   triage(input: TriageInput, opts?: CallOpts): Promise<TriageResult>;
   deepListen(model: ModelId, input: DeepInput, opts?: CallOpts): Promise<DeepResult>;
-  placementListen?(input: SpokenPlacementInput): Promise<SpokenPlacement>;
+  placementListen?(input: SpokenPlacementInput, opts?: CallOpts): Promise<SpokenPlacement>;
 }
 
 // The failure vocabulary lives in ./model-errors and the pure reply parsers in
@@ -359,8 +359,12 @@ export const openAiAudioModel: AudioModelClient = {
     const prompt = strict(deepPrompt(input.targetLanguage, input.profile, input.register ?? DEFAULT_REGISTER), opts);
     return interpret(model, await callModel(model, prompt, input, DEEP_MAX_OUTPUT_TOKENS), parseDeepResponse);
   },
-  async placementListen(input) {
-    const prompt = spokenPlacementPrompt(input.targetLanguage);
+  async placementListen(input, opts) {
+    // `strict` matters here more than anywhere: measured live, the model answers a
+    // clip it cannot judge in PROSE ("I could not hear any speech"), not with the
+    // JSON object it was asked for. That is a legitimate verdict wearing the wrong
+    // clothes, so it goes through the same one-shot repair every other call uses.
+    const prompt = strict(spokenPlacementPrompt(input.targetLanguage), opts);
     const reply = await callModel(MINI_MODEL, prompt, input, SPOKEN_PLACEMENT_MAX_OUTPUT_TOKENS);
     return interpret(MINI_MODEL, reply, parseSpokenPlacement);
   },
