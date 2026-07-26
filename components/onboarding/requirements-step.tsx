@@ -19,14 +19,22 @@ import type { Requirement } from "@/lib/onboarding/requirements";
 
 const CAPTION = "text-[13px] font-medium uppercase tracking-[0.06em] text-secondary";
 
+/**
+ * A mark appears ONLY on a requirement the server actually checked.
+ *
+ * The other three are facts about how Erika works, not tasks: giving them a hollow
+ * circle would render four identical checkboxes and invite the learner to hunt for a
+ * way to tick three things that are simply true. So they get nothing, and the one row
+ * that carries a state carries it alone — which is also what makes it readable at a
+ * glance, since it is the only one that needs the learner to act.
+ */
 function Mark({ satisfied }: { satisfied: boolean | null }) {
-  if (satisfied === null) {
-    return <Circle size={20} strokeWidth={1.5} className="mt-0.5 shrink-0 text-secondary/40" aria-hidden />;
-  }
-  if (satisfied) {
-    return <Check size={20} strokeWidth={1.5} className="mt-0.5 shrink-0 text-good" aria-hidden />;
-  }
-  return <Circle size={20} strokeWidth={1.5} className="mt-0.5 shrink-0 text-secondary" aria-hidden />;
+  if (satisfied === null) return null;
+  return satisfied ? (
+    <Check size={20} strokeWidth={1.5} className="mt-0.5 shrink-0 text-good" aria-hidden />
+  ) : (
+    <Circle size={20} strokeWidth={1.5} className="mt-0.5 shrink-0 text-secondary" aria-hidden />
+  );
 }
 
 export function RequirementsStep({
