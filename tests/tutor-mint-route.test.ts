@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { tmpDir } from "./helpers";
+import { pageFileFor, tmpDir } from "./helpers";
 import { noticeFor, TRANSIENT_WORDS } from "@/lib/session/notices";
 
 // The ephemeral-mint route (E-34, WO criterion 1) — the secret-exposure boundary,
@@ -190,7 +190,7 @@ describe("POST /api/tutor/session — a permanent failure is named as permanent"
 
     const notice = noticeFor("budget");
     expect(notice.action?.href).toBe("/settings");
-    expect(fs.existsSync(path.join(process.cwd(), "app", "settings", "page.tsx"))).toBe(true);
+    expect(fs.existsSync(pageFileFor("/settings"))).toBe(true);
     expect(notice.retryable).toBe(false);
     // The true sentence the gate confirmed is still there, unchanged.
     expect(body.error.message).toContain("No conversation was started.");

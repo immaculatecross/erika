@@ -3,6 +3,7 @@ import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { NoticeLine } from "@/components/session/step-notice";
+import { pageFileFor } from "./helpers";
 import { noticeFor, TRANSIENT_WORDS, type NoticeReason } from "@/lib/session/notices";
 
 // [v0.7 close sweep] The voice controls, held to E-44's three rules.
@@ -48,7 +49,9 @@ describe("rule 2 — a named remedy is a working link", () => {
       const html = renderToStaticMarkup(<NoticeLine reason={reason} onRetry={() => {}} />);
       expect(html).toContain('href="/settings"');
       expect(html).toContain("Open Settings");
-      expect(fs.existsSync(path.join(process.cwd(), "app", "settings", "page.tsx"))).toBe(true);
+      // Through the ROUTER's question, not the directory's — E-46 moved every product
+      // page into `app/(app)/`, and a link that resolves is the point of rule 2.
+      expect(fs.existsSync(pageFileFor("/settings"))).toBe(true);
     });
   }
 });
