@@ -31,6 +31,24 @@ export function analysisUnavailableMessage(): string {
 }
 
 /**
+ * The one line Settings shows about the key it can see.
+ *
+ * [v0.7 close sweep] It lives here, next to the message and the predicate, because it
+ * is the same fact and it drifted the moment it was written anywhere else: the page
+ * said "No key is set RIGHT NOW, so analysis will not run" two sentences after the
+ * disclosure above it said the condition "stays true until you add one" — the screen
+ * contradicting itself, in the app's own forbidden softener, on the configuration
+ * screen a newcomer reads while deciding whether they have to act. A standing
+ * condition is stated as standing, and `tests/settings-disclosure-render.test.tsx`
+ * holds it to that.
+ */
+export function keyStatusLine(keyPresent: boolean): string {
+  return keyPresent
+    ? "A key is set — analysis will run."
+    : "No key is set, so analysis will not run until you add one.";
+}
+
+/**
  * Is this stored job error OUR OWN refusal for want of a key?
  *
  * EXACT equality, deliberately — not `includes(REQUIRED_KEY)`, which is what this

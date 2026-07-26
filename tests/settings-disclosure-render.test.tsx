@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import SettingsPage from "@/app/(app)/settings/page";
+import { keyStatusLine } from "@/lib/analysis-key";
+import { TRANSIENT_WORDS } from "@/lib/session/notices";
 
 // WHAT ERIKA NEEDS, RENDERED (E-42 criterion 7 + the Full review's standing-clause finding).
 //
@@ -51,6 +53,20 @@ describe("the Settings disclosure survives the loading state", () => {
     expect(html).toMatch(/two processes/i);
     // And says what its absence LOOKS like, because the failure mode is silence.
     expect(html).toMatch(/looks exactly like nothing happening/i);
+  });
+
+  // [v0.7 close sweep] The gate's finding 10: the status line said "No key is set RIGHT
+  // NOW, so analysis will not run" two sentences after the paragraph above it said the
+  // condition "stays true until you add one" — the configuration screen contradicting
+  // itself, in the softener this app's own copy rule forbids for a standing condition.
+  it("states the keyless condition as STANDING, agreeing with the paragraph above it", () => {
+    const keyless = keyStatusLine(false);
+    for (const word of TRANSIENT_WORDS) expect(keyless.toLowerCase()).not.toContain(word);
+    // It says what makes it stop being true — the same remedy the disclosure names.
+    expect(keyless).toMatch(/until you add one/i);
+    expect(html).toMatch(/stays true until you add one/i);
+    // And a key that IS set is simply a fact, with nothing softened either.
+    for (const word of TRANSIENT_WORDS) expect(keyStatusLine(true).toLowerCase()).not.toContain(word);
   });
 
   it("never shows a key, only whether one is set", () => {
