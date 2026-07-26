@@ -13,7 +13,16 @@ import type { RealtimeModelId } from "./rates-realtime";
 // Drill speech-to-text lives in ./stt-rates (500-line hook) and is re-exported
 // here, so `lib/analysis/rates.ts` remains the one place prices are looked up.
 import type { SttModelId } from "./stt-rates";
-export { STT_MODEL, STT_RATES, sttCallCost, type SttModelId, type SttModelRate } from "./stt-rates";
+import type { TerraModelId } from "./rates-tutor-lab";
+export {
+  STT_MODEL, TUTOR_STT_MODEL, STT_RATES, sttCallCost,
+  type SttModelId,
+  type SttModelRate,
+} from "./stt-rates";
+export {
+  TERRA_MODEL, TERRA_RATES, TERRA_MAX_OUTPUT_TOKENS, terraReservationCost, terraUsageCost,
+  type TerraModelId, type TerraUsage, type TerraCostBreakdown,
+} from "./rates-tutor-lab";
 
 export const MINI_MODEL = "gpt-audio-mini" as const;
 /** Deep-listen chain: primary first, then the D-3 fallback. */
@@ -235,7 +244,8 @@ export type BillableModelId =
   | TtsModelId
   | RealtimeModelId
   | PronunciationModelId
-  | SttModelId;
+  | SttModelId
+  | TerraModelId;
 
 export interface TextModelRate {
   usdPerPromptToken: number;
@@ -267,15 +277,11 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-// ---- TTS model (E-21 contrastive playback, E-33/E-37 phrase renders) ------
+// ---- TTS model (E-21 renders, E-33/E-37 phrases, E-48 tutor output) --------
 //
-// ⚠️ STILL BILLED, AND THE REPRICING BELOW STAYS. The tutor's voice left this model
-// when the operator sent the speaking leg back to Realtime audio-out, but TTS is not
-// dead: `lib/render/engine.ts` (E-21 contrastive renditions) and
+// ⚠️ BILLED ON EVERY CONSUMER. `lib/render/engine.ts` (E-21 renditions),
 // `lib/render/phrase.ts` (E-33 canon lines, E-37's pronunciation reference) both price
-// every call through `ttsCallCost`, which IS the reservation and the cap check for
-// them. Deleting this table because one consumer went away would have re-opened the
-// exact under-pricing three separate spikes ordered fixed.
+// calls through `ttsCallCost`; E-48's common tutor output leg now does too.
 //
 // 🚩 THE UNIT WAS WRONG, IN THE UNSAFE DIRECTION, AND THIS IS THE THIRD
 // INDEPENDENT FINDING OF IT. `spike-3` (2026-07-23), `spike-5` §5.3 (2026-07-25)
@@ -436,9 +442,22 @@ export {
   realtimeCachedTokens,
   realtimeCostBreakdown,
   realtimeSessionCost,
+  REALTIME_TEXT_AUDIO_TOKENS_PER_MINUTE,
+  REALTIME_TEXT_CONTEXT_TOKENS_PER_TURN,
+  REALTIME_LAB_PROMPT_TOKENS,
+  realtimeTextCostBreakdown,
+  realtimeTextSessionCost,
+  realtimeTurnUsageCost,
   tutorRealtimeModel,
 } from "./rates-realtime";
-export type { RealtimeModelId, RealtimeModelRate, RealtimeCostBreakdown, RealtimeTier } from "./rates-realtime";
+export type {
+  RealtimeModelId,
+  RealtimeModelRate,
+  RealtimeCostBreakdown,
+  RealtimeTextCostBreakdown,
+  RealtimeTurnUsage,
+  RealtimeTier,
+} from "./rates-realtime";
 
 // ---- pronunciation assessment (E-37) --------------------------------------
 //

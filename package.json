@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "benchmark:tutor": "tsx scripts/tutor-model-prompt-lab.ts",
     "worker": "tsx scripts/worker.ts",
     "screenshot": "tsx scripts/screenshot.ts"
   },
@@ -32,6 +33,7 @@
     "@types/node": "^20.17.12",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
+    "@types/ws": "^8.18.1",
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.1",
     "eslint-config-next": "^15.5.20",
@@ -39,6 +41,7 @@
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "ws": "^8.21.1"
   }
 }

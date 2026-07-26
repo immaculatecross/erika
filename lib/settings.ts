@@ -22,9 +22,8 @@ import {
 // A database that stored `realtimeTier` still reads fine: `readSettings` selects the
 // keys it knows and ignores the rest, so a removed key is inert, not fatal
 // (tests/settings.test.ts pins this). The same holds for a `tutorVoice` holding the
-// short-lived `female`/`male` values this branch carried before the operator sent the
-// speaking leg back to Realtime audio-out: an unrecognized voice reads as the default
-// rather than throwing (`coerceTutorVoice`).
+// short-lived `female`/`male` values an earlier TTS revision carried: an unrecognized
+// voice reads as the default rather than throwing (`coerceTutorVoice`).
 
 export interface Settings {
   targetLanguage: string;

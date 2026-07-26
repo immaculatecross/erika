@@ -7,6 +7,23 @@ const run = promisify(execFile);
 // also the real decodability check: a file that lands on disk but is not audio
 // makes ffprobe fail, which we surface truthfully.
 
+function positiveSeconds(value: string): number | null {
+  const seconds = Number(value.trim());
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+function packetDuration(output: string): number | null {
+  let endSeconds = 0;
+  for (const line of output.trim().split("\n")) {
+    const [rawStart, rawDuration] = line.split(",");
+    const start = Number(rawStart);
+    const duration = Number(rawDuration);
+    if (!Number.isFinite(start)) continue;
+    endSeconds = Math.max(endSeconds, start + (Number.isFinite(duration) ? duration : 0));
+  }
+  return endSeconds > 0 ? endSeconds : null;
+}
+
 /** Thrown when ffprobe is missing, fails, or reports no usable duration. */
 export class FfprobeError extends Error {}
 
@@ -23,13 +40,29 @@ export async function probeDurationSeconds(filePath: string): Promise<number> {
       "default=noprint_wrappers=1:nokey=1",
       filePath,
     ]));
+    const containerSeconds = positiveSeconds(stdout);
+    if (containerSeconds !== null) return containerSeconds;
+
+    // MediaRecorder's live WebM output is decodable but commonly omits the
+    // container-level duration. Derive it from the final audio packet instead.
+    ({ stdout } = await run("ffprobe", [
+      "-v",
+      "error",
+      "-select_streams",
+      "a:0",
+      "-show_entries",
+      "packet=pts_time,duration_time",
+      "-of",
+      "csv=p=0",
+      filePath,
+    ]));
   } catch {
     throw new FfprobeError(
       "Could not read the audio. The file is not decodable, or ffprobe is unavailable.",
     );
   }
-  const seconds = Number(stdout.trim());
-  if (!Number.isFinite(seconds) || seconds <= 0) {
+  const seconds = packetDuration(stdout);
+  if (seconds === null) {
     throw new FfprobeError("Could not determine a valid audio duration.");
   }
   return seconds;

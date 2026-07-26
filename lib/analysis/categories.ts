@@ -132,3 +132,26 @@ export function normalizeCategory(v: unknown): Category | null {
   const hits = CATEGORY_MARKERS.filter(([, markers]) => markers.some((m) => key.includes(m)));
   return hits.length === 1 ? hits[0][0] : null;
 }
+
+/**
+ * How the three shared mistake classes map onto the CLOSED five-word `category`
+ * vocabulary the schema stores (E-39). Without this the model was left to guess which
+ * label a false friend or a wrong preposition wears — and an off-vocabulary guess is
+ * not a mild loss: `parseDeepResponse` rejects the WHOLE reply, so one stray word
+ * ("word choice") discarded every finding for that segment. `normalizeCategory`
+ * recovers the recognisable near-misses; this line is the front half of the same fix.
+ * Lives here (not in prompts.ts) so client-safe tutor prompt builders can compose it
+ * without pulling the analysis profile/findings graph (and node:crypto) into the
+ * browser bundle.
+ */
+export const CATEGORY_MAPPING_INSTRUCTION =
+  'Map each finding onto exactly one of the five category words: "grammar" for a wrong form;' +
+  ' "vocabulary" for a wrong word — a false friend, a calqued word, a wrong collocation, a noun\'s' +
+  " own gender, or a register slip (a register slip is a word-choice mistake: label it" +
+  ' "vocabulary", not "register"); "pronunciation" for a wrong sound; "idiom" for a fixed' +
+  ' expression misused or translated literally; "phrasing" for wording that is grammatical and' +
+  " understood but not how an Italian would put it. Use one of those five words exactly and" +
+  " lower-case — NOT the heading of the class it came from: a finding from the class headed" +
+  ' "VOCABULARY AND WORD CHOICE" has the category "vocabulary". Any other value is unreadable' +
+  " to us and that finding is lost.";
+

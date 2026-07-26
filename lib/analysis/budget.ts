@@ -187,7 +187,7 @@ export const TUTOR_LEASE_PREFIX = "tutor:";
  * 1012/1012, because the sweep never consulted it. Two dialects of one rule produced
  * two defects in v0.6; a generated one cannot disagree with itself.
  */
-export const ASSUMED_RUN_PREFIXES = [TUTOR_LEASE_PREFIX, "pa:"] as const;
+export const ASSUMED_RUN_PREFIXES = [TUTOR_LEASE_PREFIX, "tutor-tts:", "pa:"] as const;
 
 export function isAssumedRunLeaseHash(contentHash: string): boolean {
   return ASSUMED_RUN_PREFIXES.some((p) => contentHash.startsWith(p));

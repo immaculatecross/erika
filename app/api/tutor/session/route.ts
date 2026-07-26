@@ -2,12 +2,28 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { readSettings } from "@/lib/settings";
-import { monthToDateSpend } from "@/lib/analysis/budget";
-import { tutorRealtimeModel } from "@/lib/analysis/rates";
-import { buildTutorSessionConfig } from "@/lib/tutor/session-config";
+import { monthToDateSpend, releaseReservation, reserveSpend } from "@/lib/analysis/budget";
+import {
+  REALTIME_FLAGSHIP,
+  TERRA_MODEL,
+  TTS_MODEL,
+  TUTOR_STT_MODEL,
+  sttCallCost,
+  terraReservationCost,
+  ttsCallCost,
+} from "@/lib/analysis/rates";
+import { buildSelectedTutorPrompt, buildTutorSessionConfig } from "@/lib/tutor/session-config";
 import { openTutorLease, releaseTutorLease, defaultTutorMinutes, estimateTutorSessionUsd } from "@/lib/tutor/money";
 import { openAiClientSecretMinter, MinterUnavailableError } from "@/lib/tutor/mint";
 import { closeAbandonedConversations, openConversation, tutorMinimumSeconds } from "@/lib/tutor/conversations";
+import {
+  DEFAULT_TUTOR_ARCHITECTURE,
+  DEFAULT_TUTOR_PRESET,
+  MAX_TRANSCRIPT_TURN_SECONDS,
+  MAX_TUTOR_REPLY_CHARS,
+  isTutorArchitecture,
+  isTutorPromptPreset,
+} from "@/lib/tutor/experiment";
 import { classifyFailure, noticeFor } from "@/lib/session/notices";
 
 // The tutor session's mint + lease route (E-34, rebuilt at E-43). The secret-exposure
@@ -28,7 +44,7 @@ export const dynamic = "force-dynamic";
 export function GET() {
   const db = getDb();
   const settings = readSettings(db);
-  const model = tutorRealtimeModel();
+  const model = REALTIME_FLAGSHIP;
   const minutes = defaultTutorMinutes();
   const estimateUsd = estimateTutorSessionUsd(model, minutes);
   const spentThisMonth = monthToDateSpend(db);
@@ -48,11 +64,16 @@ export function GET() {
   });
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   const db = getDb();
   const settings = readSettings(db);
   const minutes = defaultTutorMinutes();
-  const { config, targets } = buildTutorSessionConfig(db);
+  const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  const architecture = isTutorArchitecture(body.architecture)
+    ? body.architecture
+    : DEFAULT_TUTOR_ARCHITECTURE;
+  const preset = isTutorPromptPreset(body.preset) ? body.preset : DEFAULT_TUTOR_PRESET;
+  const { config, targets, promptHash } = buildTutorSessionConfig(db, undefined, preset);
   const estimateUsd = estimateTutorSessionUsd(config.model, minutes);
 
   // Any conversation left open past the point where it could still be running is
@@ -60,9 +81,52 @@ export async function POST() {
   // second process (lib/tutor/conversations.ts).
   closeAbandonedConversations(db);
 
-  // Reserve-before-call: no session opens over the cap, and no token is minted.
   const tutorId = randomUUID();
   const minSeconds = tutorMinimumSeconds(db);
+  if (architecture === "transcript") {
+    if (!process.env.OPENAI_API_KEY) {
+      const notice = "no-key";
+      return NextResponse.json(
+        { error: { code: "tutor_unavailable", message: noticeFor(notice).body }, notice },
+        { status: 503 },
+      );
+    }
+    const selected = buildSelectedTutorPrompt(db, architecture, preset);
+    const preflightCost =
+      sttCallCost(TUTOR_STT_MODEL, MAX_TRANSCRIPT_TURN_SECONDS) +
+      terraReservationCost(selected.prompt, "") +
+      ttsCallCost(TTS_MODEL, MAX_TUTOR_REPLY_CHARS);
+    const preflight = reserveSpend(
+      db,
+      { model: TERRA_MODEL, contentHash: `tutor-preflight:${tutorId}`, costUsd: preflightCost },
+      settings.monthlyBudgetUsd,
+    );
+    if (!preflight) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "budget",
+            message: "The monthly budget cannot cover one bounded transcript turn. No conversation was started.",
+          },
+          notice: "budget",
+        },
+        { status: 402 },
+      );
+    }
+    openConversation(db, tutorId, minSeconds);
+    releaseReservation(db, preflight);
+    return NextResponse.json({
+      tutorId,
+      architecture,
+      preset,
+      promptHash: selected.promptHash,
+      model: TERRA_MODEL,
+      minSeconds,
+      targets: selected.targets,
+    });
+  }
+
+  // Reserve-before-call: no native session opens over the cap, and no token is minted.
   const lease = openTutorLease(db, tutorId, config.model, minutes, settings.monthlyBudgetUsd);
   if (!lease) {
     return NextResponse.json(
@@ -112,6 +176,9 @@ export async function POST() {
 
   return NextResponse.json({
     tutorId,
+    architecture,
+    preset,
+    promptHash,
     // The ONLY credential the browser receives — the short-lived ephemeral secret.
     clientSecret: secret.value,
     expiresAt: secret.expiresAt,

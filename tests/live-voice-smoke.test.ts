@@ -1,103 +1,209 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import WebSocket from "ws";
 import { describe, expect, it } from "vitest";
+import { openDatabase } from "@/lib/db";
+import { REALTIME_FLAGSHIP, TERRA_MODEL, TTS_MODEL, TUTOR_STT_MODEL } from "@/lib/analysis/rates";
 import { buildMintSessionWireBody } from "@/lib/tutor/mint";
-import { TUTOR_TURN_DETECTION } from "@/lib/tutor/session-config";
-import { DEFAULT_TUTOR_VOICE, JUDGED_VOICE, REALTIME_VOICES } from "@/lib/tutor/voices";
-import { REALTIME_FLAGSHIP, REALTIME_MINI } from "@/lib/analysis/rates";
+import { buildTutorSessionConfig } from "@/lib/tutor/session-config";
+import { manualTurnEvents, repairResponse } from "@/lib/tutor/realtime-client";
+import { openAiTerraClient, TERRA_REASONING_EFFORT } from "@/lib/tutor/terra";
+import { TUTOR_OUTPUT_CONTRACT } from "@/lib/tutor/prompt-presets";
+import { parseTutorTurnResult, TutorTurnParseError } from "@/lib/tutor/turn-result";
+import {
+  openAiTextToSpeech,
+  openAiTutorSpeechToText,
+} from "@/lib/voice/openai-speech";
 
-// OBS-001 — THE CHEAPEST POSSIBLE REAL CALL PER INTEGRATION. Owed since v0.5.
-//
-// Skipped entirely without `OPENAI_API_KEY`, so CI and every contributor without a key
-// run exactly as before. With a key, each test makes ONE real request and asserts only
-// that the response PARSES — never that a model said anything in particular, which
-// would be a flaky assertion about a stochastic system.
-//
-// WHY THESE EXIST AT ALL, in this repo's own words: "no path in this app has ever run
-// against a live API", and the v0.6 tutor bug — a fabricated `maxSessionSeconds` field
-// that 400'd OpenAI and broke the tutor in real use while CI stayed green — is the
-// proof that a mock cannot catch contract drift.
-//
-// ⚠️ THE TTS AND STT SMOKES ARE GONE WITH THE CODE THEY COVERED. This branch briefly
-// synthesized the tutor's reply through `/v1/audio/speech` and had a smoke for it; the
-// operator sent the speaking leg back to Realtime audio-out and those implementations
-// were deleted, so keeping their smokes would be testing nothing. What remains is the
-// integration the tutor actually has, and it now covers BOTH tiers and the voice enum —
-// the two things that would silently break a conversation.
-//
-// A mint costs nothing: no session is ever opened, so no audio is billed.
-
+// Cheapest real calls that prove the production request builders. CI skips without a
+// key. Assertions cover supported fields and parsability, never stochastic quality.
 const KEY = process.env.OPENAI_API_KEY;
 const live = KEY ? describe : describe.skip;
+const execFileAsync = promisify(execFile);
 
-/** Mint through the product's OWN allowlist builder, never a hand-written body — a
- *  hand-written approximation is how the mint-body bug survived review. */
-async function mint(session: Record<string, unknown>): Promise<Response> {
-  return fetch("https://api.openai.com/v1/realtime/client_secrets", {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
-    body: JSON.stringify({ session }),
+let speechFixture: Promise<Uint8Array> | null = null;
+function ttsFixture(): Promise<Uint8Array> {
+  if (!speechFixture) {
+    speechFixture = (async () => {
+      const tts = openAiTextToSpeech("coral");
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of tts.synthesizeStream!({
+        text: "Ieri ho andato al cinema.",
+        language: "it",
+      })) {
+        chunks.push(chunk);
+      }
+      const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+      expect(bytes.byteLength).toBeGreaterThan(100);
+      return new Uint8Array(bytes);
+    })();
+  }
+  return speechFixture;
+}
+
+async function pcmFixture(): Promise<Uint8Array> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "erika-live-realtime-"));
+  const mp3 = path.join(dir, "turn.mp3");
+  const pcm = path.join(dir, "turn.pcm");
+  try {
+    fs.writeFileSync(mp3, await ttsFixture());
+    await execFileAsync("ffmpeg", [
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      mp3,
+      "-ac",
+      "1",
+      "-ar",
+      "24000",
+      "-f",
+      "s16le",
+      pcm,
+    ]);
+    return new Uint8Array(fs.readFileSync(pcm));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function realtimeManualTurn(audio: Uint8Array): Promise<string> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "erika-live-config-"));
+  const db = openDatabase(path.join(dir, "erika.db"));
+  const wire = buildMintSessionWireBody(
+    buildTutorSessionConfig(db, undefined, "minimal").config,
+  );
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(
+      `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_FLAGSHIP)}`,
+      {
+        headers: {
+          authorization: `Bearer ${KEY}`,
+        },
+      },
+    );
+    let text = "";
+    let repairs = 0;
+    const eventTypes = new Set<string>();
+    const timer = setTimeout(() => {
+      socket.terminate();
+      reject(new Error("Realtime text-out smoke timed out."));
+    }, 45_000);
+    const finish = (error?: Error) => {
+      clearTimeout(timer);
+      socket.close();
+      if (error) reject(error);
+      else resolve(text);
+    };
+    socket.on("open", () => {
+      socket.send(JSON.stringify({ type: "session.update", session: wire }));
+    });
+    socket.on("message", (raw) => {
+      const event = JSON.parse(String(raw)) as {
+        type?: string;
+        delta?: string;
+        error?: { message?: string };
+        response?: {
+          status?: string;
+          status_details?: { error?: { message?: string } };
+          output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+        };
+      };
+      if (event.type) eventTypes.add(event.type);
+      if (event.type === "session.updated") {
+        socket.send(
+          JSON.stringify({
+            type: "input_audio_buffer.append",
+            audio: Buffer.from(audio).toString("base64"),
+          }),
+        );
+        for (const turnEvent of manualTurnEvents()) {
+          socket.send(JSON.stringify(turnEvent));
+        }
+      } else if (
+        event.type === "response.output_text.delta" &&
+        typeof event.delta === "string"
+      ) {
+        text += event.delta;
+      } else if (event.type === "response.done") {
+        if (!text) {
+          text =
+            event.response?.output
+              ?.flatMap((item) => item.content ?? [])
+              .filter((part) => part.type === "output_text")
+              .map((part) => part.text ?? "")
+              .join("") ?? "";
+        }
+        if (!text) {
+          finish(
+            new Error(
+              event.response?.status_details?.error?.message ??
+                `Realtime returned no text (${[...eventTypes].join(", ")}).`,
+            ),
+          );
+          return;
+        }
+        try {
+          parseTutorTurnResult(text, { allowPronunciation: true });
+          finish();
+        } catch (error) {
+          if (!(error instanceof TutorTurnParseError) || repairs >= 1) {
+            finish(error instanceof Error ? error : new Error(String(error)));
+            return;
+          }
+          repairs = 1;
+          const invalid = text;
+          text = "";
+          socket.send(JSON.stringify(repairResponse(invalid)));
+        }
+      } else if (event.type === "error") {
+        finish(new Error(event.error?.message ?? "Realtime contract error."));
+      }
+    });
+    socket.on("error", () => finish(new Error("Realtime WebSocket failed.")));
   });
 }
 
-function wireFor(model: string, voice: string) {
-  return buildMintSessionWireBody({
-    type: "realtime",
-    model: model as typeof REALTIME_FLAGSHIP,
-    instructions: "Rispondi in italiano.",
-    output_modalities: ["audio"],
-    audio: {
-      input: { turn_detection: TUTOR_TURN_DETECTION },
-      output: { voice: voice as (typeof REALTIME_VOICES)[number] },
-    },
-    tools: [],
-    tool_choice: "auto",
-    maxSessionSeconds: 1800,
-  }) as unknown as Record<string, unknown>;
-}
-
-live("live: the Realtime mint accepts this product's own audio-out session", () => {
-  it("mints an ephemeral secret for an audio-in / AUDIO-out session on the default tier", async () => {
-    const res = await mint(wireFor(REALTIME_FLAGSHIP, DEFAULT_TUTOR_VOICE));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { value?: string; session?: Record<string, unknown> };
-    expect(typeof body.value).toBe("string");
-    expect(body.value?.startsWith("ek_")).toBe(true);
-    // Echoed back rather than silently altered — the gating fact of the revert.
-    expect(body.session?.output_modalities).toEqual(["audio"]);
-    const audio = body.session?.audio as { output?: { voice?: string } } | undefined;
-    expect(audio?.output?.voice).toBe(DEFAULT_TUTOR_VOICE);
+live("live: tutor lab provider contracts", () => {
+  it("streams one reply through the production gpt-4o-mini-tts builder", async () => {
+    const bytes = await ttsFixture();
+    expect(TTS_MODEL).toBe("gpt-4o-mini-tts");
+    expect(bytes.byteLength).toBeGreaterThan(100);
   }, 30_000);
 
-  it("accepts the other tier too, so the Settings dial cannot offer a dead option", async () => {
-    // The tier dial is learner-facing. A tier the mint rejects would be a Settings
-    // choice that breaks every conversation for whoever picked it.
-    const res = await mint(wireFor(REALTIME_MINI, DEFAULT_TUTOR_VOICE));
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as { value?: string }).value?.startsWith("ek_")).toBe(true);
+  it("transcribes one bounded Italian fixture with gpt-4o-transcribe", async () => {
+    const transcript = await openAiTutorSpeechToText.transcribe({
+      audio: await ttsFixture(),
+      mimeType: "audio/mpeg",
+      language: "it",
+    });
+    expect(TUTOR_STT_MODEL).toBe("gpt-4o-transcribe");
+    expect(transcript.source).toContain(TUTOR_STT_MODEL);
+    expect(typeof transcript.text).toBe("string");
+    expect(transcript.text.length).toBeGreaterThan(0);
   }, 30_000);
 
-  it("rejects a voice that is not in the enum — the check the dial depends on", async () => {
-    // `nova` is a real OpenAI TTS voice and was this branch's default while the
-    // speaking leg was TTS. On Realtime it is HTTP 400 (spike-7 §1.2). This asserts the
-    // enum is REAL rather than trusting a list copied from a datasheet: if our list
-    // contained something OpenAI rejects, a learner could pick a voice that kills the
-    // tutor for them and nothing else would catch it.
-    const res = await mint(wireFor(REALTIME_FLAGSHIP, "nova"));
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error?: { message?: string } };
-    // The error names the supported set; every voice we offer must appear in it.
-    const message = body.error?.message ?? "";
-    for (const voice of REALTIME_VOICES) expect(message).toContain(voice);
+  it("accepts Terra low reasoning plus strict structured output", async () => {
+    const completion = await openAiTerraClient.complete({
+      prompt: `Inspect the Italian sentence and obey this contract.\n\n${TUTOR_OUTPUT_CONTRACT}`,
+      transcript: "Ieri ho andato al cinema.",
+      context: [],
+    });
+    expect(TERRA_MODEL).toBe("gpt-5.6-terra");
+    expect(TERRA_REASONING_EFFORT).toBe("low");
+    expect(completion.responseId).toBeTruthy();
+    expect(parseTutorTurnResult(completion.text, { allowPronunciation: false }).result.reply).toBeTruthy();
   }, 30_000);
-});
 
-describe("the voice dial, without a key", () => {
-  it("offers ten voices and defaults to one the operator's verdict was NOT formed against", () => {
-    // Their "it does not speak super well" was passed on `marin` alone — the only
-    // Realtime voice this repo ever carried. Defaulting back to it would re-ship the
-    // exact thing that was rejected.
-    expect(REALTIME_VOICES).toHaveLength(10);
-    expect(REALTIME_VOICES).toContain(JUDGED_VOICE);
-    expect(DEFAULT_TUTOR_VOICE).not.toBe(JUDGED_VOICE);
-    expect(REALTIME_VOICES).toContain(DEFAULT_TUTOR_VOICE);
-  });
+  it("completes one manual Realtime 2.1 audio-in/text-out turn", async () => {
+    const text = await realtimeManualTurn(await pcmFixture());
+    expect(text.length).toBeGreaterThan(0);
+    expect(parseTutorTurnResult(text, { allowPronunciation: true }).result.reply).toBeTruthy();
+  }, 45_000);
 });

@@ -1,306 +1,39 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { DotsField } from "@/components/tutor/dots-field";
 import { ConversationProgress } from "@/components/tutor/conversation-progress";
-import { toUploadableWav } from "@/lib/recording";
-import { uploadAudio } from "@/lib/upload-audio";
-import { landConversationTake } from "@/lib/tutor/take";
-import { closingLine, costLine } from "@/lib/tutor/closing-line";
-import { TUTOR_OPENING } from "@/lib/tutor/persona";
-import { startFailureMessage } from "@/lib/tutor/failure-message";
+import { ExperimentPanel } from "@/components/tutor/experiment-panel";
+import { TurnDetails } from "@/components/tutor/turn-details";
 import { NoticeLine } from "@/components/session/step-notice";
-import type { NoticeReason } from "@/lib/session/notices";
-import {
-  connectTutor,
-  exchangeSdpOverHttp,
-  type MediaStreamLike,
-  type PeerConnectionLike,
-  type TutorConnection,
-} from "@/lib/tutor/realtime-client";
-
-// The Learn-tab spoken tutor (E-34, rebuilt at E-43).
-//
-// HOW A TURN WORKS. The learner speaks; the Realtime session hears them NATIVELY (D-3:
-// a transcript erases pronunciation, hesitation and the almost-right word — and spike-6
-// measured `whisper-1` silently repairing this repo's own planted errors); the reply
-// comes back as AUDIO on the same connection and plays. Server VAD ends a turn on
-// silence, so the learner presses NOTHING between turns — one button to begin, one to
-// stop, and that is the whole interaction.
-//
-// THE REPLY USED TO BE TEXT SPOKEN THROUGH TTS, and this page held the machinery for
-// it: a sentence chunker, a pipelined synthesis queue, a per-clip fetch and an ordered
-// player. The operator drove that and rejected it — "the lag is too high" — so all of
-// it is gone and the model speaks on the connection that is already open. What is left
-// here is an `<audio>` element and the track that fills it; the three latency sources
-// (waiting for a sentence boundary, a second network round trip, buffering the clip)
-// were exactly the three files deleted.
-//
-// D-24 and DESIGN hold: a quiet field of dots breathing with the voice, no avatar, no
-// waveform, tabular numbers, no countdown and no guilt copy if the learner leaves
-// early.
-
-type Phase = "idle" | "connecting" | "live" | "ending" | "refused" | "error";
-
-interface SessionInfo {
-  estimateUsd: number;
-  remainingUsd: number;
-  budgetUsd: number;
-  model: string;
-  minSeconds: number;
-  keyConfigured: boolean;
-}
-
-const HEARTBEAT_MS = 20_000;
+import { TRANSCRIPT_LIMITATION } from "@/lib/tutor/experiment";
+import { useTutorLab } from "@/lib/tutor/use-tutor-lab";
 
 export default function TutorPage() {
-  const [info, setInfo] = useState<SessionInfo | null>(null);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [message, setMessage] = useState<string | null>(null);
-  // [v0.7 close sweep] The server's OWN classification of why a start failed, rendered
-  // through the shared notices table. The page no longer decides — it had decided
-  // wrongly, telling everyone with a key that the service was momentarily unreachable.
-  const [notice, setNotice] = useState<NoticeReason | null>(null);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [speaking, setSpeaking] = useState(false);
-  const [closing, setClosing] = useState<string | null>(null);
-  const [cost, setCost] = useState<string | null>(null);
-
-  const conn = useRef<TutorConnection | null>(null);
-  const stream = useRef<MediaStream | null>(null);
-  const recorder = useRef<MediaRecorder | null>(null);
-  const chunks = useRef<Blob[]>([]);
-  const tutorId = useRef<string | null>(null);
-  const startedAt = useRef<number>(0);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
-  const audioEl = useRef<HTMLAudioElement | null>(null);
-
-  const refresh = useCallback(() => {
-    fetch("/api/tutor/session")
-      .then((r) => r.json())
-      .then(setInfo)
-      .catch(() => setInfo(null));
-  }, []);
-
-  useEffect(refresh, [refresh]);
-
-  const cleanup = useCallback(() => {
-    if (timer.current) clearInterval(timer.current);
-    if (heartbeat.current) clearInterval(heartbeat.current);
-    timer.current = null;
-    heartbeat.current = null;
-    if (audioEl.current) {
-      audioEl.current.pause();
-      audioEl.current.srcObject = null;
-    }
-    conn.current?.stop();
-    conn.current = null;
-    stream.current?.getTracks().forEach((t) => t.stop());
-    stream.current = null;
-    setSpeaking(false);
-  }, []);
-
-  useEffect(() => cleanup, [cleanup]);
-
-  async function logEvidence(args: unknown) {
-    await fetch("/api/tutor/evidence", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(args),
-    }).catch(() => {});
-  }
-
-  /** Attach the tutor's voice track and play it. One element, reused across turns —
-   *  the model streams every reply down the same track, so there is nothing to queue,
-   *  order or buffer. */
-  function attachRemoteAudio(remote: MediaStreamLike) {
-    const el = audioEl.current ?? new Audio();
-    audioEl.current = el;
-    el.autoplay = true;
-    el.srcObject = remote as unknown as MediaStream;
-    void el.play().catch(() => {
-      // Autoplay is only ever blocked before a user gesture, and reaching here always
-      // follows the learner pressing "Start talking" — but a silent tutor is the worst
-      // failure this surface has, so say it rather than swallow it.
-      setMessage("Your browser blocked the audio. Allow sound for this site and start again.");
-    });
-  }
-
-  async function start() {
-    setMessage(null);
-    setNotice(null);
-    setClosing(null);
-    setCost(null);
-    setPhase("connecting");
-    try {
-      const res = await fetch("/api/tutor/session", { method: "POST" });
-      const body = await res.json();
-      if (res.status === 402) {
-        // The cap. The estimate sentence stays — it is true, and the gate confirmed
-        // "no conversation was started" is true — but it now arrives WITH a remedy.
-        setPhase("refused");
-        setMessage(body?.error?.message ?? null);
-        setNotice(body?.notice ?? "budget");
-        return;
-      }
-      if (!res.ok) {
-        // A server-classified refusal: no key, a key OpenAI refused, or a genuinely
-        // momentary failure. Each states itself, and only the momentary one retries.
-        setPhase("error");
-        setNotice(body?.notice ?? "conversation-transient");
-        cleanup();
-        return;
-      }
-
-      tutorId.current = body.tutorId;
-      // Echo cancellation matters here specifically: the mic stays open while Erika
-      // speaks so the learner can talk over her, and without AEC her own voice would
-      // come back as a learner turn.
-      const mic = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-      stream.current = mic;
-
-      // Record the take locally so it lands as a normal session on end.
-      chunks.current = [];
-      const rec = new MediaRecorder(mic);
-      rec.ondataavailable = (e) => e.data.size > 0 && chunks.current.push(e.data);
-      rec.start(1000);
-      recorder.current = rec;
-
-      conn.current = await connectTutor({
-        clientSecret: body.clientSecret,
-        model: body.model,
-        greeting: TUTOR_OPENING,
-        getMicStream: async () => mic as unknown as MediaStreamLike,
-        createPeerConnection: () => new RTCPeerConnection() as unknown as PeerConnectionLike,
-        exchangeSdp: exchangeSdpOverHttp,
-        onRemoteAudio: attachRemoteAudio,
-        handlers: {
-          onLogEvidence: logEvidence,
-          // The turn line, and nothing more. Barge-in itself is the server's
-          // (`interrupt_response`), so talking over Erika cancels her reply upstream
-          // and this only has to say so.
-          onSpeakingStarted: () => setSpeaking(true),
-          onSpeakingStopped: () => setSpeaking(false),
-          onTurnComplete: () => setSpeaking(false),
-          onSpeechStarted: () => setSpeaking(false),
-        },
-      });
-
-      startedAt.current = Date.now();
-      setElapsedMs(0);
-      setPhase("live");
-      timer.current = setInterval(() => setElapsedMs(Date.now() - startedAt.current), 500);
-      heartbeat.current = setInterval(() => {
-        void fetch(`/api/tutor/session/${tutorId.current}/heartbeat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ elapsedSeconds: (Date.now() - startedAt.current) / 1000 }),
-        })
-          .then((r) => r.json())
-          .then((b) => {
-            if (b && b.covered === false) void stop();
-          })
-          .catch(() => {});
-      }, HEARTBEAT_MS);
-    } catch (err) {
-      setPhase("error");
-      setMessage(startFailureMessage(err, info));
-      cleanup();
-    }
-  }
-
-  const stop = useCallback(async () => {
-    if (phase !== "live") return;
-    setPhase("ending");
-    const elapsedSeconds = (Date.now() - startedAt.current) / 1000;
-    const id = tutorId.current;
-
-    // Stop heart-beating BEFORE the wind-down's awaits (the take is assembled and
-    // uploaded first, which can take seconds). A heartbeat that fires in that window
-    // would land at the server after `/end` has finalized the lease. The server refuses
-    // such a heartbeat outright (`session_closed`) — that is the real fix for the
-    // double-charge race, since a request already on the wire cannot be recalled — but
-    // there is no reason to keep firing them once the user has ended the call.
-    if (heartbeat.current) clearInterval(heartbeat.current);
-    heartbeat.current = null;
-    audioEl.current?.pause();
-
-    // Stop recording and assemble the take.
-    const rec = recorder.current;
-    const blob = await new Promise<Blob | null>((resolve) => {
-      if (!rec || rec.state === "inactive") return resolve(null);
-      rec.onstop = () => resolve(new Blob(chunks.current, { type: chunks.current[0]?.type || "audio/webm" }));
-      rec.stop();
-    });
-    recorder.current = null;
-
-    // Land the recording as a normal session (→ ingest → deep analysis), converted to
-    // WAV first so the server can probe its duration — a raw MediaRecorder container
-    // has none and is refused 422 (lib/tutor/take.ts). `capturedAt` is the instant the
-    // conversation began, which is also how the server links this recording to the
-    // conversation record (E-42's v28 column).
-    const landed = await landConversationTake({
-      blob,
-      capturedAt: new Date(startedAt.current),
-      toWav: toUploadableWav,
-      upload: uploadAudio,
-    });
-
-    // Finalize the money lease and close the durable conversation record.
-    if (id) {
-      const closed = await fetch(`/api/tutor/session/${id}/end`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ elapsedSeconds }),
-      })
-        .then((r) => r.json())
-        .catch(() => null);
-      // Factual, once, and silent when the minimum was not reached — leaving early
-      // costs nothing and is told nothing (D-24).
-      // Factual, once. What it says depends on what actually happened to the take —
-      // never a cheerful line over a recording that was refused.
-      setClosing(closingLine(closed?.metMinimum === true, landed));
-      // The committed actual, never the reservation (lib/tutor/closing-line.ts).
-      setCost(costLine(closed?.committedUsd));
-    }
-
-    cleanup();
-    tutorId.current = null;
-    setPhase("idle");
-    refresh();
-  }, [phase, cleanup, refresh]);
-
-  // A closed tab is the common way a conversation ends without the button. The beacon
-  // carries the client's own elapsed time so the record closes honestly rather than
-  // being written off as an unknown by the abandoned-conversation sweep.
-  useEffect(() => {
-    const onHide = () => {
-      const id = tutorId.current;
-      if (!id || phase !== "live") return;
-      navigator.sendBeacon?.(
-        `/api/tutor/session/${id}/end`,
-        new Blob([JSON.stringify({ elapsedSeconds: (Date.now() - startedAt.current) / 1000 })], {
-          type: "application/json",
-        }),
-      );
-    };
-    window.addEventListener("pagehide", onHide);
-    return () => window.removeEventListener("pagehide", onHide);
-  }, [phase]);
-
-  const live = phase === "live" || phase === "ending";
-  const minSeconds = info?.minSeconds ?? 0;
+  const tutor = useTutorLab();
+  const live = tutor.phase === "live" || tutor.phase === "ending";
+  const primaryLabel =
+    tutor.turnPhase === "recording"
+      ? "Done"
+      : tutor.turnPhase === "processing"
+        ? "Listening…"
+        : "Speak";
+  const turnLine =
+    tutor.turnPhase === "recording"
+      ? "Speak for as long as you need. Pauses stay inside this turn."
+      : tutor.turnPhase === "processing"
+        ? "Erika is reading this turn."
+        : "Your turn when you are ready.";
 
   return (
     <div data-tutor className="mx-auto max-w-2xl p-8">
       <div className="mb-6">
-        <Link href="/practice" className="inline-flex items-center gap-1.5 text-[15px] text-secondary transition-colors hover:text-ink">
+        <Link
+          href="/practice"
+          className="inline-flex items-center gap-1.5 text-[15px] text-secondary transition-colors hover:text-ink"
+        >
           <ArrowLeft size={20} strokeWidth={1.5} aria-hidden />
           Today
         </Link>
@@ -309,79 +42,118 @@ export default function TutorPage() {
       <header className="mb-6">
         <h1 className="text-[34px] font-bold tracking-tight">Conversation</h1>
         <p className="mt-1 text-[17px] text-secondary">
-          Speak Italian with Erika. She listens to how you actually say it, corrects one thing at a
-          time, and records the whole thing like any other session — so it still becomes findings.
+          Mark each turn yourself, then hear one short reply. The full conversation
+          still becomes a normal recording and findings after you end it.
         </p>
       </header>
 
       <section className="flex flex-col items-center gap-6 rounded-card bg-card p-8 shadow-card">
-        <DotsField active={live} intensity={speaking ? 0.9 : 0.4} />
+        <DotsField
+          active={live}
+          intensity={tutor.turnPhase === "processing" ? 0.9 : tutor.turnPhase === "recording" ? 0.65 : 0.35}
+        />
+
+        {!live && (
+          <ExperimentPanel
+            architecture={tutor.architecture}
+            preset={tutor.preset}
+            disabled={tutor.phase === "connecting"}
+            onArchitecture={tutor.setArchitecture}
+            onPreset={tutor.setPreset}
+          />
+        )}
 
         {live ? (
           <>
-            <ConversationProgress elapsedMs={elapsedMs} minSeconds={minSeconds} />
-            <p className="text-[13px] text-secondary" data-tutor-turn aria-live="polite">
-              {speaking ? "Erika is speaking" : "Listening — just talk"}
+            <ConversationProgress
+              elapsedMs={tutor.elapsedMs}
+              minSeconds={tutor.info?.minSeconds ?? 0}
+            />
+            <p
+              className="max-w-sm text-center text-[13px] text-secondary"
+              data-tutor-turn
+              aria-live="polite"
+            >
+              {turnLine}
             </p>
+            {tutor.architecture === "transcript" && (
+              <p className="max-w-md text-center text-[13px] leading-relaxed text-secondary">
+                {TRANSCRIPT_LIMITATION}
+              </p>
+            )}
+            <motion.button
+              type="button"
+              onClick={() =>
+                tutor.turnPhase === "recording"
+                  ? void tutor.done()
+                  : tutor.turnPhase === "ready"
+                    ? tutor.speak()
+                    : undefined
+              }
+              disabled={tutor.turnPhase === "processing" || tutor.phase === "ending"}
+              className="rounded-full bg-accent px-8 py-3 text-[15px] font-medium text-accent-ink transition-transform focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 active:scale-[0.98] disabled:opacity-50"
+              data-tutor-primary
+            >
+              {primaryLabel}
+            </motion.button>
+            <button
+              type="button"
+              onClick={() => void tutor.stop()}
+              disabled={tutor.phase === "ending" || tutor.turnPhase !== "ready"}
+              className="rounded-full px-5 py-2 text-[15px] font-medium text-secondary transition-colors hover:text-ink focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 active:scale-[0.98] disabled:opacity-40"
+              data-tutor-end
+            >
+              {tutor.phase === "ending" ? "Wrapping up…" : "End conversation"}
+            </button>
           </>
-        ) : info ? (
-          <p className="tabular text-[15px] text-secondary" data-tutor-ready>
-            {minSeconds > 0
-              ? `${Math.round(minSeconds / 60)} minutes of conversation counts toward your day.`
-              : "A spoken conversation, steered toward your own recurring mistakes."}
-          </p>
+        ) : tutor.info ? (
+          <>
+            <p className="tabular text-center text-[15px] text-secondary" data-tutor-ready>
+              {tutor.info.minSeconds > 0
+                ? `${Math.round(tutor.info.minSeconds / 60)} minutes of conversation counts toward your day.`
+                : "A spoken conversation, steered toward your own recurring mistakes."}
+            </p>
+            <motion.button
+              type="button"
+              onClick={() => void tutor.start()}
+              disabled={tutor.phase === "connecting"}
+              className="rounded-full bg-accent px-6 py-2.5 text-[15px] font-medium text-accent-ink transition-transform focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 active:scale-[0.98] disabled:opacity-50"
+            >
+              {tutor.phase === "connecting" ? "Connecting…" : "Start conversation"}
+            </motion.button>
+          </>
         ) : (
           <p className="text-[15px] text-secondary">Preparing…</p>
         )}
 
-        {live ? (
-          <button
-            type="button"
-            onClick={() => void stop()}
-            disabled={phase === "ending"}
-            className="rounded-full bg-accent px-6 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98] disabled:opacity-50"
+        <TurnDetails turn={tutor.lastTurn} />
+
+        {tutor.closing && !live && (
+          <p className="max-w-sm text-center text-[13px] text-secondary" role="status">
+            {tutor.closing}
+          </p>
+        )}
+        {tutor.cost && !live && (
+          <p className="tabular max-w-sm text-center text-[13px] text-secondary">
+            {tutor.cost}
+          </p>
+        )}
+        {tutor.message && (
+          <p
+            className="max-w-sm text-center text-[13px] text-secondary"
+            role="status"
+            data-tutor-message
           >
-            {phase === "ending" ? "Wrapping up…" : "End conversation"}
-          </button>
-        ) : (
-          <motion.button
-            type="button"
-            onClick={() => void start()}
-            disabled={phase === "connecting"}
-            className="rounded-full bg-accent px-6 py-2.5 text-[15px] font-medium text-accent-ink transition-transform active:scale-[0.98] disabled:opacity-50"
-          >
-            {phase === "connecting" ? "Connecting…" : "Start talking"}
-          </motion.button>
-        )}
-
-        {closing && !live && (
-          <p className="max-w-sm text-center text-[13px] text-secondary" role="status" data-tutor-closing>
-            {closing}
+            {tutor.message}
           </p>
         )}
-
-        {/* What that conversation actually cost — the committed ledger figure, after
-            the fact, never an estimate before it (D-26 removed pre-run estimates from
-            the flow; this is the app telling the truth about what it charged, which
-            D-26 demands in the same breath). Tabular numerals, no chart, no colour. */}
-        {cost && !live && (
-          <p className="tabular max-w-sm text-center text-[13px] text-secondary" data-tutor-cost>
-            {cost}
-          </p>
+        {tutor.notice && !live && (
+          <NoticeLine
+            reason={tutor.notice}
+            onRetry={() => void tutor.start()}
+            testId="tutor"
+          />
         )}
-
-        {message && (
-          <p className="max-w-sm text-center text-[13px] text-secondary" role="status" data-tutor-message>
-            {message}
-          </p>
-        )}
-
-        {/* [v0.7 close sweep] The way forward, from the shared table. The page used to
-            hand-roll this: one transient sentence for every failure with a key, and a
-            Settings link ONLY when the page itself had decided no key was configured —
-            so a revoked key got the softener and no link, and the cap got neither. Both
-            are now the notice's business, and its tests hold the three rules. */}
-        {notice && !live && <NoticeLine reason={notice} onRetry={() => void start()} testId="tutor" />}
       </section>
     </div>
   );
