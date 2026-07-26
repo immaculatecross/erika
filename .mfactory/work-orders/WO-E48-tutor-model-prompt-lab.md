@@ -251,3 +251,129 @@ Also include: exact wire events for a manual Realtime turn; exact STT/Terra/TTS 
 reasoning field accepted live; prompt text/hash per preset and proof both paths received it;
 per-leg money proof; benchmark table and spend; browser/build identity; latency to first audio
 for both paths; whether E47 was merged/rebased; and every live verification not performed.
+
+### Worker exit — 2026-07-26
+
+**RESULT** — Complete on `feat/e48-tutor-model-prompt-lab`. The branch implements both
+manual-turn listener architectures, five fixed prompt hypotheses, one strict turn boundary,
+one shared streaming speech leg, leg-wise spend controls, the controlled live matrix, and the
+temporary D-30 decision. Native + Current remains the default.
+
+**PR** — https://github.com/immaculatecross/erika/pull/95 · implementation commit
+`907fe14ee01abf2fecc69682fa3e2d48ab5a3eb0`.
+
+**Changed**
+
+- The Conversation page now has one collapsed experiment disclosure. Architecture/preset are
+  frozen while live and resettable between conversations. `Speak` opens only the explicit turn;
+  pauses remain inside it; `Done` is the only commit.
+- Native uses the existing ephemeral WebRTC boundary as audio-in/text-out and hands only a valid
+  parsed `reply` to the common TTS route. Transcript records one WebM turn, runs STT → Terra,
+  visibly labels the fallible transcript, forbids acoustic findings, and uses the same TTS route.
+- Added exact prompt builders/hashes, bounded conversation context, strict parse/recovery,
+  evidence validation, per-turn diagnostics, Terra/STT/TTS rates and leases, duplicate-call
+  guards, live-WebM duration fallback, terminal-SSE handling, and concurrent MP3 pumping.
+- Added the 50-cell harness/report, focused route/contract/money/transport tests, D-30, and E-48.
+  No E47 lesson-preparation file and no migration was touched.
+
+**Verified**
+
+- Manual Realtime wire: mic tracks are disabled after connect; `Speak` enables them without
+  sending a response event; `Done` disables them and sends, in order,
+  `{"type":"input_audio_buffer.commit"}` then
+  `{"type":"response.create","response":{"output_modalities":["text"]}}`. Text deltas are
+  buffered until `response.done`; at most one failed parse sends one further
+  `response.create` with text-only repair instructions. The long-lived session config is
+  `gpt-realtime-2.1`, `output_modalities:["text"]`, `turn_detection:null`; SDP is authorized by
+  the ephemeral client secret, never the real key.
+- Live contracts passed: STT is `gpt-4o-transcribe` with `language=it` and JSON response;
+  Terra is `gpt-5.6-terra` on `/v1/responses` with
+  `reasoning:{"effort":"low"}` and strict `text.format.type:"json_schema"`; common speech is
+  `gpt-4o-mini-tts`, `response_format:"mp3"`, `stream_format:"sse"`, with the selected voice.
+  The smoke also passed one GA Realtime audio-in/text-out manual turn.
+- Every prompt ends in the same exact required-key JSON envelope. Transcript adds exactly:
+  “This input is a fallible transcript, not a recording of exactly what the learner certainly
+  said. Never report pronunciation, hesitation, pacing, or any acoustic finding; category
+  `pronunciation` is forbidden.” Preset-specific text and benchmark hashes:
+
+  | Preset | Exact distinguishing policy | Native SHA-256 | Transcript SHA-256 |
+  |---|---|---|---|
+  | Record-equivalent | “Use the Record path's policy: identify each genuine error; put every genuine error in `errors`, while the spoken reply still selects at most one.” | `e287a94decd1b4295dc621bd9fab833cd08e014788ef5d6e441b3f00581d192c` | `89292677ad70c839e731ea46d48a472b1297064d68a137e3bf2ef6064306d559` |
+  | Minimal | “You are an exact Italian conversation tutor.” plus the shared mistake classes, precision core, empty-is-valid rule and one/two-sentence reply bound; no profile/slips/today context | `500c12e31c7aff23dd7d74b8be516ec4e8862e7a863a21a80aa7099b1949a245` | `2396d16fcbb2a377f043e6d71fdc87e2973b96d7bedfcb035a3a755eef259d3d` |
+  | Balanced | “Inspect the whole turn and list every clear error internally; speak the single most useful correction, then continue naturally. Correct speech gets ordinary conversation, not a forced correction.” | `3457958ceea6c49e8956bb1a5f6eb293af384090b3c42f4d084ae79ec8004f5b` | `3db4f80124093e0b88b7245bcad5d929ac4d6a589ea0d1c4513cf0ff3fd72429` |
+  | Precision | “A correction requires high confidence. Valid regional or register variants pass. If acoustic uncertainty matters, ask for repetition instead of guessing. There is no quota to find an error.” | `7c1976dcff9204294ab829b58c0688e5219d6db59344b05652d43e47128a83d0` | `2e096d5e9fdb72c76a38ec8c60eb95cd66b3130eab811b9711927bd9060e2c5c` |
+  | Current | “Preserve the current tutor's detection and one-correction policy exactly; the structured envelope changes delivery, not judgment.” | `41eb59009508d9a7f32329c114ecabdd19693b9461869fe5660849fe38efd0ac` | `ae18b62296ffd3b49f0465bc4fcf0922fc011a14af00ee0f509a86131dcbc2db` |
+
+  Native mint builds that selected text into the ephemeral session and returns its hash;
+  Transcript rebuilds the same selection in the turn route. Focused tests compare the exact
+  selected text/hash on both wires, and the benchmark records all ten architecture hashes.
+- Money proof: Native reserves one `gpt-realtime-2.1` lease before mint, extends it by heartbeat,
+  accumulates response usage, then commits one actual row at end. Transcript reserves and settles
+  `gpt-4o-transcribe`, then `gpt-5.6-terra` (including input/cache-write/cache-read/output and
+  resolved repair spend), then `gpt-4o-mini-tts` before each provider call. Duplicate `(tutorId,
+  seq, leg)` calls are rejected; parse failures remain charged; refusals release/no-call; the
+  common TTS settles from returned MP3 bytes. The final disposable browser proof committed
+  `$0.01051600` Realtime, `$0.00046500` STT, `$0.01217775` Terra, and `$0.00219265` TTS with
+  zero open reservations.
+- Controlled benchmark (`docs/research/spike-8-tutor-model-prompt-lab.md`):
+
+  | Architecture | Cells | Parsed | Label catches | False control corrections | First TTS audio | Spend |
+  |---|---:|---:|---:|---:|---|---:|
+  | Native | 25 | 0 | 0/15 | n/a | unavailable after strict parse rejection | `$0.502749` |
+  | Transcript | 25 | 25 | 6/15 | 1/10 | `2.493–6.530 s` | `$0.129179` |
+
+  Fixture synthesis cost `$0.004903`; matrix total `$0.636831`. These synthetic fixtures prove
+  plumbing, not spontaneous-learner quality, and no winner was selected.
+- Built-browser proof used disposable DB `/tmp/erika-e48-proof.7fq1v4/erika.db`, random port
+  `53021`, listener PID `64575`, and served build `Eb1t-MzhWnbs9L0JAjn2K`; its source tree was
+  subsequently committed as `907fe14` (the only post-walk change compacted a rates re-export to
+  satisfy the 500-line hook). The final clean gate build is `64km_rsmgIL2K0cWAfYjK`.
+  It exercised Native once and Transcript twice, proved no request during the deliberate pause,
+  inspected transcript/errors/reply/cost/hash, completed two common TTS streams, ended both
+  conversations, and linked WAV sessions `c161f364-be74-4397-a169-c5fe000e5a5f` and
+  `efc6d583-8f4f-4606-90a7-caa011824dfa`. Transcript's final measured path was capture commit
+  `13 ms`, STT `687 ms`, Terra `2,148 ms`, first TTS audio `1,154 ms`, total `7,574 ms`.
+  Native first-audio latency is truthfully unavailable: the final proof hit the same strict-JSON
+  recovery as the controlled matrix, so no invalid reply was spoken.
+- Sequential gates passed: `npm run lint`; `npm run typecheck`; `npm run test`
+  (**162 files, 1,522 tests**); `npm run build`; `.mfactory/hooks/run-tripwires.sh --all`.
+  Key-gated live smoke passed all four provider contracts after the final transport fixes.
+
+**Tests changed or removed**
+
+- Added `tutor-lab-contract`, `tutor-lab-money`, and `tutor-turn-routes`; expanded manual
+  transport, mint, persona, guardrail, money, ffprobe, and live-contract coverage.
+- Mutation proof includes no auto-response during a pause, exact commit/create order, exact prompt
+  wiring, malformed/fenced/off-schema rejection, transcript pronunciation removal, secret
+  boundary, duplicate legs, cap refusal before provider calls, resolved parse charging, live WebM
+  packet duration, and terminal speech SSE. No test was removed.
+
+**Live spend**
+
+- Accounted benchmark plus all disposable browser ledgers: `$0.765165`.
+- Supplementary key-gated smoke runs and the terminal-SSE probe were not emitted into a local
+  ledger; a deliberately conservative `$0.120000` upper bound puts total authorized spend at
+  **≤ `$0.885165`**, below the `$1.50` ceiling.
+
+**Risks**
+
+- Native Realtime completed its live audio/text calls but missed the strict JSON boundary in all
+  25 matrix cells after one repair. The UI fails truthfully and records no evidence/speech for
+  those turns, but Native + Current remains the required default; this is the main merge risk.
+- Transcript labels are fallible and cannot support pronunciation/hesitation findings. The matrix
+  also showed category drift and one false control correction; real hesitant speech was not used.
+- Existing unrelated lint warnings in `lib/analysis/audio-model.ts` and the existing dynamic
+  sherpa import build warning remain.
+- E47 PR #94 was still OPEN at finalization, so it had not merged and no rebase was applicable.
+  `origin/master` remained `5b30adc`; this branch must be rebased and all gates rerun after #94
+  resolves, before requesting merge.
+
+**Live verification not performed**
+
+- No real-learner/human judgment, noisy-room input, Safari/iOS run, or subjective voice-quality
+  comparison was performed. Native first-audio latency could not be measured because strict
+  parsing correctly prevented TTS. Provider-console invoice reconciliation was not available;
+  repository modelled/usage-derived rates and the conservative auxiliary bound are reported.
+
+**Blocker** — None to opening/reviewing PR #95. Merge request remains gated on PR #94 resolving,
+the required rebase, and a fresh full gate run.
