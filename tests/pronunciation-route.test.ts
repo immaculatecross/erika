@@ -248,7 +248,7 @@ describe("the drill page's param contract — Next hands PAGES an encoded key", 
 
   it("the page decodes its param before use — the convention its sibling pages follow", () => {
     const src = readFileSync(
-      join(process.cwd(), "app/practice/learn/studio/[drillKey]/page.tsx"),
+      join(process.cwd(), "app/(app)/practice/learn/studio/[drillKey]/page.tsx"),
       "utf8",
     );
     expect(src).toContain("decodeURIComponent(rawDrillKey)");

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { allNotices, noticeFor, TRANSIENT_WORDS } from "@/lib/session/notices";
+import { pageFileFor } from "./helpers";
 
 // CRITERION 3, MECHANISED. RETRO-004 named the same defect thirteen times: every row
 // on the Learn home led to "The lesson model is unavailable right now" — false for a
@@ -35,11 +36,11 @@ describe("rule 1 — a standing condition is never called 'right now'", () => {
 
 describe("rule 2 — a named remedy is a working link", () => {
   it("every notice that points somewhere points at a real page", () => {
-    const root = path.join(process.cwd(), "app");
     let checked = 0;
     for (const notice of allNotices()) {
       if (!notice.action) continue;
-      const page = path.join(root, notice.action.href.replace(/^\//, ""), "page.tsx");
+      // [E-46] See `pageFileFor`: every product page moved inside `app/(app)/`.
+      const page = pageFileFor(notice.action.href);
       expect(fs.existsSync(page), `${notice.reason} → ${notice.action.href}`).toBe(true);
       checked += 1;
     }
