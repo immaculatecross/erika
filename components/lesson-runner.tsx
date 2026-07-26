@@ -7,7 +7,12 @@ import { ArrowLeft } from "lucide-react";
 import { staggerContainer, staggerItem } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import { itemLessonScore, type ItemLesson } from "@/lib/lessons/item-lessons-view";
-import { MISHEARD_STREAK_TO_FALL_BACK } from "@/lib/lessons/spoken-answer";
+import {
+  countsAsCorrect,
+  evidenceForOutcome,
+  nextMishearingStreak,
+  speechIsOffered,
+} from "@/lib/lessons/drill-session";
 import { useItemLesson } from "@/lib/use-item-lesson";
 import { DrillCard, type DrillOutcome } from "@/components/drill-card";
 
@@ -54,26 +59,31 @@ function LessonBody({
 
   const total = lesson.exercises.length;
   const last = index === total - 1;
-  // Three consecutive "that's not what I said" and speech stops being offered for
-  // the rest of the session. See components/drill-card.tsx for the reasoning.
-  const speechOffered = mishearings < MISHEARD_STREAK_TO_FALL_BACK;
+  const speechOffered = speechIsOffered(mishearings);
 
+  // RESOLVING A DRILL RECORDS NOTHING. It only moves the screen into its feedback
+  // state, which is also the DISPUTE WINDOW: the transcript is on screen and the
+  // learner can still say "that's not what I said". A drill may resolve several
+  // times — wrong, then disputed — and only the last one is the outcome.
+  //
+  // This is the E-45 repair. Writing on resolve appended `polarity: 0, mode: "cued"`
+  // the instant speech-to-text disagreed, BEFORE the override control had rendered,
+  // and the `evidence` table's BEFORE UPDATE/DELETE triggers make that row
+  // permanent — so one bad transcript demoted a lemma the learner actually knew,
+  // for good (D-19). The invariant is now enforced by ORDER: a voice answer can
+  // only write evidence the learner has not disputed, so the write happens when
+  // they leave the drill, never when we form an opinion about it.
   function resolve(outcome: DrillOutcome) {
     setStep({ done: true, outcome });
-    if (outcome === "misheard") {
-      // A mishearing is NOT a wrong answer and NOT a verified right one. It counts
-      // toward the day (the learner did the drill) and writes NO evidence — we did
-      // not verify the answer, and we have no reason to hold it against them.
-      setMishearings((n) => n + 1);
-      setCorrectCount((c) => c + 1);
-      return;
-    }
-    setMishearings(0);
-    if (outcome === "correct") setCorrectCount((c) => c + 1);
-    void complete(outcome === "correct"); // cued evidence (best-effort)
   }
 
   function advance() {
+    if (step.done) {
+      const polarity = evidenceForOutcome(step.outcome);
+      if (polarity !== null) void complete(polarity); // cued evidence (best-effort)
+      if (countsAsCorrect(step.outcome)) setCorrectCount((c) => c + 1);
+      setMishearings((n) => nextMishearingStreak(n, step.outcome));
+    }
     if (!last) {
       setIndex((i) => i + 1);
       setStep({ done: false });

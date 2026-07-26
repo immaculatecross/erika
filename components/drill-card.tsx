@@ -21,9 +21,12 @@ import { useRecorder } from "@/lib/use-recorder";
 //   2. a wrong verdict on a SPOKEN answer offers one control — "That's not what I
 //      said" — and taking it marks the drill correct. The learner is the authority
 //      on what came out of their own mouth, and we are not;
-//   3. an overridden drill writes NO evidence. Not positive (we did not verify it),
-//      and emphatically not negative (we have no reason to think they were wrong).
-//      A mishearing must never become a data point against the learner;
+//   3. NOTHING IS RECORDED WHILE THE VERDICT IS ON SCREEN. Resolving a drill only
+//      opens the dispute window; the evidence write happens when the learner leaves
+//      the drill (components/lesson-runner.tsx `advance`, lib/lessons/drill-session.ts).
+//      That ordering is the whole guarantee: `evidence` is append-only with
+//      RAISE(ABORT) triggers, so a row written before the learner could object would
+//      be permanent. A disputed drill writes nothing in either direction;
 //   4. after MISHEARD_STREAK_TO_FALL_BACK overrides in a row the runner stops
 //      offering speech for the rest of the session and says so once. Three in a row
 //      is not bad luck, it is recognition not working for this voice today, and
@@ -202,8 +205,9 @@ export function DrillCard({ exercise, speechOffered, onResolve }: Props) {
 
       {resolved ? <Feedback exercise={exercise} correct={correct} /> : null}
 
-      {/* The learner's last word. Offered only when a SPOKEN answer was judged
-          wrong — after a tap there is nothing to dispute. */}
+      {/* The learner's last word, and it is available for as long as the verdict
+          is. Offered only when a SPOKEN answer was judged wrong — after a tap there
+          is nothing to dispute, because nothing was transcribed. */}
       {spokenCorrect === false && !overridden && (
         <button
           type="button"
@@ -216,7 +220,14 @@ export function DrillCard({ exercise, speechOffered, onResolve }: Props) {
       )}
       {overridden && (
         <p data-overridden className="text-[13px] text-secondary">
-          Taken as correct. Nothing recorded either way.
+          Taken as correct. Nothing is recorded for this one, either way.
+        </p>
+      )}
+      {/* True while the window is open, and it is the reason the button above is
+          worth pressing: the learner is told the verdict is not yet a record. */}
+      {spokenCorrect === false && !overridden && (
+        <p data-dispute-window className="text-[13px] text-secondary">
+          Nothing is recorded until you continue.
         </p>
       )}
     </div>
