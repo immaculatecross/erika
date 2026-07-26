@@ -46,6 +46,9 @@ export const LIBRARY_SECTIONS: { title: string; items: NavDest[] }[] = [
       { href: "/slips", label: "Slips", note: "Mistakes that keep coming back, and what became of them." },
       { href: "/focus", label: "Focus", note: "What is costing you the most, by category and by hour." },
       { href: "/letter", label: "The letter", note: "This week's digest from your editor." },
+      // [E-46] The read-only progress surface, which replaced the dev-only knowledge
+      // inspector. Reached from here and from the goal ring on the Learn home.
+      { href: "/progress", label: "Progress", note: "What Erika knows about you: words, rules and sounds." },
     ],
   },
   {
@@ -61,7 +64,10 @@ export const LIBRARY_SECTIONS: { title: string; items: NavDest[] }[] = [
   {
     title: "Setup",
     items: [
-      { href: "/practice/placement", label: "Find your level", note: "The vocabulary check, re-runnable." },
+      // [E-46] The check moved into onboarding, which is now mandatory on an empty
+      // database; `/welcome` is the same flow, re-runnable, and re-running it
+      // supersedes the previous placement.
+      { href: "/welcome", label: "Find your level", note: "The vocabulary check and speaking sample, re-runnable." },
     ],
   },
 ];
@@ -69,8 +75,9 @@ export const LIBRARY_SECTIONS: { title: string; items: NavDest[] }[] = [
 // Learn owns the daily session; Record owns everything about recorded material. Learn
 // is matched first so a future Record prefix can never shadow it. These mappings are
 // UNCHANGED by E-44 — a deep link into `/focus` still reads as Learn, so the tab bar
-// stays truthful wherever a learner lands from a bookmark.
-const LEARN_PREFIXES = ["/practice", "/focus", "/letter"];
+// stays truthful wherever a learner lands from a bookmark. [E-46] `/progress` joins
+// them: its subject is the learner's knowledge, which is Learn's, not Record's.
+const LEARN_PREFIXES = ["/practice", "/progress", "/focus", "/letter"];
 const RECORD_PREFIXES = ["/sessions", "/archive", "/phrasebook", "/slips"];
 
 function underPrefix(pathname: string, prefix: string): boolean {
