@@ -12,6 +12,8 @@ import { landConversationTake } from "@/lib/tutor/take";
 import { closingLine, costLine } from "@/lib/tutor/closing-line";
 import { TUTOR_OPENING } from "@/lib/tutor/persona";
 import { startFailureMessage } from "@/lib/tutor/failure-message";
+import { NoticeLine } from "@/components/session/step-notice";
+import type { NoticeReason } from "@/lib/session/notices";
 import {
   connectTutor,
   exchangeSdpOverHttp,
@@ -58,6 +60,10 @@ export default function TutorPage() {
   const [info, setInfo] = useState<SessionInfo | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  // [v0.7 close sweep] The server's OWN classification of why a start failed, rendered
+  // through the shared notices table. The page no longer decides — it had decided
+  // wrongly, telling everyone with a key that the service was momentarily unreachable.
+  const [notice, setNotice] = useState<NoticeReason | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [speaking, setSpeaking] = useState(false);
   const [closing, setClosing] = useState<string | null>(null);
@@ -126,6 +132,7 @@ export default function TutorPage() {
 
   async function start() {
     setMessage(null);
+    setNotice(null);
     setClosing(null);
     setCost(null);
     setPhase("connecting");
@@ -133,11 +140,21 @@ export default function TutorPage() {
       const res = await fetch("/api/tutor/session", { method: "POST" });
       const body = await res.json();
       if (res.status === 402) {
+        // The cap. The estimate sentence stays — it is true, and the gate confirmed
+        // "no conversation was started" is true — but it now arrives WITH a remedy.
         setPhase("refused");
-        setMessage(body?.error?.message ?? "The monthly budget cannot cover a conversation right now.");
+        setMessage(body?.error?.message ?? null);
+        setNotice(body?.notice ?? "budget");
         return;
       }
-      if (!res.ok) throw new Error(body?.error?.message ?? "Erika could not start a conversation.");
+      if (!res.ok) {
+        // A server-classified refusal: no key, a key OpenAI refused, or a genuinely
+        // momentary failure. Each states itself, and only the momentary one retries.
+        setPhase("error");
+        setNotice(body?.notice ?? "conversation-transient");
+        cleanup();
+        return;
+      }
 
       tutorId.current = body.tutorId;
       // Echo cancellation matters here specifically: the mic stays open while Erika
@@ -355,14 +372,16 @@ export default function TutorPage() {
 
         {message && (
           <p className="max-w-sm text-center text-[13px] text-secondary" role="status" data-tutor-message>
-            {message}{" "}
-            {info && !info.keyConfigured && (
-              <Link href="/settings" className="underline underline-offset-2 hover:text-ink">
-                Open Settings
-              </Link>
-            )}
+            {message}
           </p>
         )}
+
+        {/* [v0.7 close sweep] The way forward, from the shared table. The page used to
+            hand-roll this: one transient sentence for every failure with a key, and a
+            Settings link ONLY when the page itself had decided no key was configured —
+            so a revoked key got the softener and no link, and the cap got neither. Both
+            are now the notice's business, and its tests hold the three rules. */}
+        {notice && !live && <NoticeLine reason={notice} onRetry={() => void start()} testId="tutor" />}
       </section>
     </div>
   );
