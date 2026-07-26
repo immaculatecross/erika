@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { LearnToday } from "@/components/learn-today";
+import { ONBOARDING_PATH } from "@/lib/onboarding/routing";
 import type { TodayView } from "@/lib/today";
 
 // CRITERION 1 — ONE SCREEN, ONE ACTION (E-44, D-24/D-26).
@@ -82,11 +83,11 @@ describe("the main column holds exactly one tappable thing", () => {
   it("asks an unplaced learner for their level — still exactly one control", () => {
     const html = renderToStaticMarkup(
       <LearnToday
-        view={{ ...BASE, placed: false, action: { kind: "place", href: "/practice/placement", label: "Find your level" } }}
+        view={{ ...BASE, placed: false, action: { kind: "place", href: ONBOARDING_PATH, label: "Find your level" } }}
       />,
     );
     expect(interactive(html)).toBe(1);
-    expect(html).toContain("/practice/placement");
+    expect(html).toContain(ONBOARDING_PATH);
   });
 });
 

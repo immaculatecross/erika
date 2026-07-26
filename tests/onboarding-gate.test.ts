@@ -158,6 +158,27 @@ describe("onboardingComplete", () => {
     expect(onboardingComplete(d)).toBe(true);
   });
 
+  it("is true for the pre-E-46 LEARN-ONLY learner who never recorded", () => {
+    // [REVIEW-85] The person this clause exists for: completed days and an open daily
+    // session, no recordings at all, and the old placement prompt dismissed. Without
+    // `day_ledger`/`daily_sessions` in the disjunction they met the gate on every
+    // route — recoverable, but exactly the trap this predicate is wide to avoid.
+    const d = freshDb("learn-only");
+    expect(onboardingComplete(d)).toBe(false);
+    d.prepare("INSERT INTO day_ledger (local_day, cards_done, lessons_done) VALUES (?, ?, ?)").run(
+      "2026-07-20",
+      9,
+      1,
+    );
+    expect(onboardingComplete(d)).toBe(true);
+  });
+
+  it("is true for a learner who has opened a daily session", () => {
+    const d = freshDb("has-daily-session");
+    d.prepare("INSERT INTO daily_sessions (local_day, steps) VALUES (?, ?)").run("2026-07-21", "[]");
+    expect(onboardingComplete(d)).toBe(true);
+  });
+
   it("the process database starts empty, so the gate is on for a real cold start", () => {
     expect(onboardingComplete(db)).toBe(false);
   });

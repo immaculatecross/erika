@@ -7,6 +7,7 @@ import { buildToday } from "@/lib/today";
 import { openSession, markStepDone } from "@/lib/session/store";
 import { completeDayIfMet } from "@/lib/session/day";
 import { localDay } from "@/lib/local-day";
+import { ONBOARDING_PATH } from "@/lib/onboarding/routing";
 
 // The Learn home read-model (E-31, rewritten at E-44). One screen, one action: the
 // ring, the one factual line, the streak, and a single control.
@@ -99,7 +100,7 @@ describe("buildToday", () => {
     expect(view.placed).toBe(false);
     expect(view.action).toEqual({
       kind: "place",
-      href: "/practice/placement",
+      href: ONBOARDING_PATH,
       label: "Find your level",
     });
     db.close();

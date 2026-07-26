@@ -29,9 +29,16 @@ import type { Db } from "../db";
 //  3. Any placement evidence. A database placed BEFORE this milestone (or before v27)
 //     has recognition rows and no marker. Those learners must not meet a gate that did
 //     not exist when they started.
-//  4. Any session. Someone who has recorded is unmistakably a learner of this app.
-//     On a genuinely empty database there are no sessions, so this clause can never
-//     weaken the force; it only ever rescues somebody who was already here.
+//  4. Any recording, completed day, or daily session. Someone who has recorded, or
+//     met a daily goal, or opened a session is unmistakably a learner of this app.
+//     On a genuinely empty database all three tables are empty, so these clauses can
+//     never weaken the force; they only ever rescue somebody who was already here.
+//     [REVIEW-85] `day_ledger` and `daily_sessions` were missing, which stranded a
+//     real person: the pre-E-46 LEARN-ONLY learner, who has completed days and a
+//     daily session but has never recorded and dismissed the old placement prompt.
+//     They would have met the gate on every route. Recoverable — the check re-places
+//     them — but it is exactly the trap class this disjunction is wide to avoid, and
+//     "recoverable" is not the standard being aimed at.
 
 /** The `settings` key holding the ISO instant the learner finished onboarding. */
 export const ONBOARDING_MARKER_KEY = "onboarding_completed_at";
@@ -63,6 +70,8 @@ export function onboardingComplete(db: Db): boolean {
   if (tableHasRow(db, "SELECT 1 FROM placement_runs LIMIT 1")) return true;
   if (tableHasRow(db, "SELECT 1 FROM evidence WHERE source = 'placement' LIMIT 1")) return true;
   if (tableHasRow(db, "SELECT 1 FROM sessions LIMIT 1")) return true;
+  if (tableHasRow(db, "SELECT 1 FROM day_ledger LIMIT 1")) return true;
+  if (tableHasRow(db, "SELECT 1 FROM daily_sessions LIMIT 1")) return true;
   return false;
 }
 

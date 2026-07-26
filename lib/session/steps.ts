@@ -1,3 +1,5 @@
+import { ONBOARDING_PATH } from "../onboarding/routing";
+
 // The day's session, as pure vocabulary (E-44, D-26/D-27). Client-safe — no React,
 // no DB, no I/O — so the step order, the sentence the home states, and the completion
 // sentence are all unit-testable and shared by the server planner and the runner UI.
@@ -147,10 +149,29 @@ export interface HomeState {
  * edge instead of at the alphabet), and making it the ONE action keeps the screen at
  * one action rather than adding a second row beside Start. E-46 turns this into a
  * hard gate; today it is simply what the button says.
+ *
+ * [E-46, REVIEW-85] THE INVARIANT: EVERY href THIS RETURNS MUST RESOLVE. E-46 folded
+ * the standalone check into onboarding and deleted `/practice/placement`, and this
+ * line still pointed at it — so the one screen with one action offered a 404. The
+ * people who saw it are not hypothetical: a check refused as `response-style` records
+ * no run and seeds nothing, by design, while onboarding still records that the learner
+ * walked out — so they arrive here onboarded and UNPLACED, which is exactly the
+ * yes-biased advanced learner criterion 3 exists to rescue. Every pre-E-46 learner
+ * caught by `onboardingComplete`'s rescue clauses lands the same way.
+ *
+ * They now go to `ONBOARDING_PATH`. It is the same check; re-running it supersedes the
+ * previous placement; it carries the spoken sample that is this learner's actual way
+ * out of the refusal; and since E-46 it shows an already-placed learner the way back.
+ * The alternative — dropping them into the session with placement offered inside it —
+ * was rejected: it puts a second thing on the screen E-44 reduced to one, to serve the
+ * learner whose whole problem is that Erika does not yet know where to start them.
+ *
+ * `tests/session-steps.test.ts` now enumerates every state and asserts every href this
+ * can return exists on disk, so the next deleted route is a red test, not a live 404.
  */
 export function homeAction(state: HomeState): HomeAction {
   if (state.complete) return { kind: "none" };
-  if (!state.placed) return { kind: "place", href: "/practice/placement", label: "Find your level" };
+  if (!state.placed) return { kind: "place", href: ONBOARDING_PATH, label: "Find your level" };
   if (!state.hasSteps) return { kind: "none" };
   if (state.started) return { kind: "continue", href: "/practice/session", label: "Continue" };
   return { kind: "start", href: "/practice/session", label: "Start today" };
