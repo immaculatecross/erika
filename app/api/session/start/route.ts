@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { apiError } from "@/lib/api/error";
 import { localDay } from "@/lib/local-day";
-import { servableItemLesson } from "@/lib/lessons/lesson-serving";
+import { pinServableItemLesson } from "@/lib/lessons/lesson-serving";
 import { openSession } from "@/lib/session/store";
 import { buildSessionView } from "@/lib/session/view";
 
@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
 export function POST() {
   const db = getDb();
   const preview = buildSessionView(db);
-  if (preview.lesson && !servableItemLesson(db, preview.lesson.itemId)) {
+  if (preview.lesson && !pinServableItemLesson(db, preview.lesson.itemId)) {
     return apiError(
       "lesson_not_servable",
       "Today's lesson is not available yet.",

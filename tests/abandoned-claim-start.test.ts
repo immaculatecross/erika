@@ -60,7 +60,9 @@ describe("an abandoned current claim cannot wall Start", () => {
     expect(body.lesson?.deterministic).toBe(true);
     expect(body.lesson?.exercises.length).toBeGreaterThanOrEqual(2);
     expect(db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get()).toEqual({ n: 0 });
-    expect(db.prepare("SELECT body FROM item_lessons WHERE item_id = ?").get(initial.lesson.itemId))
-      .toEqual({ body: "" });
+    const pinned = db.prepare("SELECT body, claim_token FROM item_lessons WHERE item_id = ?")
+      .get(initial.lesson.itemId) as { body: string; claim_token: string | null };
+    expect(pinned.body.length).toBeGreaterThan(0);
+    expect(pinned.claim_token).toBeNull();
   });
 });

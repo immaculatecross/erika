@@ -5,11 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { ensureLemmaItem } from "@/lib/knowledge/items";
 import {
+  authoredLessonFor,
   claimItemLesson,
   completeItemLesson,
   getItemLesson,
   sweepStaleItemLessonClaims,
 } from "@/lib/lessons/item-lessons";
+import { pinServableItemLesson } from "@/lib/lessons/lesson-serving";
 import type { NewItemLesson } from "@/lib/lessons/item-lessons-view";
 
 // Migration v20 — the item_lessons cache exists, a lesson round-trips its typed body
@@ -108,6 +110,31 @@ describe("migration v20 schema", () => {
     expect(completeItemLesson(db, LESSON, stale!)).toBeNull();
     expect(completeItemLesson(db, winningLesson, winner!)).not.toBeNull();
     expect(getItemLesson(db, LESSON.itemId)?.intro).toBe(winningLesson.intro);
+    db.close();
+  });
+
+  it("keeps a Start pin when the still-active owner completes later", () => {
+    const db = freshDb();
+    const owner = claimItemLesson(db, {
+      itemId: LESSON.itemId,
+      kind: LESSON.kind,
+      register: LESSON.register,
+    });
+    expect(owner).not.toBeNull();
+
+    const pinned = pinServableItemLesson(db, LESSON.itemId);
+    expect(pinned?.deterministic).toBe(true);
+    expect(pinned?.itemId).toMatch(/^rule:/);
+    const frozenIntro = pinned!.intro;
+
+    // The live owner still holds its token, but Start already filled the empty body
+    // and cleared ownership. Both `body = ''` and `claim_token = ?` must remain;
+    // dropping either predicate alone is not enough if the other still matches, so
+    // this pin writes both defenses before the late completion runs.
+    expect(completeItemLesson(db, LESSON, owner!)).toBeNull();
+    expect(getItemLesson(db, LESSON.itemId)?.intro).toBe(frozenIntro);
+    expect(getItemLesson(db, LESSON.itemId)?.itemId).toBe(pinned!.itemId);
+    expect(authoredLessonFor(db, LESSON.itemId).itemId).toBe(pinned!.itemId);
     db.close();
   });
 });

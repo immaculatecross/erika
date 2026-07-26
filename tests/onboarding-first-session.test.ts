@@ -49,6 +49,6 @@ describe("onboarding directly enters the first session", () => {
     expect(body.lesson?.deterministic).toBe(true);
     expect(body.lesson?.intro.length).toBeGreaterThan(40);
     expect(db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get()).toEqual({ n: 0 });
-    expect(db.prepare("SELECT COUNT(*) AS n FROM item_lessons").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM item_lessons WHERE body <> ''").get()).toEqual({ n: 1 });
   });
 });
