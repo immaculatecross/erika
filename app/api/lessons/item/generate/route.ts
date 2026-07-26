@@ -1,23 +1,12 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { itemExists } from "@/lib/knowledge/items";
-import { itemLessonKind, todaysLesson } from "@/lib/lessons/item-lessons";
-import { openAiTextModel } from "@/lib/lessons/text-model";
+import { authoredLessonFor, getItemLesson, itemLessonKind } from "@/lib/lessons/item-lessons";
 
-// TODAY'S LESSON for a composer-chosen knowledge item (E-45 criteria 1 & 2, D-27).
-//
-// The route answers with `todaysLesson`, which CANNOT FAIL: the cached lesson, else
-// a freshly generated one, else the deterministic syllabus lesson — which needs no
-// key, no budget and no network. So there is no 402 branch and no 502 branch here
-// any more, and the runner has no "unavailable right now" screen to render.
-//
-// That is the point of the change rather than a side effect. The old route returned
-// 402 when the monthly cap was reached and 502 when a reply was unreadable, and both
-// were dead ends for a lesson the learner could always have had for free. A billed
-// generation now either produces a usable lesson or is quietly not used.
-//
-// Generation is still billable and still capped — the cap lives inside
-// `generateItemLesson` (reserve-before-call), and a cache hit bills nothing.
+// Compatibility read for the demoted standalone lesson browser. Despite the legacy
+// path name, this route performs no generation: it reads a prepared v2 cache body or
+// returns authored Italian in memory. Daily billable preparation belongs only to
+// /api/session/prepare before Start is enabled.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -32,16 +21,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No such knowledge item." }, { status: 404 });
   }
 
-  const lesson = await todaysLesson(db, openAiTextModel, itemId);
-  if (!lesson) {
-    // The only remaining refusal: a vocabulary item with no key and no cached
-    // lesson. There is no offline Italian-English gloss source, so a vocabulary
-    // lesson genuinely needs a model — this is a truthful "not this one", and the
-    // composer has grammar items that always work.
-    return NextResponse.json(
-      { error: "This word's lesson needs an API key. Today's grammar lesson is ready without one." },
-      { status: 404 },
-    );
-  }
-  return NextResponse.json({ lesson, cached: !lesson.deterministic });
+  const cached = getItemLesson(db, itemId);
+  const lesson = cached ?? authoredLessonFor(db, itemId);
+  return NextResponse.json({ lesson, cached: cached !== null });
 }

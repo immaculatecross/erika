@@ -45,6 +45,7 @@ function CompletionBeat({ view }: { view: TodayView }) {
 
 export function LearnToday({ view }: { view: TodayView }) {
   const { action } = view;
+  const preparing = action.kind === "start" && view.lessonPreparation !== "ready";
   return (
     <div data-learn-today data-day-complete={view.complete ? "true" : "false"} className="mx-auto max-w-xl p-8">
       <h1 className="text-[34px] font-bold tracking-tight">Today</h1>
@@ -79,7 +80,15 @@ export function LearnToday({ view }: { view: TodayView }) {
         <StreakLine streak={view.streak} today={view.day} />
       </section>
 
-      {action.kind !== "none" && (
+      {preparing ? (
+        <p
+          data-lesson-preparing
+          role="status"
+          className="mt-6 w-full rounded-full bg-card px-6 py-3.5 text-center text-[17px] text-secondary shadow-card"
+        >
+          Preparing today&rsquo;s lesson…
+        </p>
+      ) : action.kind !== "none" && (
         <Link
           href={action.href}
           data-primary-action={action.kind}

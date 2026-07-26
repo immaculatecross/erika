@@ -159,13 +159,13 @@ describe("CRITERION 3 — a step that cannot run is absent, with a reason", () =
     db.close();
   });
 
-  it("drops the drills step keyless with nothing to drill, naming the key", () => {
+  it("keeps authored lesson drills keyless even with no finding cards", () => {
     delete process.env.OPENAI_API_KEY;
     const db = freshDb();
     const plan = planSession(db, "2026-07-25");
 
-    expect(plan.steps).not.toContain("drills");
-    expect(plan.omitted).toContainEqual({ key: "drills", reason: "no-key" });
+    expect(plan.steps).toContain("drills");
+    expect(plan.omitted).not.toContainEqual({ key: "drills", reason: "no-key" });
     db.close();
   });
 
@@ -180,7 +180,7 @@ describe("CRITERION 3 — a step that cannot run is absent, with a reason", () =
     db.close();
   });
 
-  it("names the budget, not the key, when the cap is what refuses", () => {
+  it("keeps authored drills at the cap and names budget only for conversation", () => {
     process.env.OPENAI_API_KEY = "sk-test-key";
     const db = freshDb();
     setBudget(db, 0);
@@ -188,7 +188,8 @@ describe("CRITERION 3 — a step that cannot run is absent, with a reason", () =
 
     const plan = planSession(db, "2026-07-25");
     expect(plan.steps).toContain("lesson"); // still teachable from the syllabus
-    expect(plan.omitted).toContainEqual({ key: "drills", reason: "budget" });
+    expect(plan.steps).toContain("drills");
+    expect(plan.omitted).not.toContainEqual({ key: "drills", reason: "budget" });
     expect(plan.omitted).toContainEqual({ key: "conversation", reason: "budget" });
     db.close();
   });

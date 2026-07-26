@@ -73,13 +73,13 @@ function Feedback({ exercise, correct }: { exercise: ItemExercise; correct: bool
   );
 }
 
-/** The meaning-first cue, with an English gloss front when one is attached. */
+/** The meaning-first cue, with an Italian definition when one is attached. */
 function Cue({ exercise }: { exercise: ItemExercise }) {
   return (
     <div className="flex flex-col gap-1.5">
-      {exercise.gloss ? (
-        <p data-gloss className="text-[13px] font-medium uppercase tracking-[0.06em] text-secondary">
-          {exercise.gloss}
+      {exercise.definition ? (
+        <p data-definition className="text-[15px] leading-[1.47] text-secondary">
+          {exercise.definition}
         </p>
       ) : null}
       <p className="text-[17px] leading-[1.47] text-ink">{exercise.prompt}</p>

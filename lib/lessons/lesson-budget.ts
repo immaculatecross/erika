@@ -33,7 +33,7 @@ import type { ItemExercise, ItemLesson } from "./item-lessons-view";
 export const LESSON_MAX_MINUTES = 5;
 
 /**
- * Silent reading speed for the English teaching text, in words per minute.
+ * Silent reading speed for the Italian teaching text, in words per minute.
  *
  * Adult silent reading of ordinary prose runs ~200–250 wpm; instructional text
  * that has to be *understood* rather than skimmed runs slower, and this text is
@@ -46,13 +46,13 @@ export const READING_WPM = 170;
 /**
  * Seconds to read and absorb ONE worked Italian example. Not counted at
  * READING_WPM: a five-word Italian sentence a learner has to parse is not the
- * same work as five English words, and counting it as prose would let a lesson
+ * same work as five ordinary prose words, and counting it as prose would let a lesson
  * carry a dozen examples "for free".
  */
 export const SECONDS_PER_EXAMPLE = 6;
 
 /**
- * Seconds for ONE new word with its gloss — see it, say it, register the meaning.
+ * Seconds for ONE new word with its definition — see it, say it, register the meaning.
  */
 export const SECONDS_PER_NEW_WORD = 6;
 
@@ -63,7 +63,7 @@ export const SECONDS_PER_NEW_WORD = 6;
  */
 export const SECONDS_PER_DRILL = 20;
 
-/** Cap on the English teaching text. ~110 words ≈ 39 s at READING_WPM. */
+/** Cap on the Italian teaching text. ~110 words ≈ 39 s at READING_WPM. */
 export const MAX_INTRO_WORDS = 110;
 
 /** Cap on worked Italian examples — the operator asked for "three or four". */
@@ -89,11 +89,11 @@ function words(s: string): number {
   return s.trim() === "" ? 0 : s.trim().split(/\s+/).length;
 }
 
-/** Every word a drill puts on screen — the cue, its gloss, the options, the reason. */
+/** Every word a drill puts on screen — cue, definition, options and rationale. */
 export function drillWords(ex: ItemExercise): number {
   return (
     words(ex.prompt) +
-    words(ex.gloss ?? "") +
+    words(ex.definition ?? "") +
     ex.options.reduce((n, o) => n + words(o), 0) +
     words(ex.rationale)
   );

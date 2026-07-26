@@ -36,6 +36,32 @@ export default function LearnTodayPage() {
     void load();
   }, [load]);
 
+  // The daily composer has now selected the item. Preparation starts here, on the
+  // Learn home, never when the lesson is opened. While this POST is genuinely in
+  // flight the pure surface replaces Start with one calm status line. A second tab
+  // sees the shared claim as "preparing" and polls the read model; it never makes a
+  // second provider call.
+  useEffect(() => {
+    if (phase.kind !== "ready" || phase.view.action.kind !== "start") return;
+    if (phase.view.lessonPreparation === "needed") {
+      setPhase({
+        kind: "ready",
+        view: { ...phase.view, lessonPreparation: "preparing" },
+      });
+      fetch("/api/session/prepare", { method: "POST" })
+        .then((res) => {
+          if (!res.ok) throw new Error(String(res.status));
+          return load();
+        })
+        .catch(() => setPhase({ kind: "error" }));
+      return;
+    }
+    if (phase.view.lessonPreparation === "preparing") {
+      const timer = window.setTimeout(() => void load(), 500);
+      return () => window.clearTimeout(timer);
+    }
+  }, [phase, load]);
+
   if (phase.kind === "loading") {
     return (
       <div className="flex min-h-screen items-center justify-center p-8">

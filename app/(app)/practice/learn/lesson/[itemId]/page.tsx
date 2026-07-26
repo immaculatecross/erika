@@ -4,8 +4,8 @@ import { useParams } from "next/navigation";
 import { LessonRunner } from "@/components/lesson-runner";
 
 // The lesson runner route (E-45: one runner): a thin client wrapper that reads the knowledge
-// item id from the path and hands it to the runner, which generates-on-open, steps,
-// grades, and writes evidence. The id is URL-encoded in the link (a lemma id carries
+// item id from the path and hands it to the runner, which reads authored/prepared
+// Italian, steps, grades, and writes evidence. The id is URL-encoded in the link (a lemma id carries
 // `:` and `#`, e.g. `lemma:casa#NOUN` → `lemma%3Acasa%23NOUN`); `useParams` returns
 // it still-encoded, so decode it here.
 export default function ItemLessonRunnerPage() {

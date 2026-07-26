@@ -4,7 +4,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { loadSyllabus, ruleKeyToItemId } from "@/lib/syllabus";
-import { ensureRuleItem } from "@/lib/knowledge/items";
+import { ensureLemmaItem, ensureRuleItem } from "@/lib/knowledge/items";
+import { recordPlacementRun } from "@/lib/knowledge/placement-runs";
 import {
   buildRuleLesson,
   deterministicLessonFor,
@@ -12,7 +13,7 @@ import {
   ruleDrills,
   ruleIsTeachable,
 } from "@/lib/lessons/syllabus-lesson";
-import { todaysLesson } from "@/lib/lessons/item-lessons";
+import { getItemLesson, prepareItemLesson, todaysLesson } from "@/lib/lessons/item-lessons";
 import {
   MAX_DRILLS,
   MIN_DRILLS,
@@ -22,6 +23,7 @@ import {
 } from "@/lib/lessons/lesson-budget";
 import { drillIsUsable, gradeItemExercise } from "@/lib/lessons/item-lessons-view";
 import type { TextModelClient } from "@/lib/lessons/text-model";
+import { assertItalianLesson, validateItalianText } from "@/lib/lessons/italian-language";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // E-45 criterion 1 + D-27 — THE LESSON ALWAYS EXISTS, AND THE SYLLABUS IS WHY.
@@ -119,12 +121,82 @@ describe("an empty database still gets a complete lesson (D-27, the primary path
     // Whatever the invite, the click path exists on every drill (D-26: no wall).
     expect(lesson.exercises.every((e) => e.options.length >= 2)).toBe(true);
   });
+
+  it("substitutes a complete grammar lesson at the learner's edge for offline vocabulary", async () => {
+    const db = emptyDb();
+    recordPlacementRun(db, { level: "C1", calibrated: true, falseAlarmRate: 0 });
+    const selected = ensureLemmaItem(db, "casa", "NOUN");
+
+    const prepared = await prepareItemLesson(db, null, selected);
+    expect(prepared.state).toBe("ready");
+    expect(prepared.lesson?.kind).toBe("grammar");
+    expect(prepared.lesson?.itemId).toMatch(/^rule:/);
+    const servedRule = RULES.find((rule) => `rule:${rule.key}` === prepared.lesson?.itemId)!;
+    expect(servedRule.cefr).toBe("C1");
+    expect(prepared.lesson!.exercises.length).toBeGreaterThanOrEqual(MIN_DRILLS);
+    expect(getItemLesson(db, selected)?.itemId).toBe(prepared.lesson?.itemId);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(0);
+    db.close();
+  });
 });
 
 describe("the guarantee rests on a measured number, not on hope", () => {
   // If the syllabus ever changes underneath this module, these go red rather than
   // the product quietly shipping a rule that cannot make a drill.
   const teachable = RULES.filter(ruleIsTeachable);
+
+  it("pins reviewed authored grammar facts independently of the language detector", () => {
+    const byKey = new Map(RULES.map((rule) => [rule.key, rule]));
+    expect(byKey.get("congiuntivo-congiunzioni")?.description).toContain(
+      "nonostante richiedono il congiuntivo",
+    );
+    expect(byKey.get("congiuntivo-congiunzioni")?.description).not.toContain("richiedano");
+
+    const cause = byKey.get("connettivi-causa")!;
+    expect(cause.description).toContain("perché introduce di norma una causa posposta");
+    expect(cause.description).toContain("siccome e poiché introducono spesso una causa preposta");
+    expect(cause.examples).toEqual([
+      "Siccome pioveva, sono rimasto a casa.",
+      "Non è venuto perché era malato.",
+    ]);
+
+    expect(byKey.get("proverbi-formule-colte")?.description).toContain(
+      "Chi troppo vuole nulla stringe",
+    );
+    expect(byKey.get("proverbi-formule-colte")?.description).not.toContain("nulla string;");
+
+    // Same-class sweep: pin the two machine-literal connective explanations fixed
+    // alongside the review's named semantic/truncation defects.
+    expect(byKey.get("interrogativo-perche")?.description).toContain(
+      "Perché introduce sia domande sulla causa sia risposte causali",
+    );
+    expect(byKey.get("congiunzioni-base")?.description).toContain(
+      "o presenta un'alternativa, ma un contrasto, perché una causa",
+    );
+    expect(byKey.get("plurali-irregolari")?.description).toContain(
+      "Alcuni plurali sono irregolari",
+    );
+    expect(byKey.get("ellissi-stilistica")?.description).not.toContain("gapping");
+  });
+
+  it("all 266 rules carry authored Italian teaching content and yield a complete lesson", () => {
+    expect(RULES).toHaveLength(266);
+    for (const rule of RULES) {
+      expect(validateItalianText(rule.title), `${rule.key} title`).toMatchObject({ valid: true });
+      expect(validateItalianText(rule.description), `${rule.key} description`).toMatchObject({ valid: true });
+      expect(rule.examples.length, `${rule.key} examples`).toBeGreaterThan(0);
+      rule.examples.forEach((example, index) => {
+        expect(validateItalianText(example), `${rule.key} example ${index + 1}`).toMatchObject({ valid: true });
+      });
+
+      const lesson = deterministicLessonFor(ruleKeyToItemId(rule.key), "colto");
+      expect(lesson, rule.key).not.toBeNull();
+      expect(lesson!.intro.length, rule.key).toBeGreaterThan(40);
+      expect(lesson!.examples.length, rule.key).toBeGreaterThan(0);
+      expect(lesson!.exercises.length, rule.key).toBeGreaterThanOrEqual(MIN_DRILLS);
+      expect(() => assertItalianLesson(lesson!), rule.key).not.toThrow();
+    }
+  });
 
   it("most of the 266 shipped rules can carry a deterministic lesson", () => {
     expect(RULES.length).toBe(266);

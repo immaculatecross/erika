@@ -2,7 +2,12 @@ import type { Db } from "../db";
 import { localDay } from "../local-day";
 import { countDueCards } from "../cards";
 import { loadSyllabus } from "../syllabus";
-import { itemLessonKind } from "../lessons/item-lessons";
+import {
+  itemLessonKind,
+  lessonPreparationState,
+  sweepStaleItemLessonClaims,
+  type LessonPreparationState,
+} from "../lessons/item-lessons";
 import { conversationCredit } from "./conversation-credit";
 import { currentStep, getSession, isSessionComplete, reconcileSession } from "./store";
 import { completeDayIfMet } from "./day";
@@ -43,7 +48,12 @@ export interface SessionView {
   /** The step to show, or null when the session is finished. */
   step: StepKey | null;
   complete: boolean;
-  lesson: { itemId: string; label: string | null; kind: "grammar" | "vocab" } | null;
+  lesson: {
+    itemId: string;
+    label: string | null;
+    kind: "grammar" | "vocab";
+    preparation: LessonPreparationState;
+  } | null;
   /** Cards the drills step set out to do, and how many are still due right now. */
   plannedCards: number;
   cardsDue: number;
@@ -80,6 +90,7 @@ export function buildSessionView(db: Db, day: string = localDay()): SessionView 
   const doneSteps = session ? session.doneSteps : [];
   const lessonItemId = session ? session.lessonItemId : plan.lessonItemId;
   const kind = lessonItemId ? itemLessonKind(lessonItemId) : null;
+  sweepStaleItemLessonClaims(db);
 
   return {
     day,
@@ -90,7 +101,12 @@ export function buildSessionView(db: Db, day: string = localDay()): SessionView 
     complete: isSessionComplete(session),
     lesson:
       lessonItemId && kind
-        ? { itemId: lessonItemId, label: lessonLabelFor(lessonItemId), kind }
+        ? {
+            itemId: lessonItemId,
+            label: lessonLabelFor(lessonItemId),
+            kind,
+            preparation: lessonPreparationState(db, lessonItemId),
+          }
         : null,
     plannedCards: session ? session.plannedCards : plan.plannedCards,
     cardsDue: countDueCards(db),

@@ -20,7 +20,8 @@ const SPOKEN: ItemExercise = {
   answerIndex: 0,
   answer: "sono",
   invite: "speak",
-  rationale: "andare takes essere.",
+  definition: "Forma dell'ausiliare essere usata con la prima persona singolare.",
+  rationale: "Il verbo andare richiede l'ausiliare essere.",
 };
 
 const CLICKED: ItemExercise = { ...SPOKEN, invite: "click" };
@@ -33,6 +34,14 @@ describe("the drill surface — click or voice, never typing", () => {
     expect(html).not.toContain("<input");
     expect(html).not.toContain("<textarea");
     expect(html).not.toContain("Type your answer");
+  });
+
+  it("renders a sentence definition as body text, not an uppercase caption", () => {
+    const html = renderToStaticMarkup(<DrillCard exercise={SPOKEN} speechOffered onResolve={() => {}} />);
+    expect(html).toContain("data-definition");
+    expect(html).toContain("ausiliare essere usata con la prima persona singolare");
+    expect(html).not.toContain("uppercase");
+    expect(html).not.toContain("tracking-[0.06em]");
   });
 
   it("renders NO text input on a clicked drill either", () => {

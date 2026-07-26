@@ -4,7 +4,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { ensureLemmaItem } from "@/lib/knowledge/items";
-import { claimItemLesson, completeItemLesson, getItemLesson } from "@/lib/lessons/item-lessons";
+import {
+  authoredLessonFor,
+  claimItemLesson,
+  completeItemLesson,
+  getItemLesson,
+  sweepStaleItemLessonClaims,
+} from "@/lib/lessons/item-lessons";
+import { pinServableItemLesson } from "@/lib/lessons/lesson-serving";
 import type { NewItemLesson } from "@/lib/lessons/item-lessons-view";
 
 // Migration v20 — the item_lessons cache exists, a lesson round-trips its typed body
@@ -27,15 +34,15 @@ const LESSON: NewItemLesson = {
   itemId: "lemma:casa#NOUN",
   kind: "vocab",
   register: "colto",
-  intro: "«casa» means home.",
+  intro: "«Casa» indica l'edificio in cui una persona abita e, per estensione, il proprio ambiente familiare.",
   examples: ["Torno a casa."],
-  newWords: [{ lemma: "casa", gloss: "house" }],
-  glossEn: "house",
+  newWords: [{ lemma: "casa", definition: "Edificio o luogo in cui si abita." }],
+  definition: "Edificio o luogo in cui si abita.",
   // [E-45] ONE exercise shape, and `options` is mandatory on both invites — a
   // spoken drill's options ARE its fallback when speech recognition fails.
   exercises: [
-    { type: "choice", prompt: "home?", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "home" },
-    { type: "choice", prompt: "Torno a ____.", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "speak", rationale: "home", gloss: "house" },
+    { type: "choice", prompt: "Scegli il luogo in cui si abita.", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "Casa indica il luogo in cui si abita." },
+    { type: "choice", prompt: "Torno a ____.", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "speak", rationale: "La locuzione corretta è tornare a casa.", definition: "Luogo in cui si abita." },
   ],
 };
 
@@ -48,7 +55,7 @@ describe("migration v20 schema", () => {
     expect(tables.has("item_lessons")).toBe(true);
     const cols = db.prepare("PRAGMA table_info(item_lessons)").all() as { name: string; pk: number }[];
     expect(cols.map((c) => c.name)).toEqual(
-      expect.arrayContaining(["item_id", "kind", "register", "body", "created_at"]),
+      expect.arrayContaining(["item_id", "kind", "register", "body", "content_version", "claim_token", "created_at"]),
     );
     expect(cols.find((c) => c.name === "item_id")?.pk).toBe(1);
     db.close();
@@ -57,18 +64,77 @@ describe("migration v20 schema", () => {
   it("round-trips a lesson's typed body and enforces one lesson per item", () => {
     const db = freshDb();
     // [T1] lease-before-call: claim the item_id row, then complete it with the body.
-    expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBe(true);
-    const stored = completeItemLesson(db, LESSON);
+    const claimToken = claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register });
+    expect(claimToken).not.toBeNull();
+    const stored = completeItemLesson(db, LESSON, claimToken!);
+    expect(stored).not.toBeNull();
+    if (!stored) throw new Error("The owned claim was not completed.");
     expect(stored.intro).toBe(LESSON.intro);
-    expect(stored.glossEn).toBe("house");
+    expect(stored.definition).toBe("Edificio o luogo in cui si abita.");
     expect(stored.exercises).toEqual(LESSON.exercises);
 
     const read = getItemLesson(db, LESSON.itemId)!;
-    expect(read.exercises[1]).toMatchObject({ type: "choice", answer: "casa", invite: "speak", gloss: "house" });
+    expect(read.exercises[1]).toMatchObject({ type: "choice", answer: "casa", invite: "speak", definition: "Luogo in cui si abita." });
 
     // The PK makes a second CLAIM for the same item return false (cache once, one row).
-    expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBe(false);
+    expect(claimItemLesson(db, { itemId: LESSON.itemId, kind: LESSON.kind, register: LESSON.register })).toBeNull();
     expect((db.prepare("SELECT COUNT(*) AS n FROM item_lessons").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
+
+  it("prevents a reclaimed claim's former owner from overwriting the winner", () => {
+    const db = freshDb();
+    const stale = claimItemLesson(db, {
+      itemId: LESSON.itemId,
+      kind: LESSON.kind,
+      register: LESSON.register,
+    });
+    expect(stale).not.toBeNull();
+    db.prepare("UPDATE item_lessons SET created_at = '2000-01-01 00:00:00' WHERE item_id = ?")
+      .run(LESSON.itemId);
+    expect(sweepStaleItemLessonClaims(db)).toBe(1);
+
+    const winner = claimItemLesson(db, {
+      itemId: LESSON.itemId,
+      kind: LESSON.kind,
+      register: LESSON.register,
+    });
+    expect(winner).not.toBeNull();
+    const winningLesson = {
+      ...LESSON,
+      intro: "La lezione vincente resta nella cache anche se il vecchio proprietario termina più tardi.",
+    };
+    // The reclaimed former owner resolves FIRST, while the successor row is still
+    // empty. `body = ''` alone cannot save this ordering: only claim-token ownership
+    // prevents the stale body from preempting the real winner.
+    expect(completeItemLesson(db, LESSON, stale!)).toBeNull();
+    expect(completeItemLesson(db, winningLesson, winner!)).not.toBeNull();
+    expect(getItemLesson(db, LESSON.itemId)?.intro).toBe(winningLesson.intro);
+    db.close();
+  });
+
+  it("keeps a Start pin when the still-active owner completes later", () => {
+    const db = freshDb();
+    const owner = claimItemLesson(db, {
+      itemId: LESSON.itemId,
+      kind: LESSON.kind,
+      register: LESSON.register,
+    });
+    expect(owner).not.toBeNull();
+
+    const pinned = pinServableItemLesson(db, LESSON.itemId);
+    expect(pinned?.deterministic).toBe(true);
+    expect(pinned?.itemId).toMatch(/^rule:/);
+    const frozenIntro = pinned!.intro;
+
+    // The live owner still holds its token, but Start already filled the empty body
+    // and cleared ownership. Both `body = ''` and `claim_token = ?` must remain;
+    // dropping either predicate alone is not enough if the other still matches, so
+    // this pin writes both defenses before the late completion runs.
+    expect(completeItemLesson(db, LESSON, owner!)).toBeNull();
+    expect(getItemLesson(db, LESSON.itemId)?.intro).toBe(frozenIntro);
+    expect(getItemLesson(db, LESSON.itemId)?.itemId).toBe(pinned!.itemId);
+    expect(authoredLessonFor(db, LESSON.itemId).itemId).toBe(pinned!.itemId);
     db.close();
   });
 });

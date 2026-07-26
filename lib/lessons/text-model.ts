@@ -12,6 +12,8 @@ import { TEXT_MODEL } from "../analysis/rates";
 
 /** Thrown when the text model/endpoint is unavailable or unauthorized (a blocker). */
 export class TextModelUnavailableError extends Error {}
+/** Thrown when a text request exceeds the bound that protects its spend claim. */
+export class TextModelTimeoutError extends TextModelUnavailableError {}
 /** Thrown when a text response cannot be parsed into the expected shape. */
 export class TextModelParseError extends Error {}
 
@@ -60,7 +62,7 @@ export interface TextModelClient {
    * plus token usage. JSON is requested inside the prompt (not response_format),
    * so the caller's parser must tolerate prose/fenced replies — see `extractJsonObject`.
    */
-  complete(input: { prompt: string; maxOutputTokens: number }): Promise<TextCompletion>;
+  complete(input: { prompt: string; maxOutputTokens: number; signal?: AbortSignal }): Promise<TextCompletion>;
 }
 
 /**
@@ -99,7 +101,7 @@ function apiKey(): string {
 
 /** The production client. Kept thin: send prompt → return text + token usage. */
 export const openAiTextModel: TextModelClient = {
-  async complete({ prompt, maxOutputTokens }) {
+  async complete({ prompt, maxOutputTokens, signal }) {
     let res: Response;
     try {
       res = await fetch(OPENAI_URL, {
@@ -110,6 +112,7 @@ export const openAiTextModel: TextModelClient = {
           max_tokens: maxOutputTokens,
           messages: [{ role: "user", content: prompt }],
         }),
+        signal,
       });
     } catch (err) {
       throw new TextModelUnavailableError(`Network error calling ${TEXT_MODEL}: ${(err as Error).message}`);

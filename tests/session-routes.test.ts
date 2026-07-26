@@ -1,21 +1,28 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DrillCard } from "@/components/drill-card";
+import { LessonStep } from "@/components/session/lesson-step";
+import { assertItalianLesson, validateItalianText } from "@/lib/lessons/italian-language";
+import type { SessionLessonBody } from "@/lib/session/lesson-body";
 
 // The session's API surface, driven through the REAL route modules against a
 // disposable database (the `honest-home-routes` pattern). Route handlers are where
 // the criterion-3 degradations actually resolve, and a unit test of the planner does
 // not prove the wire.
 //
-// No model call is ever made here: the lesson route's two standing pre-checks (no key,
-// no budget) answer before any network work, which is precisely why they exist.
+// No model call is ever made here: preparation resolves the authored path first, and
+// every later Start/open/reopen/step operation only reads that completed cache body.
 
 let dir: string;
 let GET_SESSION: typeof import("@/app/api/session/route").GET;
 let POST_START: typeof import("@/app/api/session/start/route").POST;
 let POST_STEP: typeof import("@/app/api/session/step/route").POST;
-let POST_LESSON: typeof import("@/app/api/session/lesson/route").POST;
+let POST_PREPARE: typeof import("@/app/api/session/prepare/route").POST;
+let GET_LESSON: typeof import("@/app/api/session/lesson/route").GET;
 let GET_TODAY: typeof import("@/app/api/learn/today/route").GET;
 let keyBefore: string | undefined;
 
@@ -29,7 +36,8 @@ beforeAll(async () => {
   GET_SESSION = (await import("@/app/api/session/route")).GET;
   POST_START = (await import("@/app/api/session/start/route")).POST;
   POST_STEP = (await import("@/app/api/session/step/route")).POST;
-  POST_LESSON = (await import("@/app/api/session/lesson/route")).POST;
+  POST_PREPARE = (await import("@/app/api/session/prepare/route")).POST;
+  GET_LESSON = (await import("@/app/api/session/lesson/route")).GET;
   GET_TODAY = (await import("@/app/api/learn/today/route")).GET;
 });
 
@@ -61,19 +69,53 @@ describe("GET /api/session — the day before it is started", () => {
   });
 });
 
-describe("POST /api/session/lesson — the keyless degradation (criterion 3)", () => {
-  it("returns the syllabus's OWN lesson, and names the missing key", async () => {
-    const body = (await (await POST_LESSON()).json()) as {
-      lesson: unknown;
-      fallback: { title: string; description: string; examples: string[] } | null;
-      notice: string | null;
-    };
-    // No exercises could be written — but there IS a lesson, and it is a real one.
-    expect(body.lesson).toBeNull();
-    expect(body.notice).toBe("no-key");
+describe("one-lesson-ahead — the keyless route boundary", () => {
+  it("starts immediately when authored Italian is servable, then may cache it ahead", async () => {
+    const directlyServed = await GET_LESSON();
+    expect(directlyServed.status).toBe(200);
+    const started = await POST_START();
+    expect(started.status).toBe(200);
+    expect(((await started.json()) as SessionBody).started).toBe(true);
+    expect((await import("@/lib/db")).getDb().prepare("SELECT COUNT(*) AS n FROM spend_ledger").get()).toEqual({ n: 0 });
+
+    const prepared = await POST_PREPARE();
+    expect(prepared.status).toBe(200);
+    const prepBody = (await prepared.json()) as { state: string; source: string; selectedItemId: string; servedItemId: string };
+    expect(prepBody.state).toBe("ready");
+    expect(prepBody.source).toBe("authored");
+    expect(prepBody.selectedItemId).toMatch(/^(lemma|rule):/);
+    expect(prepBody.servedItemId).toMatch(/^rule:/);
+
+    const body = (await (await GET_LESSON()).json()) as SessionLessonBody;
+    expect(body.lesson).not.toBeNull();
+    expect(body.lesson!.intro.length).toBeGreaterThan(40);
+    expect(body.lesson!.exercises.length).toBeGreaterThanOrEqual(2);
+    expect(body.notice).toBeNull();
     expect(body.fallback).not.toBeNull();
     expect(body.fallback!.description.length).toBeGreaterThan(40);
     expect(body.fallback!.examples.length).toBeGreaterThan(0);
+
+    // The same product boundary reaches the rendered teaching surfaces. Every field
+    // is checked in Italian, then the lesson and first drill are proved present in
+    // their actual components rather than only in helper output.
+    assertItalianLesson(body.lesson!);
+    expect(validateItalianText(body.fallback!.title).valid).toBe(true);
+    expect(validateItalianText(body.fallback!.description).valid).toBe(true);
+    const lessonHtml = renderToStaticMarkup(
+      createElement(LessonStep, { data: body, onRetry: () => {}, onDone: () => {} }),
+    );
+    expect(lessonHtml).toContain(body.fallback!.title);
+    expect(lessonHtml).toContain(body.lesson!.intro);
+    const drill = body.lesson!.exercises[0];
+    const drillHtml = renderToStaticMarkup(
+      createElement(DrillCard, { exercise: drill, speechOffered: true, onResolve: () => {} }),
+    );
+    expect(drillHtml).toContain(drill.prompt);
+    for (const option of drill.options) expect(drillHtml).toContain(option);
+
+    // Opening and reopening are read-only with respect to generation and spend.
+    await GET_LESSON();
+    expect((await import("@/lib/db")).getDb().prepare("SELECT COUNT(*) AS n FROM spend_ledger").get()).toEqual({ n: 0 });
   });
 });
 
@@ -84,6 +126,7 @@ describe("POST /api/session/start then /step — linear, resumable, authoritativ
     expect(first.started).toBe(true);
     expect(second.steps).toEqual(first.steps);
     expect(second.doneSteps).toEqual(first.doneSteps);
+    expect((await import("@/lib/db")).getDb().prepare("SELECT COUNT(*) AS n FROM spend_ledger").get()).toEqual({ n: 0 });
   });
 
   it("refuses a step that is not a step", async () => {
@@ -125,5 +168,6 @@ describe("POST /api/session/start then /step — linear, resumable, authoritativ
     expect(today.action.kind).toBe("none");
     expect(today.completion?.lessonsDone).toBe(1);
     expect(today.goal.done).toBe(today.goal.total);
+    expect((await import("@/lib/db")).getDb().prepare("SELECT COUNT(*) AS n FROM spend_ledger").get()).toEqual({ n: 0 });
   });
 });

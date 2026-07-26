@@ -1,15 +1,23 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { writeSettings } from "@/lib/settings";
 import { monthToDateSpend, recordSpend } from "@/lib/analysis/budget";
 import { TEXT_MODEL, textCallCost } from "@/lib/analysis/rates";
 import { ensureLemmaItem, ensureRuleItem } from "@/lib/knowledge/items";
-import { generateItemLesson, getItemLesson } from "@/lib/lessons/item-lessons";
-import { BudgetExceededError } from "@/lib/lessons/billing";
-import { TextModelParseError, type TextModelClient } from "@/lib/lessons/text-model";
+import {
+  generateItemLesson,
+  getItemLesson,
+  ITEM_LESSON_CLAIM_STALE_SECONDS,
+  itemLessonEstimateUsd,
+  lessonPreparationState,
+  prepareItemLesson,
+  sweepStaleItemLessonClaims,
+} from "@/lib/lessons/item-lessons";
+import { BudgetExceededError, TEXT_MODEL_REQUEST_TIMEOUT_MS } from "@/lib/lessons/billing";
+import { TextModelParseError, type TextCompletion, type TextModelClient } from "@/lib/lessons/text-model";
 import { loadSyllabus } from "@/lib/syllabus";
 
 // WO criterion 3 (every money invariant, never-waivable) against a MOCK text client
@@ -23,26 +31,26 @@ const RULE_ITEM = `rule:${RULE_KEY}`;
 const LEMMA_ITEM = "lemma:casa#NOUN";
 
 const GOOD_GRAMMAR = JSON.stringify({
-  intro: "A short rule explanation for the fixture.",
+  intro: "La regola spiega come scegliere la forma corretta nelle frasi italiane.",
   examples: ["Sono andato a casa."],
   newWords: [],
   // [E-45] ONE exercise shape: options are mandatory on both invites, because a
   // spoken drill's options ARE its fallback when speech recognition fails.
   exercises: [
-    { type: "choice", prompt: "Pick the correct one", options: ["casa", "kasa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "c not k" },
-    { type: "choice", prompt: "li-____", options: ["bro", "pro"], answerIndex: 0, answer: "bro", invite: "speak", rationale: "syllable" },
-    { type: "choice", prompt: "ca-____", options: ["sa", "za"], answerIndex: 0, answer: "sa", invite: "click", rationale: "syllable" },
+    { type: "choice", prompt: "Scegli la grafia corretta.", options: ["casa", "kasa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "In italiano la parola casa si scrive con la c." },
+    { type: "choice", prompt: "li-____", options: ["bro", "pro"], answerIndex: 0, answer: "bro", invite: "speak", rationale: "La sillaba completa correttamente la parola libro." },
+    { type: "choice", prompt: "ca-____", options: ["sa", "za"], answerIndex: 0, answer: "sa", invite: "click", rationale: "La sillaba completa correttamente la parola casa." },
   ],
 });
 const GOOD_VOCAB = JSON.stringify({
-  intro: "«casa» means home.",
-  glossEn: "house",
+  intro: "La casa è l'edificio o il luogo in cui una persona abita.",
+  definition: "Edificio o luogo in cui si abita.",
   examples: ["Torno a casa stasera."],
-  newWords: [{ lemma: "casa", gloss: "house" }],
+  newWords: [{ lemma: "casa", definition: "Edificio o luogo in cui si abita." }],
   exercises: [
-    { type: "choice", prompt: "Which means home?", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "home" },
-    { type: "choice", prompt: "Torno a ____ stasera.", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "speak", rationale: "home" },
-    { type: "choice", prompt: "Sinonimo colto di 'abitazione': ____", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "home" },
+    { type: "choice", prompt: "Quale parola indica il luogo in cui si abita?", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "Casa indica il luogo in cui si abita." },
+    { type: "choice", prompt: "Torno a ____ stasera.", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "speak", rationale: "La locuzione corretta è tornare a casa." },
+    { type: "choice", prompt: "Sinonimo comune di «abitazione»: ____", options: ["casa", "cassa"], answerIndex: 0, answer: "casa", invite: "click", rationale: "Casa può indicare un'abitazione." },
   ],
 });
 
@@ -57,6 +65,7 @@ function freshDb(): Db {
   return db;
 }
 afterEach(() => {
+  vi.useRealTimers();
   delete process.env.ERIKA_DATA_DIR;
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
@@ -183,6 +192,189 @@ describe("a parse failure still bills the resolved call (criterion 3, E-16 defec
     expect(rows[0].model).toBe(TEXT_MODEL);
     expect(rows[0].state).toBe("committed"); // finalized, not left pending
     expect(rows[0].cost_usd).toBeCloseTo(textCallCost(TEXT_MODEL, 150, 320), 12);
+    db.close();
+  });
+});
+
+describe("one-lesson-ahead preparation resolves once and never strands a claim", () => {
+  it("two concurrent home triggers make one provider call and one finalized charge", async () => {
+    const db = freshDb();
+    const calls: string[] = [];
+    const client: TextModelClient = {
+      async complete({ prompt }) {
+        calls.push(prompt);
+        await Promise.resolve();
+        return { text: GOOD_GRAMMAR, promptTokens: 150, completionTokens: 320 };
+      },
+    };
+
+    const [a, b] = await Promise.all([
+      prepareItemLesson(db, client, RULE_ITEM),
+      prepareItemLesson(db, client, RULE_ITEM),
+    ]);
+
+    expect(calls).toHaveLength(1);
+    expect([a.state, b.state]).toEqual(expect.arrayContaining(["ready", "preparing"]));
+    expect(lessonPreparationState(db, RULE_ITEM)).toBe("ready");
+    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger WHERE state = 'committed'").get() as { n: number }).n).toBe(1);
+    expect((db.prepare("SELECT body FROM item_lessons WHERE item_id = ?").get(RULE_ITEM) as { body: string }).body.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("conservatively commits a late abort-ignoring call before its claim can go stale", async () => {
+    vi.useFakeTimers();
+    const db = freshDb();
+    let calls = 0;
+    let resolveLate!: (completion: {
+      text: string;
+      promptTokens: number;
+      completionTokens: number;
+    }) => void;
+    const client: TextModelClient = {
+      complete() {
+        calls++;
+        return new Promise<TextCompletion>((resolve) => {
+          // Deliberately ignore AbortSignal: the accepted provider request can
+          // resolve after the local timeout and must not become invisible spend.
+          resolveLate = resolve;
+        });
+      },
+    };
+    const reservedUpperBound = itemLessonEstimateUsd(db, RULE_ITEM);
+
+    const first = prepareItemLesson(db, client, RULE_ITEM);
+    await vi.advanceTimersByTimeAsync(TEXT_MODEL_REQUEST_TIMEOUT_MS);
+    const resolved = await first;
+
+    expect(resolved.state).toBe("ready");
+    expect(resolved.lesson?.deterministic).toBe(true);
+    expect(TEXT_MODEL_REQUEST_TIMEOUT_MS).toBeLessThan(ITEM_LESSON_CLAIM_STALE_SECONDS * 1000);
+    expect(sweepStaleItemLessonClaims(db)).toBe(0);
+    const beforeLateResolution = db
+      .prepare("SELECT state, cost_usd FROM spend_ledger")
+      .all() as { state: string; cost_usd: number }[];
+    expect(beforeLateResolution).toHaveLength(1);
+    expect(beforeLateResolution[0]).toMatchObject({ state: "committed" });
+    expect(beforeLateResolution[0].cost_usd).toBeCloseTo(reservedUpperBound, 12);
+
+    resolveLate({ text: GOOD_GRAMMAR, promptTokens: 150, completionTokens: 320 });
+    await Promise.resolve();
+
+    const second = await prepareItemLesson(db, client, RULE_ITEM);
+    expect(second.state).toBe("ready");
+    expect(calls).toBe(1);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(1);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM item_lessons WHERE body <> ''").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
+
+  it("uses one bounded language repair and caches the repaired Italian result", async () => {
+    const db = freshDb();
+    const english = JSON.stringify({
+      ...JSON.parse(GOOD_GRAMMAR),
+      intro: "The auxiliary is chosen according to the verb and the meaning of the sentence.",
+    });
+    const prompts: string[] = [];
+    const client: TextModelClient = {
+      async complete({ prompt }) {
+        prompts.push(prompt);
+        return {
+          text: prompts.length === 1 ? english : GOOD_GRAMMAR,
+          promptTokens: 150,
+          completionTokens: 320,
+        };
+      },
+    };
+
+    const prepared = await prepareItemLesson(db, client, RULE_ITEM);
+    expect(prepared.state).toBe("ready");
+    expect(prepared.lesson?.deterministic).not.toBe(true);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("EVERY learner-visible value in Italian");
+    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger WHERE state = 'committed'").get() as { n: number }).n).toBe(2);
+
+    const reopened = mockClient(english);
+    const again = await prepareItemLesson(db, reopened.client, RULE_ITEM);
+    expect(again.cached).toBe(true);
+    expect(reopened.calls).toHaveLength(0);
+    db.close();
+  });
+
+  it("fills the claim with authored Italian after invalid output, so later reads never retry", async () => {
+    const db = freshDb();
+    const first = mockClient("not json");
+    const prepared = await prepareItemLesson(db, first.client, RULE_ITEM);
+    expect(first.calls).toHaveLength(1);
+    expect(prepared.lesson?.deterministic).toBe(true);
+    expect(lessonPreparationState(db, RULE_ITEM)).toBe("ready");
+    expect((db.prepare("SELECT body FROM item_lessons WHERE item_id = ?").get(RULE_ITEM) as { body: string }).body.length).toBeGreaterThan(0);
+
+    const later = mockClient(GOOD_GRAMMAR);
+    await prepareItemLesson(db, later.client, RULE_ITEM);
+    expect(later.calls).toHaveLength(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger WHERE state = 'committed'").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
+
+  it("turns a no-charge network failure into authored Italian immediately", async () => {
+    const db = freshDb();
+    let calls = 0;
+    const client: TextModelClient = {
+      async complete() {
+        calls++;
+        throw new Error("network down");
+      },
+    };
+    const prepared = await prepareItemLesson(db, client, RULE_ITEM);
+    expect(calls).toBe(1);
+    expect(prepared.lesson?.deterministic).toBe(true);
+    expect(lessonPreparationState(db, RULE_ITEM)).toBe("ready");
+    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(0);
+    db.close();
+  });
+
+  it("turns a rejected API key into authored Italian without leaving a claim or charge", async () => {
+    const db = freshDb();
+    const client: TextModelClient = {
+      async complete() {
+        throw new Error("401 Unauthorized");
+      },
+    };
+    const prepared = await prepareItemLesson(db, client, RULE_ITEM);
+    expect(prepared.lesson?.deterministic).toBe(true);
+    expect(lessonPreparationState(db, RULE_ITEM)).toBe("ready");
+    expect((db.prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n).toBe(0);
+    db.close();
+  });
+
+  it("turns a hard-cap refusal into authored Italian without calling the provider", async () => {
+    const db = freshDb();
+    writeSettings(db, { monthlyBudgetUsd: 0.002 });
+    recordSpend(db, { model: "gpt-audio-mini", contentHash: "audio", costUsd: 0.0015 });
+    const model = mockClient(GOOD_GRAMMAR);
+
+    const prepared = await prepareItemLesson(db, model.client, RULE_ITEM);
+    expect(model.calls).toHaveLength(0);
+    expect(prepared.lesson?.deterministic).toBe(true);
+    expect(lessonPreparationState(db, RULE_ITEM)).toBe("ready");
+    expect(monthToDateSpend(db)).toBeCloseTo(0.0015, 10);
+    db.close();
+  });
+
+  it("reclaims a crashed empty claim without touching completed lessons", async () => {
+    const db = freshDb();
+    db.prepare(
+      "INSERT INTO item_lessons (item_id, kind, register, body, content_version, created_at) " +
+        "VALUES (?, 'grammar', 'colto', '', 2, '2000-01-01 00:00:00')",
+    ).run(RULE_ITEM);
+    expect(lessonPreparationState(db, RULE_ITEM)).toBe("preparing");
+    expect(sweepStaleItemLessonClaims(db)).toBe(1);
+    expect(lessonPreparationState(db, RULE_ITEM)).toBe("needed");
+
+    const prepared = await prepareItemLesson(db, null, RULE_ITEM);
+    expect(prepared.lesson?.deterministic).toBe(true);
+    expect(sweepStaleItemLessonClaims(db)).toBe(0);
+    expect(getItemLesson(db, RULE_ITEM)).not.toBeNull();
     db.close();
   });
 });

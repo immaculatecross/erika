@@ -47,7 +47,7 @@ function lesson(over: Partial<ItemLesson> = {}): ItemLesson {
     intro: "Short.",
     examples: [],
     newWords: [],
-    glossEn: null,
+    definition: null,
     exercises: [drill(), drill()],
     ...over,
   };
@@ -63,12 +63,12 @@ describe("lessonMinutes — every part of a lesson has a stated time cost", () =
   it("prices examples, new words and drills at their own per-item seconds", () => {
     const base = { intro: "", examples: [], newWords: [], exercises: [] };
     expect(lessonMinutes({ ...base, examples: ["a", "b"] })).toBeCloseTo((2 * SECONDS_PER_EXAMPLE) / 60, 5);
-    expect(lessonMinutes({ ...base, newWords: [{ lemma: "a", gloss: "b" }] })).toBeCloseTo(SECONDS_PER_NEW_WORD / 60, 5);
+    expect(lessonMinutes({ ...base, newWords: [{ lemma: "a", definition: "b" }] })).toBeCloseTo(SECONDS_PER_NEW_WORD / 60, 5);
     expect(lessonMinutes({ ...base, exercises: [drill(), drill(), drill()] })).toBeCloseTo((3 * SECONDS_PER_DRILL) / 60, 5);
   });
 
-  it("counts a drill's whole footprint — cue, gloss, options and reason", () => {
-    const d: ItemExercise = { ...drill(0), prompt: "one two", gloss: "three", options: ["four", "five"], rationale: "six" };
+  it("counts a drill's whole footprint — cue, definition, options and reason", () => {
+    const d: ItemExercise = { ...drill(0), prompt: "one two", definition: "three", options: ["four", "five"], rationale: "six" };
     expect(drillWords(d)).toBe(6);
   });
 });
@@ -80,7 +80,7 @@ describe("the caps are chosen so the WORST case still fits the promise", () => {
     const worst = lesson({
       intro: Array.from({ length: MAX_INTRO_WORDS }, () => "word").join(" "),
       examples: Array.from({ length: MAX_EXAMPLES }, (_, i) => `e${i}`),
-      newWords: Array.from({ length: MAX_NEW_WORDS }, (_, i) => ({ lemma: `l${i}`, gloss: "g" })),
+      newWords: Array.from({ length: MAX_NEW_WORDS }, (_, i) => ({ lemma: `l${i}`, definition: "g" })),
       exercises: Array.from({ length: MAX_DRILLS }, () => drill()),
     });
     expect(lessonMinutes(worst)).toBeLessThanOrEqual(LESSON_MAX_MINUTES);
@@ -99,7 +99,7 @@ describe("trimToBudget — subtraction, in an order that protects the teaching",
       lesson({
         intro: Array.from({ length: MAX_INTRO_WORDS * 4 }, () => "word").join(" "),
         examples: Array.from({ length: 20 }, (_, i) => `e${i}`),
-        newWords: Array.from({ length: 30 }, (_, i) => ({ lemma: `l${i}`, gloss: "g" })),
+        newWords: Array.from({ length: 30 }, (_, i) => ({ lemma: `l${i}`, definition: "g" })),
         exercises: Array.from({ length: 30 }, () => drill()),
       }),
     );

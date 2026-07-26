@@ -55,12 +55,11 @@ export default function SessionPage() {
     void start();
   }, [start]);
 
-  /** Fetch today's lesson — cached lessons bill zero; a refusal comes back as a
-   *  notice with the syllabus's own content beside it, never as an empty screen. */
+  /** Read today's already-prepared lesson. This GET cannot call a model or spend. */
   const loadLesson = useCallback(async () => {
     setLessonLoading(true);
     try {
-      const res = await fetch("/api/session/lesson", { method: "POST" });
+      const res = await fetch("/api/session/lesson");
       setLesson(res.ok ? ((await res.json()) as SessionLessonBody) : null);
     } catch {
       setLesson(null);

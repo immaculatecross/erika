@@ -8,6 +8,7 @@ import { compose, capsFromSettings } from "./compose";
 import { completionFigures, dayGoal } from "./session/day";
 import { buildSessionView } from "./session/view";
 import { homeAction, type DayFigures, type HomeAction, type StepKey } from "./session/steps";
+import type { LessonPreparationState } from "./lessons/item-lessons";
 
 // The Learn home read-model (E-44, D-24/D-26). ONE SCREEN, ONE ACTION.
 //
@@ -36,6 +37,8 @@ export interface TodayView {
   steps: StepKey[];
   /** The ONE primary control. There is never a second. */
   action: HomeAction;
+  /** Today's selected lesson must be ready before Start can open the session. */
+  lessonPreparation: LessonPreparationState;
   /** Has the learner run placement yet (E-35)? Decides what the one control says. */
   placed: boolean;
   /** The calm habit layer (E-38, D-24): a zero run renders nothing — never a nag. */
@@ -70,6 +73,7 @@ export function buildToday(db: Db, day: string = localDay()): TodayView {
       complete: completion !== null,
       hasSteps: view.steps.length > 0,
     }),
+    lessonPreparation: view.lesson?.preparation ?? "ready",
     placed,
     streak: buildStreak(db, day),
     thread: buildTodayThread(
