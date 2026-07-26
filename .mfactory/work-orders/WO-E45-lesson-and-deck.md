@@ -402,3 +402,103 @@ build` ✓ · tripwires ✓ · and the built server driven again on a disposable
 same three responder proofs, same result — a real keyless lesson with answerable
 click and speak drills, `/api/lessons/speak` degrading with 200, and 4 answerable
 card fronts with no bare category word.
+
+---
+
+## Repair cycle — Full review of PR #82 (REQUEST-CHANGES), 2026-07-26
+
+Both blocking defects were real, both were in the voice path, and both were
+invisible to the suite because **no test reached the runner at all**. Nothing the
+review verified was touched.
+
+### B1 — a mishearing wrote an unretractable negative. FIXED at the invariant.
+
+**The invariant I chose:** *a voice answer may only ever write evidence the learner
+has not disputed.* Because `evidence` is append-only with `BEFORE UPDATE/DELETE
+RAISE(ABORT)` triggers, there is no such thing as a correction — so the only way to
+honour that is **ordering**: the write must come *after* the dispute window, not
+before it. Resolving a drill now records **nothing**; it only opens the window. The
+write happens when the learner **leaves** the drill (`advance`), by which time the
+transcript has been on screen and they have had the chance to reject it.
+
+**Why not "never write negative from voice at all"** — the reviewer offered it and I
+rejected it. A learner who genuinely answers wrong, sees the correct form, and moves
+on without disputing has produced exactly the signal D-19 wants; discarding it would
+make every spoken drill evidentially worthless and quietly push the model toward
+over-crediting. Deferring keeps the signal *and* keeps the guarantee, because the one
+case we cannot trust — the learner saying "that is not what I said" — is precisely
+the one that now writes nothing. A disputed drill writes nothing in **either**
+direction: not negative (no reason to think they were wrong), not positive (we did
+not verify they were right). Silence is the only honest record of an event we did not
+observe.
+
+**The copy now matches the behaviour**, in three places that all used to lie:
+- while the verdict is on screen: *"Nothing is recorded until you continue."* — new,
+  and it is what makes the override button worth pressing;
+- after an override: *"Taken as correct. Nothing is recorded for this one, either
+  way."*;
+- the module header in `components/drill-card.tsx`, which asserted the old copy's
+  claim, now describes the ordering guarantee and names why it is the ordering rather
+  than a flag that carries it.
+
+The override control also no longer disappears the moment it is pressed — it was
+rendering only in a state the code had already left.
+
+### B2 — the three-strikes fallback was dead code. FIXED, and the reset was the bug.
+
+The counter was reset by the very event that should have advanced it: every override
+was preceded by `resolve("incorrect")`, which ran `setMishearings(0)`. The streak
+cycled 0→1 forever.
+
+The fix falls out of B1's: a drill now resolves once, at `advance`, with its **final**
+outcome, so the counter is driven only by that. `nextMishearingStreak` advances on a
+dispute and resets on anything else — one line, and now reachable.
+
+**Both rules moved out of React state into `lib/lessons/drill-session.ts`**, which is
+the fix for the *class*: an invariant held in component state is verified only by
+reading, and this repo has been bitten by that three times (RETRO-004).
+
+### The tests that would have caught them
+
+- **`tests/drill-session.test.ts`** (10) — drives the sequence a learner produces.
+  `evidenceForOutcome("misheard")` must be `null`, asserted against *both* wrong
+  answers; the streak reaches the fallback after three disputes **in a row** and a
+  single good drill in between resets it; ten wrong answers never withdraw speech.
+- **`tests/lesson-runner-render.test.tsx`** (6) — the first test in the repo to reach
+  the runner's drill. No `<input>`/`<textarea>` on either invite; a spoken drill
+  offers the microphone **and** every option; `speechOffered={false}` withdraws the
+  microphone and keeps the options.
+- **`tests/drill-speech-money.test.ts`** (6) — the STT ledger.
+
+### Non-blocking, both taken
+
+- **`frontIsAnswerable` was a possible rubber stamp** — every case asserted `true`.
+  Added six refusal cases (no blank, two blanks, a bare category word, a context word
+  absent from the correction, a lone short context word, nothing hidden).
+- **The STT reservation trusted a client-declared duration** — `seconds: 0` reserved
+  nothing. Duration is now **ignored for pricing**: every answer reserves the full
+  `MAX_DRILL_ANSWER_SECONDS`, which over-books a two-second answer by a fraction of a
+  cent in the safe direction. The payload is bounded instead on the one quantity the
+  server can see (`MAX_DRILL_ANSWER_BYTES = 2 MB`), refused before any reservation or
+  call, and surfaced as a degrading `200 reason="too_long"` rather than a crash.
+
+### Mutation proofs — 11 mutants, 11 killed (baseline 45)
+
+R1 disputed→negative (**the B1 defect, restored**) → 3 red · R2 disputed→positive
+(the opposite failure) → 3 · R3 dispute resets the streak (**the B2 defect,
+restored**) → 3 · R4 streak never resets → 2 · R5 threshold off by one → 2 · R6
+speech never withdrawn → 2 · R7 a spoken drill drops its options → 1 · R8 microphone
+survives the fallback → 1 · R9 reservation trusts client seconds → 2 · R10 size
+ceiling removed → 1 · R11 `frontIsAnswerable` → rubber stamp → 6. Tree restored, 45
+green.
+
+### Gates after the repair
+
+`tsc` ✓ · **1330 passed, 3 skipped, 146 files** ✓ · `npm run lint` **0 errors** ✓ ·
+`npm run build` ✓ · tripwires ✓ · built server driven again on a disposable database
+(port 39483, pid 96176 child of the spawned 96152, `/api/plan` with no `lesson` key —
+E-45-only fingerprint): keyless lesson with click and speak drills, `/api/lessons/
+speak` degrading with 200, 4 answerable card fronts.
+
+**Still unverified, unchanged:** a real accented human speaking into a browser
+microphone. The seam is proved live end to end with synthesised speech.
