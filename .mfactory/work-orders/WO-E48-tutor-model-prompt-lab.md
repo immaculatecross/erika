@@ -377,3 +377,19 @@ temporary D-30 decision. Native + Current remains the default.
 
 **Blocker** — None to opening/reviewing PR #95. Merge request remains gated on PR #94 resolving,
 the required rebase, and a fresh full gate run.
+
+### Rebase note — 2026-07-26 (post E47 merge)
+
+Rebased `feat/e48-tutor-model-prompt-lab` onto `origin/master` at `fcbb86a` (E47 PR #94).
+
+**Conflicts:** `DECISIONS.md` (kept D-29 and D-30) and `FEATURES.md` (kept E-47 + E-48 rows and
+v0.8 `E-47 → E-48` scope). No E47 lesson contracts weakened; no E48 lab surface dropped.
+
+**Native JSON:** live probe showed Realtime wrapping valid objects as `({...})`. Added
+`unwrapTutorTurnPayload` before the strict schema parse; repair now restates
+`TUTOR_OUTPUT_CONTRACT`. Tiny live smoke parsed after the unwrap. Spike 8 amended; Native +
+Current remains default.
+
+**Gates after rebase + fix:** `npm run lint` · `npm run build` · `npm run typecheck` ·
+`npm run test` (167 files / 1550 tests) · `.mfactory/hooks/run-tripwires.sh --all` — all green.
+Ready for Full review on PR #95.

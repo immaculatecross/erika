@@ -1,4 +1,5 @@
 import type { RealtimeTurnUsage } from "../analysis/rates";
+import { TUTOR_OUTPUT_CONTRACT } from "./prompt-presets";
 
 // The WebRTC client seam for the tutor (E-34). The browser connects to the Realtime
 // API using ONLY the short-lived ephemeral client secret the server minted — never
@@ -278,8 +279,9 @@ export function repairResponse(invalid: string): Record<string, unknown> {
     response: {
       output_modalities: ["text"],
       instructions:
-        "Your previous response was invalid. Return only one complete JSON object in the required schema. " +
-        "The first character must be { and the last must be }; add no parentheses, fences, label, or commentary. " +
+        "Your previous response was invalid. Obey this exact contract and return only that JSON object:\n" +
+        `${TUTOR_OUTPUT_CONTRACT}\n` +
+        "The first character must be { and the last must be }; do not wrap the object in parentheses, fences, labels, or commentary. " +
         `Do not add new claims. Previous response: ${invalid.slice(0, 6000)}`,
     },
   };

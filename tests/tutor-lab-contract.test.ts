@@ -184,6 +184,12 @@ describe("one strict parsed turn boundary", () => {
     expect(parseTutorTurnResult(pronunciation, { allowPronunciation: true }).result.errors).toHaveLength(1);
   });
 
+  it("unwraps Realtime's measured outer-parentheses JSON wrap without relaxing the schema", () => {
+    const parsed = parseTutorTurnResult(`(${valid})`, { allowPronunciation: true });
+    expect(parsed.result.reply).toBe("Sei andato al cinema?");
+    expect(parsed.result.errors[0]?.quote).toBe("ho andato");
+  });
+
   it("visibly drops transcript-only pronunciation claims", () => {
     const pronunciation = valid.replace('"grammar"', '"pronunciation"');
     const parsed = parseTutorTurnResult(pronunciation, { allowPronunciation: false });

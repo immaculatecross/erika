@@ -91,6 +91,19 @@ function parseEvidence(value: unknown): TutorTurnEvidence {
 }
 
 /**
+ * Realtime text-out repeatedly wraps an otherwise-valid object in one outer
+ * parenthesis pair — `({...})` — even when the prompt forbids it. Unwrap that single
+ * measured quirk so the strict schema still applies to the object itself. Fences and
+ * surrounding prose remain rejected.
+ */
+export function unwrapTutorTurnPayload(raw: string): string {
+  const trimmed = raw.trim();
+  if (!(trimmed.startsWith("(") && trimmed.endsWith(")"))) return trimmed;
+  const inner = trimmed.slice(1, -1).trim();
+  return inner.startsWith("{") && inner.endsWith("}") ? inner : trimmed;
+}
+
+/**
  * Parse the provider boundary strictly. Markdown fences and prose are rejected rather
  * than extracted: a repair may make them valid, but an off-contract reply never reaches
  * TTS or evidence. Transcript pronunciation claims are removed and returned separately
@@ -100,7 +113,7 @@ export function parseTutorTurnResult(
   raw: string,
   options: { allowPronunciation: boolean },
 ): ParsedTutorTurn {
-  const text = raw.trim();
+  const text = unwrapTutorTurnPayload(raw);
   if (text.startsWith("```") || text.endsWith("```")) {
     throw new TutorTurnParseError("The model wrapped its result in a code fence.");
   }

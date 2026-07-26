@@ -94,3 +94,7 @@ These are synthetic TTS fixtures. They prove plumbing and provide controlled com
 ## Interpretation limit
 
 The matrix is retained as operator evidence, including misses, false corrections, and parse failures. No winner is selected. Human use with spontaneous, hesitant speech remains the decision input.
+
+## Post-rebase amendment — 2026-07-26
+
+A live probe after rebasing onto E47 (`fcbb86a`) showed Native Realtime was already emitting the required object, but wrapping it as `({...})`. That single outer-parentheses quirk made `JSON.parse` fail 25/25 even though the inner payload matched the schema. `unwrapTutorTurnPayload` now strips that one measured wrap before the strict schema check; fences and surrounding prose remain rejected. A one-turn live smoke after the unwrap parsed on the first attempt. Native + Current stays the default; this does not reopen the matrix or crown a winner.

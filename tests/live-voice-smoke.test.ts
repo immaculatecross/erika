@@ -9,10 +9,10 @@ import { openDatabase } from "@/lib/db";
 import { REALTIME_FLAGSHIP, TERRA_MODEL, TTS_MODEL, TUTOR_STT_MODEL } from "@/lib/analysis/rates";
 import { buildMintSessionWireBody } from "@/lib/tutor/mint";
 import { buildTutorSessionConfig } from "@/lib/tutor/session-config";
-import { manualTurnEvents } from "@/lib/tutor/realtime-client";
+import { manualTurnEvents, repairResponse } from "@/lib/tutor/realtime-client";
 import { openAiTerraClient, TERRA_REASONING_EFFORT } from "@/lib/tutor/terra";
 import { TUTOR_OUTPUT_CONTRACT } from "@/lib/tutor/prompt-presets";
-import { parseTutorTurnResult } from "@/lib/tutor/turn-result";
+import { parseTutorTurnResult, TutorTurnParseError } from "@/lib/tutor/turn-result";
 import {
   openAiTextToSpeech,
   openAiTutorSpeechToText,
@@ -89,11 +89,12 @@ async function realtimeManualTurn(audio: Uint8Array): Promise<string> {
       },
     );
     let text = "";
+    let repairs = 0;
     const eventTypes = new Set<string>();
     const timer = setTimeout(() => {
       socket.terminate();
       reject(new Error("Realtime text-out smoke timed out."));
-    }, 30_000);
+    }, 45_000);
     const finish = (error?: Error) => {
       clearTimeout(timer);
       socket.close();
@@ -146,8 +147,20 @@ async function realtimeManualTurn(audio: Uint8Array): Promise<string> {
                 `Realtime returned no text (${[...eventTypes].join(", ")}).`,
             ),
           );
-        } else {
+          return;
+        }
+        try {
+          parseTutorTurnResult(text, { allowPronunciation: true });
           finish();
+        } catch (error) {
+          if (!(error instanceof TutorTurnParseError) || repairs >= 1) {
+            finish(error instanceof Error ? error : new Error(String(error)));
+            return;
+          }
+          repairs = 1;
+          const invalid = text;
+          text = "";
+          socket.send(JSON.stringify(repairResponse(invalid)));
         }
       } else if (event.type === "error") {
         finish(new Error(event.error?.message ?? "Realtime contract error."));
@@ -191,5 +204,6 @@ live("live: tutor lab provider contracts", () => {
   it("completes one manual Realtime 2.1 audio-in/text-out turn", async () => {
     const text = await realtimeManualTurn(await pcmFixture());
     expect(text.length).toBeGreaterThan(0);
+    expect(parseTutorTurnResult(text, { allowPronunciation: true }).result.reply).toBeTruthy();
   }, 45_000);
 });
