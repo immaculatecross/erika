@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { activeTab, libraryDestinations, LIBRARY, LIBRARY_SECTIONS } from "@/lib/nav";
+import { pageFileFor } from "./helpers";
 
 // The shell's routing contract (E-30, extended at E-44 per D-26). Three things must
 // hold and are proven here without a browser:
@@ -94,9 +95,11 @@ describe("the one Library entry (E-44 criterion 6)", () => {
   it("every Library href resolves to a real page in app/", () => {
     // The E-37 lesson, mechanised: a link is not a route. Each href must correspond to
     // a `page.tsx` on disk, so a demoted surface cannot be quietly delisted into a 404.
-    const root = path.join(process.cwd(), "app");
     for (const dest of [...libraryDestinations(), LIBRARY]) {
-      const page = path.join(root, dest.href.replace(/^\//, ""), "page.tsx");
+      // [E-46] Resolved through `pageFileFor`, which knows about the `app/(app)/`
+      // route group the first-run gate lives in. A route group is invisible to the
+      // URL, so the router's answer and the directory's answer differ.
+      const page = pageFileFor(dest.href);
       expect(fs.existsSync(page), `${dest.href} → ${page}`).toBe(true);
     }
   });

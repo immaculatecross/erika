@@ -11,8 +11,10 @@ import {
   ENRICHED_NOTES_INSTRUCTION,
   PRODUCED_LEMMAS_INSTRUCTION,
   CATEGORY_MAPPING_INSTRUCTION,
+  spokenPlacementPrompt,
 } from "./prompts";
 import { DEFAULT_REGISTER, type Register } from "../register";
+import { parseSpokenPlacement, type SpokenPlacement } from "../onboarding/spoken-parse";
 
 // Prompt builders live in ./prompts (500-line hook); re-exported here so the
 // cascade and the criterion-tests keep importing them from audio-model.
@@ -26,6 +28,7 @@ export {
   ENRICHED_NOTES_INSTRUCTION,
   PRODUCED_LEMMAS_INSTRUCTION,
   CATEGORY_MAPPING_INSTRUCTION,
+  spokenPlacementPrompt,
 };
 
 // The ONE module that talks to OpenAI's audio models (D-3, D-10). Everything
@@ -111,10 +114,31 @@ export interface CallOpts {
   strictJson?: boolean;
 }
 
-/** The seam the cascade depends on. The real impl calls OpenAI; tests mock it. */
+/** The minimum any of these calls needs: one clip and its container format. */
+export interface AudioInput {
+  audioBase64: string;
+  format: string;
+}
+
+/** The spoken placement call's input (E-46 criterion 3). */
+export interface SpokenPlacementInput extends AudioInput {
+  targetLanguage: string;
+}
+
+/** How much room the one-band reply needs. It is two fields; 200 is generous. */
+export const SPOKEN_PLACEMENT_MAX_OUTPUT_TOKENS = 200;
+
+/** The seam the cascade depends on. The real impl calls OpenAI; tests mock it.
+ *
+ *  `placementListen` is OPTIONAL on purpose: it belongs to onboarding, not to the
+ *  cascade, and every existing test mock in this repo is an object literal typed as
+ *  this interface. A required method would have broken all of them for a call none
+ *  of them makes. A client that does not implement it simply cannot judge speech,
+ *  and the caller reports that truthfully rather than inventing a level. */
 export interface AudioModelClient {
   triage(input: TriageInput, opts?: CallOpts): Promise<TriageResult>;
   deepListen(model: ModelId, input: DeepInput, opts?: CallOpts): Promise<DeepResult>;
+  placementListen?(input: SpokenPlacementInput, opts?: CallOpts): Promise<SpokenPlacement>;
 }
 
 // The failure vocabulary lives in ./model-errors and the pure reply parsers in
@@ -236,7 +260,7 @@ interface RawReply {
 async function callModelOnce(
   model: ModelId,
   prompt: string,
-  input: TriageInput | DeepInput,
+  input: AudioInput,
   maxOutputTokens: number,
 ): Promise<RawReply> {
   let res: Response;
@@ -295,7 +319,7 @@ async function callModelOnce(
 async function callModel(
   model: ModelId,
   prompt: string,
-  input: TriageInput | DeepInput,
+  input: AudioInput,
   maxOutputTokens: number,
 ): Promise<RawReply> {
   return retryOnRateLimit(() => callModelOnce(model, prompt, input, maxOutputTokens));
@@ -334,5 +358,14 @@ export const openAiAudioModel: AudioModelClient = {
   async deepListen(model, input, opts) {
     const prompt = strict(deepPrompt(input.targetLanguage, input.profile, input.register ?? DEFAULT_REGISTER), opts);
     return interpret(model, await callModel(model, prompt, input, DEEP_MAX_OUTPUT_TOKENS), parseDeepResponse);
+  },
+  async placementListen(input, opts) {
+    // `strict` matters here more than anywhere: measured live, the model answers a
+    // clip it cannot judge in PROSE ("I could not hear any speech"), not with the
+    // JSON object it was asked for. That is a legitimate verdict wearing the wrong
+    // clothes, so it goes through the same one-shot repair every other call uses.
+    const prompt = strict(spokenPlacementPrompt(input.targetLanguage), opts);
+    const reply = await callModel(MINI_MODEL, prompt, input, SPOKEN_PLACEMENT_MAX_OUTPUT_TOKENS);
+    return interpret(MINI_MODEL, reply, parseSpokenPlacement);
   },
 };

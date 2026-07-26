@@ -11,6 +11,27 @@ export function tmpDir(prefix = "erika-test-"): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+/**
+ * The file on disk that serves a URL path (E-46).
+ *
+ * Route GROUPS — a directory in parentheses — are transparent to the URL but not to
+ * the filesystem, so `/archive` is served by `app/(app)/archive/page.tsx`. E-46 put
+ * every product page inside `app/(app)/` so the first-run gate's layout is always
+ * rendered on entry (see `app/(app)/layout.tsx`); a test that asserts "this href has
+ * a real page behind it" must ask the router's question, not the directory's.
+ *
+ * Returns the first candidate that exists, or the ungrouped path, so a failure
+ * message still names something a reader can go and look for.
+ */
+export function pageFileFor(href: string): string {
+  const rel = href.replace(/^\//, "");
+  const candidates = [
+    path.join(process.cwd(), "app", rel, "page.tsx"),
+    path.join(process.cwd(), "app", "(app)", rel, "page.tsx"),
+  ];
+  return candidates.find((c) => fs.existsSync(c)) ?? candidates[0];
+}
+
 /** Write a real WAV of `seconds` (default 1) to `dest`; returns its byte size. */
 export function makeWav(dest: string, seconds = 1): number {
   fs.mkdirSync(path.dirname(dest), { recursive: true });

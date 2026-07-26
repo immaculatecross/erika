@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import SettingsPage from "@/app/settings/page";
+import SettingsPage from "@/app/(app)/settings/page";
 
 // WHAT ERIKA NEEDS, RENDERED (E-42 criterion 7 + the Full review's standing-clause finding).
 //

@@ -4,11 +4,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase, type Db } from "@/lib/db";
 import { readYield, bumpYield } from "@/lib/knowledge/yield";
-import { buildKnowledgeInspection } from "@/lib/knowledge/inspector";
 import { recordProducedLemmas } from "@/lib/analysis/produced-lemmas";
 
 // [RETRO-002 T2] Knowledge-core yield instrumentation: cumulative emitted/attested/
-// dropped counters and the dev inspector's read model.
+// dropped counters. [E-46] The dev inspector's read model is gone with the inspector;
+// what it aggregated is now `lib/progress.ts`, tested in tests/progress.test.ts.
 
 const dirs: string[] = [];
 function freshDb(): Db {
@@ -41,18 +41,6 @@ describe("yield counters", () => {
     ]);
     expect(written).toBe(2);
     expect(readYield(db)).toEqual({ emitted: 3, attested: 2, dropped: 1 });
-    db.close();
-  });
-});
-
-describe("knowledge inspection read model", () => {
-  it("reports the composer pools and yield the composer depends on", () => {
-    const db = freshDb();
-    const insp = buildKnowledgeInspection(db);
-    // The seeded lexicon/syllabus give the composer a real pool to draw from.
-    expect(insp.composerPool.unseenVocab).toBeGreaterThan(1000);
-    expect(insp.composerPool.unseenRules).toBeGreaterThanOrEqual(250);
-    expect(insp.yield).toEqual({ emitted: 0, attested: 0, dropped: 0 });
     db.close();
   });
 });

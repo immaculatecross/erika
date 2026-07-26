@@ -1,4 +1,7 @@
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
+import { ONBOARDING_PATH } from "@/lib/onboarding/routing";
+import { pageFileFor } from "./helpers";
 import {
   completionSentence,
   describeSession,
@@ -127,10 +130,51 @@ describe("homeAction — there is never more than one control", () => {
   it("asks an unplaced learner for their level first, and that is still ONE action", () => {
     const action = homeAction({ ...base, placed: false });
     expect(action.kind).toBe("place");
-    expect(action).toHaveProperty("href", "/practice/placement");
+    expect(action).toHaveProperty("href", ONBOARDING_PATH);
   });
 
   it("offers nothing rather than a broken Start when there are no steps", () => {
     expect(homeAction({ ...base, hasSteps: false })).toEqual({ kind: "none" });
+  });
+
+  // [E-46, REVIEW-85] THE INVARIANT, not the instance.
+  //
+  // The defect: E-46 deleted `/practice/placement` and this module went on pointing at
+  // it, so the one screen with one action offered a 404 — and two tests pinned the dead
+  // href as the specification, which is how a defect becomes a contract. Repointing it
+  // fixes today's instance; this fixes the class.
+  //
+  // Every state the home can be in is enumerated (2^4 over the four booleans, so a new
+  // branch cannot hide from it), every href the action can carry is collected, and each
+  // one is resolved to a `page.tsx` on disk through `pageFileFor`, which understands the
+  // `app/(app)/` route group. A route deleted out from under this module is now a red
+  // test rather than a dead end on the most important screen in the product.
+  it("every href the one action can return resolves to a real page", () => {
+    const flags = [false, true];
+    const hrefs = new Set<string>();
+    for (const placed of flags) {
+      for (const started of flags) {
+        for (const complete of flags) {
+          for (const hasSteps of flags) {
+            const action = homeAction({ placed, started, complete, hasSteps });
+            if (action.kind !== "none") hrefs.add(action.href);
+          }
+        }
+      }
+    }
+    expect(hrefs.size).toBeGreaterThan(0);
+    for (const href of hrefs) {
+      const page = pageFileFor(href);
+      expect(fs.existsSync(page), `${href} → ${page}`).toBe(true);
+    }
+  });
+
+  it("sends an unplaced learner into onboarding, which is the check plus its escape", () => {
+    // The learner who lands here is onboarded-but-unplaced: a check refused as a
+    // response style records no run and seeds nothing, by design. Onboarding is where
+    // the spoken sample lives, which is their actual way out of that refusal.
+    const action = homeAction({ ...base, placed: false });
+    expect(action).toHaveProperty("href", ONBOARDING_PATH);
+    expect(fs.existsSync(pageFileFor(ONBOARDING_PATH))).toBe(true);
   });
 });

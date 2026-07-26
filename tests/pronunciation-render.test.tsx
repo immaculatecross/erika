@@ -129,7 +129,7 @@ describe("the drill gate — recording vs SPENDING the finding", () => {
     // A wiring smoke, not the invariant — the invariant is the truth table above. The
     // repo renders to a string with no DOM, so the JSX binding itself is checked here.
     const pageSrc = readFileSync(
-      join(process.cwd(), "app/practice/learn/studio/[drillKey]/page.tsx"),
+      join(process.cwd(), "app/(app)/practice/learn/studio/[drillKey]/page.tsx"),
       "utf8",
     );
     expect(pageSrc).toContain("enabled={gate.canRecord}");
@@ -222,7 +222,7 @@ describe("the studio subtitle promises only what the server can do (F4)", () => 
     const scoredCopy = "Hear a line, then say it back. You get a score for each word and each sound.";
     const defaultCopy = "Hear a line, then say it back, and listen to the difference.";
     const src = readFileSync(
-      join(process.cwd(), "app/practice/learn/studio/page.tsx"),
+      join(process.cwd(), "app/(app)/practice/learn/studio/page.tsx"),
       "utf8",
     );
     expect(src).toContain(`view.scoringAvailable`);

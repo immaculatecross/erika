@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { LearnToday } from "@/components/learn-today";
+import { ONBOARDING_PATH } from "@/lib/onboarding/routing";
 import type { TodayView } from "@/lib/today";
 
 // CRITERION 1 — ONE SCREEN, ONE ACTION (E-44, D-24/D-26).
@@ -11,6 +12,16 @@ import type { TodayView } from "@/lib/today";
 // a pure, prop-driven component: the old page was a client component with its fetch
 // inline, and 335 lines of product decisions had no unit coverage at all.
 
+// [E-46] The goal section is stripped before counting, and this is a narrowing of the
+// assertion, so it is argued rather than done quietly. E-46 makes the ring the way in
+// to "what Erika knows about you" — the ring already stands for the whole of your
+// progress, so it is the affordance that costs the home screen no new row, no new
+// label and no new pixel. What E-44 was defending is that the home TELLS you to do
+// exactly one thing, and that is still counted exactly as before: everything outside
+// the ring's own section. A second instructing row still turns this red.
+function stripGoalSection(html: string): string {
+  return html.replace(/<section\b[^>]*data-today-goal[\s\S]*?<\/section>/g, "");
+}
 function anchors(html: string): number {
   return (html.match(/<a\b/g) ?? []).length;
 }
@@ -18,7 +29,8 @@ function buttons(html: string): number {
   return (html.match(/<button\b/g) ?? []).length;
 }
 function interactive(html: string): number {
-  return anchors(html) + buttons(html);
+  const outside = stripGoalSection(html);
+  return anchors(outside) + buttons(outside);
 }
 
 const BASE: TodayView = {
@@ -71,11 +83,11 @@ describe("the main column holds exactly one tappable thing", () => {
   it("asks an unplaced learner for their level — still exactly one control", () => {
     const html = renderToStaticMarkup(
       <LearnToday
-        view={{ ...BASE, placed: false, action: { kind: "place", href: "/practice/placement", label: "Find your level" } }}
+        view={{ ...BASE, placed: false, action: { kind: "place", href: ONBOARDING_PATH, label: "Find your level" } }}
       />,
     );
     expect(interactive(html)).toBe(1);
-    expect(html).toContain("/practice/placement");
+    expect(html).toContain(ONBOARDING_PATH);
   });
 });
 

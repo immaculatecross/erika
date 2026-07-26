@@ -38,6 +38,31 @@ export function triagePrompt(targetLanguage: string, profile?: SpeakerProfile): 
 }
 
 /**
+ * The spoken placement prompt (E-46 criterion 3). One free-spoken sample, one
+ * coarse CEFR band — a second measurement of PRODUCTION, taken because the
+ * vocabulary check measures recognition and a yes-biased learner can defeat it.
+ *
+ * This is not D-3's banned STT: nothing is transcribed and no error is detected
+ * from text. The model listens natively and returns one band, exactly as the
+ * triage call returns one boolean.
+ *
+ * `usable` exists so a silent, truncated or non-target-language take is REFUSED
+ * rather than levelled. A confident band on two seconds of throat-clearing would
+ * be worse than no band at all — it would place a learner on noise.
+ */
+export function spokenPlacementPrompt(targetLanguage: string): string {
+  return [
+    `You are hearing a learner speak ${targetLanguage} freely for up to a minute.`,
+    "Judge ONLY the dominant speaker's own production: range of vocabulary, control of grammar,",
+    "fluency, and the complexity of what they build. Ignore accent, recording quality and background voices.",
+    `Give the single CEFR level that best describes their ${targetLanguage} SPEAKING: A1, A2, B1, B2, C1 or C2.`,
+    "Set usable to false — and level to null — if the sample is silent, under about ten seconds of speech,",
+    "mostly in another language, or otherwise too thin to judge. Do not guess.",
+    'Respond with JSON only: {"level": "A1"|"A2"|"B1"|"B2"|"C1"|"C2"|null, "usable": boolean}.',
+  ].join(" ");
+}
+
+/**
  * Appended on the one repair retry. The models have no JSON response_format, so
  * the only lever is the wording — and a reply that arrived wrapped in prose or a
  * fence usually complies when asked this bluntly.
