@@ -24,10 +24,19 @@ let getDb: typeof import("@/lib/db").getDb;
 let writeSettings: typeof import("@/lib/settings").writeSettings;
 
 let lastAuth: string | null = null;
+let lastMintSession: Record<string, unknown> | null = null;
 let mintCalls = 0;
 /** What OpenAI answers the mint with. 200 unless a test is driving a refusal. */
 let mintStatus = 200;
 let mintBody = JSON.stringify({ value: EPHEMERAL, expires_at: 1_900_000_000 });
+
+function startRequest(): Request {
+  return new Request("http://localhost/api/tutor/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+}
 
 beforeAll(async () => {
   root = tmpDir("erika-tutor-mint-");
@@ -43,6 +52,7 @@ beforeAll(async () => {
         mintCalls += 1;
         const headers = (init?.headers ?? {}) as Record<string, string>;
         lastAuth = headers.authorization ?? headers.Authorization ?? null;
+        lastMintSession = (JSON.parse(String(init?.body)) as { session: Record<string, unknown> }).session;
         return new Response(mintBody, {
           status: mintStatus,
           statusText: mintStatus === 401 ? "Unauthorized" : "OK",
@@ -61,6 +71,7 @@ beforeAll(async () => {
 afterEach(() => {
   getDb().prepare("DELETE FROM spend_ledger").run();
   lastAuth = null;
+  lastMintSession = null;
   mintStatus = 200;
   mintBody = JSON.stringify({ value: EPHEMERAL, expires_at: 1_900_000_000 });
 });
@@ -74,11 +85,11 @@ describe("POST /api/tutor/session — the key never reaches the browser", () => 
   it("mints server-side and returns ONLY the ephemeral secret", async () => {
     process.env.OPENAI_API_KEY = REAL_KEY;
     writeSettings(getDb(), { monthlyBudgetUsd: 100 });
-    const res = await sessionPOST();
+    const res = await sessionPOST(startRequest());
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    // The browser gets the ephemeral secret and the session config — never the key.
+    // The browser gets the ephemeral secret and experiment identity — never the key.
     expect(body.clientSecret).toBe(EPHEMERAL);
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain(REAL_KEY);
@@ -86,8 +97,13 @@ describe("POST /api/tutor/session — the key never reaches the browser", () => 
 
     // The real key WAS used server-side to authorize the mint.
     expect(lastAuth).toBe(`Bearer ${REAL_KEY}`);
-    // The session config the browser applies carries instructions/tools but no key.
-    expect(body.session.tools.some((t: { name: string }) => t.name === "log_evidence")).toBe(true);
+    expect(body.architecture).toBe("native");
+    expect(body.preset).toBe("current");
+    expect(body.promptHash).toMatch(/^[a-f0-9]{64}$/);
+    // The selected prompt went to the server-side minter, not back to the browser.
+    expect(lastMintSession?.output_modalities).toEqual(["text"]);
+    expect(JSON.stringify(lastMintSession)).not.toContain(REAL_KEY);
+    expect(body.session.output_modalities).toEqual(["text"]);
     expect(JSON.stringify(body.session)).not.toContain(REAL_KEY);
   });
 });
@@ -97,7 +113,7 @@ describe("POST /api/tutor/session — truthful cap refusal (never-waivable spend
     process.env.OPENAI_API_KEY = REAL_KEY;
     writeSettings(getDb(), { monthlyBudgetUsd: 0 });
     const before = mintCalls;
-    const res = await sessionPOST();
+    const res = await sessionPOST(startRequest());
     expect(res.status).toBe(402);
     const body = await res.json();
     expect(body.error.code).toBe("budget");
@@ -107,13 +123,38 @@ describe("POST /api/tutor/session — truthful cap refusal (never-waivable spend
     expect(pending.n).toBe(0);
     writeSettings(getDb(), { monthlyBudgetUsd: 100 });
   });
+
+  it("refuses the transcript path before any provider call or phantom conversation", async () => {
+    process.env.OPENAI_API_KEY = REAL_KEY;
+    writeSettings(getDb(), { monthlyBudgetUsd: 0 });
+    const beforeMints = mintCalls;
+    const beforeConversations = (
+      getDb().prepare("SELECT COUNT(*) AS n FROM tutor_conversations").get() as { n: number }
+    ).n;
+    const res = await sessionPOST(
+      new Request("http://localhost/api/tutor/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ architecture: "transcript", preset: "precision" }),
+      }),
+    );
+    expect(res.status).toBe(402);
+    expect(mintCalls).toBe(beforeMints);
+    expect(
+      (getDb().prepare("SELECT COUNT(*) AS n FROM tutor_conversations").get() as { n: number }).n,
+    ).toBe(beforeConversations);
+    expect(
+      (getDb().prepare("SELECT COUNT(*) AS n FROM spend_ledger").get() as { n: number }).n,
+    ).toBe(0);
+    writeSettings(getDb(), { monthlyBudgetUsd: 100 });
+  });
 });
 
 describe("POST /api/tutor/session — requires the server principal's key", () => {
   it("refuses (503) and mints nothing when OPENAI_API_KEY is absent", async () => {
     delete process.env.OPENAI_API_KEY;
     writeSettings(getDb(), { monthlyBudgetUsd: 100 });
-    const res = await sessionPOST();
+    const res = await sessionPOST(startRequest());
     expect(res.status).toBe(503);
     const body = await res.json();
     expect(body.clientSecret).toBeUndefined();
@@ -139,7 +180,7 @@ describe("POST /api/tutor/session — a permanent failure is named as permanent"
     mintStatus = 401;
     mintBody = JSON.stringify({ error: { message: "Incorrect API key provided." } });
 
-    const res = await sessionPOST();
+    const res = await sessionPOST(startRequest());
     expect(res.status).toBe(503);
     const body = await res.json();
     expect(body.notice).toBe("key-rejected");
@@ -160,7 +201,7 @@ describe("POST /api/tutor/session — a permanent failure is named as permanent"
   it("no key at all is no-key, with its own remedy", async () => {
     delete process.env.OPENAI_API_KEY;
     writeSettings(getDb(), { monthlyBudgetUsd: 100 });
-    const res = await sessionPOST();
+    const res = await sessionPOST(startRequest());
     const body = await res.json();
     expect(body.notice).toBe("no-key");
     expect(noticeFor("no-key").action?.href).toBe("/settings");
@@ -172,7 +213,7 @@ describe("POST /api/tutor/session — a permanent failure is named as permanent"
     writeSettings(getDb(), { monthlyBudgetUsd: 100 });
     mintStatus = 503;
     mintBody = JSON.stringify({ error: { message: "Service Unavailable" } });
-    const res = await sessionPOST();
+    const res = await sessionPOST(startRequest());
     const body = await res.json();
     expect(body.notice).toBe("conversation-transient");
     expect(noticeFor(body.notice).standing).toBe(false);
@@ -183,7 +224,7 @@ describe("POST /api/tutor/session — a permanent failure is named as permanent"
   it("the cap carries a way forward — a link that resolves, and no retry that cannot help", async () => {
     process.env.OPENAI_API_KEY = REAL_KEY;
     writeSettings(getDb(), { monthlyBudgetUsd: 0 });
-    const res = await sessionPOST();
+    const res = await sessionPOST(startRequest());
     expect(res.status).toBe(402);
     const body = await res.json();
     expect(body.notice).toBe("budget");

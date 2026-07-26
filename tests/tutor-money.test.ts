@@ -8,7 +8,7 @@ import {
   REALTIME_FLAGSHIP,
   REALTIME_MINI,
   REALTIME_RATES,
-  realtimeSessionCost,
+  realtimeTextSessionCost,
 } from "@/lib/analysis/rates";
 import {
   estimateTutorSessionUsd,
@@ -53,8 +53,8 @@ function committedRows(db: Db, tutorId: string): { n: number; total: number } {
 }
 
 describe("tutor per-session estimate", () => {
-  it("prices from the per-minute realtime rate and mini is cheaper than flagship", () => {
-    expect(estimateTutorSessionUsd(FLAG, 10)).toBeCloseTo(realtimeSessionCost(FLAG, 10));
+  it("prices the native audio-in/text-out lease and mini remains cheaper", () => {
+    expect(estimateTutorSessionUsd(FLAG, 10)).toBeCloseTo(realtimeTextSessionCost(FLAG, 10));
     expect(estimateTutorSessionUsd(FLAG, 10)).toBeGreaterThan(0);
     expect(estimateTutorSessionUsd(REALTIME_MINI, 10)).toBeLessThan(estimateTutorSessionUsd(FLAG, 10));
   });

@@ -374,3 +374,93 @@ export function realtimeSessionCost(model: RealtimeModelId, minutes: number): nu
   return realtimeCostBreakdown(model, minutes).totalUsd;
 }
 
+// ---- E-48 manual audio-in / text-out lab -----------------------------------
+
+/** Text-out does not re-feed tutor audio, so one elapsed minute only needs to cover
+ * the measured 665 audio-input-token maximum plus headroom. */
+export const REALTIME_TEXT_AUDIO_TOKENS_PER_MINUTE = 700;
+export const REALTIME_TEXT_CONTEXT_TOKENS_PER_TURN = 600;
+export const REALTIME_LAB_PROMPT_TOKENS = 5000;
+
+export interface RealtimeTextCostBreakdown {
+  promptUsd: number;
+  audioInUsd: number;
+  textOutUsd: number;
+  freshTextInUsd: number;
+  cachedInUsd: number;
+  totalUsd: number;
+  billedMinutes: number;
+}
+
+function realtimeTextCachedTokens(minutes: number): number {
+  const turns = Math.max(0, minutes) * REALTIME_TURNS_PER_MINUTE;
+  return turns * (REALTIME_LAB_PROMPT_TOKENS + (REALTIME_TEXT_CONTEXT_TOKENS_PER_TURN * turns) / 2);
+}
+
+/** Conservative reservation model for the native listener's text-out session. Every
+ * leg is non-zero; there is deliberately no audio-output leg because TTS is reserved
+ * separately immediately before synthesis. */
+export function realtimeTextCostBreakdown(
+  model: RealtimeModelId,
+  minutes: number,
+): RealtimeTextCostBreakdown {
+  const rate = REALTIME_RATES[model];
+  const billedMinutes = Math.max(Math.max(0, minutes), REALTIME_MIN_BILLED_MINUTES);
+  const promptUsd = REALTIME_LAB_PROMPT_TOKENS * rate.usdPerTextInputToken;
+  const audioInUsd =
+    billedMinutes * REALTIME_TEXT_AUDIO_TOKENS_PER_MINUTE * rate.usdPerAudioInputToken;
+  const textOutUsd =
+    billedMinutes * REALTIME_TEXT_OUTPUT_TOKENS_PER_MINUTE * rate.usdPerTextOutputToken;
+  const freshTextInUsd =
+    billedMinutes * REALTIME_FRESH_TEXT_TOKENS_PER_MINUTE * rate.usdPerTextInputToken;
+  const cachedInUsd = realtimeTextCachedTokens(billedMinutes) * cachedInputRate(rate);
+  return {
+    promptUsd,
+    audioInUsd,
+    textOutUsd,
+    freshTextInUsd,
+    cachedInUsd,
+    totalUsd: promptUsd + audioInUsd + textOutUsd + freshTextInUsd + cachedInUsd,
+    billedMinutes,
+  };
+}
+
+export function realtimeTextSessionCost(model: RealtimeModelId, minutes: number): number {
+  return realtimeTextCostBreakdown(model, minutes).totalUsd;
+}
+
+export interface RealtimeTurnUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  audioInputTokens: number;
+  cachedAudioInputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
+/** Usage-derived native-listener cost. Reasoning is already included in outputTokens
+ * by the provider and is exposed separately for inspection, never double-billed. */
+export function realtimeTurnUsageCost(
+  model: RealtimeModelId,
+  usage: RealtimeTurnUsage,
+): { inputUsd: number; cachedInputUsd: number; outputUsd: number; reasoningTokens: number; totalUsd: number } {
+  const rate = REALTIME_RATES[model];
+  const cached = Math.max(0, usage.cachedInputTokens);
+  const cachedAudio = Math.min(cached, Math.max(0, usage.cachedAudioInputTokens));
+  const audio = Math.max(0, usage.audioInputTokens - cachedAudio);
+  const uncached = Math.max(0, usage.inputTokens - cached);
+  const text = Math.max(0, uncached - audio);
+  const cachedInputUsd =
+    cachedAudio * rate.usdPerCachedAudioInputToken +
+    (cached - cachedAudio) * rate.usdPerCachedTextInputToken;
+  const inputUsd = audio * rate.usdPerAudioInputToken + text * rate.usdPerTextInputToken;
+  const outputUsd = Math.max(0, usage.outputTokens) * rate.usdPerTextOutputToken;
+  return {
+    inputUsd,
+    cachedInputUsd,
+    outputUsd,
+    reasoningTokens: Math.max(0, usage.reasoningTokens),
+    totalUsd: inputUsd + cachedInputUsd + outputUsd,
+  };
+}
+

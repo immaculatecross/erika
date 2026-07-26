@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase } from "@/lib/db";
 import { createSession, deleteSession, getSession, listSessions } from "@/lib/sessions";
@@ -74,6 +75,32 @@ describe("ffprobe", () => {
     const seconds = await probeDurationSeconds(wav);
     expect(seconds).toBeGreaterThan(0.8);
     expect(seconds).toBeLessThan(1.5);
+  });
+
+  it("derives duration from live WebM packets when the container omits it", async () => {
+    const dir = tmpDir("erika-probe-");
+    dirs.push(dir);
+    const webm = path.join(dir, "live.webm");
+    execFileSync("ffmpeg", [
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=440:sample_rate=48000",
+      "-t",
+      "1",
+      "-c:a",
+      "libopus",
+      "-f",
+      "webm",
+      "-live",
+      "1",
+      webm,
+    ]);
+    const seconds = await probeDurationSeconds(webm);
+    expect(seconds).toBeGreaterThan(0.9);
+    expect(seconds).toBeLessThan(1.1);
   });
 
   it("rejects an undecodable file (criterion 2)", async () => {

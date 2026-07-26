@@ -48,6 +48,9 @@ export interface TutorPersonaInput {
   slipTargets?: readonly string[];
   /** Today's composer targets to work in (short human labels). */
   todayTargets?: readonly string[];
+  /** Existing sessions use the function tool; the E-48 lab carries the same
+   * validated evidence contract inside its shared turn result. */
+  evidenceDelivery?: "tool" | "result";
 }
 
 /**
@@ -193,9 +196,11 @@ export function buildTutorPersona(input: TutorPersonaInput): string {
     IN_THE_FLOW,
     SPOKEN_OUTPUT,
     "Keep the learner talking; correct plainly and specifically. When you correct, say the correct form clearly once and move on — never make the learner repeat their own error (their mistakes are never the drill).",
-    // The log_evidence tool contract (WO criterion 3). The tool schema is in the
-    // session config; this tells the model WHEN to call it and on WHAT ids.
-    "As the conversation goes, call the `log_evidence` function to record what the learner produces — both errors and successes — as structured evidence. Use the grammar rule id or the lemma id you are given for a target; set polarity to correct or incorrect from what they actually said, and mode to spontaneous when unprompted or cued when you prompted them. Do not invent ids; only log evidence for the ids provided in this instruction.",
+    input.evidenceDelivery === "result"
+      ? "As the conversation goes, put what the learner produces — both errors and successes — in the structured `evidence` array. Use the grammar rule id or lemma id you are given for a target; set polarity to correct or incorrect from what they actually said, and mode to spontaneous when unprompted or cued when you prompted them. Do not invent ids; only include evidence for ids provided in this instruction."
+      : // The log_evidence tool contract (WO criterion 3). The tool schema is in the
+        // session config; this tells the model WHEN to call it and on WHAT ids.
+        "As the conversation goes, call the `log_evidence` function to record what the learner produces — both errors and successes — as structured evidence. Use the grammar rule id or the lemma id you are given for a target; set polarity to correct or incorrect from what they actually said, and mode to spontaneous when unprompted or cued when you prompted them. Do not invent ids; only log evidence for the ids provided in this instruction.",
   );
 
   return parts.join("\n\n");

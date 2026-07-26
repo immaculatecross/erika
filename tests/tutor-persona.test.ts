@@ -7,15 +7,13 @@ import { buildTutorPersona } from "@/lib/tutor/persona";
 import { buildTutorSessionConfig, logEvidenceTool } from "@/lib/tutor/session-config";
 import { registerInstruction } from "@/lib/register";
 import { l1Line } from "@/lib/analysis/profile";
-import { REALTIME_FLAGSHIP, REALTIME_MINI } from "@/lib/analysis/rates";
-import { REALTIME_VOICES } from "@/lib/tutor/voices";
+import { REALTIME_FLAGSHIP } from "@/lib/analysis/rates";
 import { writeSettings } from "@/lib/settings";
 
 // The tutor persona + session config (E-34, WO criterion 2). The instruction payload
 // must carry the profile L1, the slip targets, today's items, and the register line;
-// and the session config must ship the right model, an output voice, and the
-// `log_evidence` tool. No model call is made building any of this (composition is
-// model-free, E-31).
+// and the E-48 session config must ship the exact model, manual text output, and the
+// shared structured evidence envelope. No model call is made building any of this.
 
 const dirs: string[] = [];
 function freshDb(): Db {
@@ -250,22 +248,16 @@ describe("logEvidenceTool schema", () => {
 });
 
 describe("buildTutorSessionConfig — the wired config", () => {
-  it("ships the tier's model, AUDIO output with a voice, server VAD, the log_evidence tool, and a register-correct instruction", () => {
+  it("ships flagship audio-in/text-out with manual turns and a register-correct instruction", () => {
     const db = freshDb();
     writeSettings(db, { register: "colto", nativeLanguage: "English" });
     const { config } = buildTutorSessionConfig(db);
     expect(config.type).toBe("realtime");
     expect(config.model).toBe(REALTIME_FLAGSHIP);
-    // [E-43, Amendment 5] audio in, AUDIO out — the operator's revert. The voice is
-    // the learner's, from Settings, and must be one the Realtime API accepts.
-    expect(config.output_modalities).toEqual(["audio"]);
-    expect(REALTIME_VOICES).toContain(config.audio.output.voice);
-    // Turn-taking is server VAD with automatic responses, so the learner presses
-    // nothing between turns (criterion 1) and can talk over the tutor.
-    expect(config.audio.input.turn_detection.type).toBe("server_vad");
-    expect(config.audio.input.turn_detection.create_response).toBe(true);
-    expect(config.audio.input.turn_detection.interrupt_response).toBe(true);
-    expect(config.tools.some((t) => t.name === "log_evidence")).toBe(true);
+    expect(config.output_modalities).toEqual(["text"]);
+    expect(config.audio.input.turn_detection).toBeNull();
+    expect("output" in config.audio).toBe(false);
+    expect(config.tools).toEqual([]);
     expect(config.instructions).toContain(registerInstruction("colto"));
     expect(config.instructions).toContain(l1Line("English"));
     // [T2b] the config carries a server-chosen HARD max-duration ceiling (seconds).
@@ -284,25 +276,21 @@ describe("buildTutorSessionConfig — the wired config", () => {
     db.close();
   });
 
-  it("defaults to flagship and honours a stored mini tier (E-43)", () => {
-    // The tier dial is back by operator ruling, once the honest flagship price was
-    // visible. Flagship is the DEFAULT — spike-6 measured gpt-realtime-2.1-mini
-    // producing 3 empty replies and 2 hallucinated errors on clean speech out of 9 —
-    // and mini is a deliberate choice, never something a fresh database falls into.
+  it("uses flagship for the lab even when the old Settings tier is mini", () => {
     const fresh = freshDb();
     expect(buildTutorSessionConfig(fresh).config.model).toBe(REALTIME_FLAGSHIP);
     fresh.close();
 
     const db = freshDb();
     writeSettings(db, { realtimeTier: "mini" });
-    expect(buildTutorSessionConfig(db).config.model).toBe(REALTIME_MINI);
+    expect(buildTutorSessionConfig(db).config.model).toBe(REALTIME_FLAGSHIP);
     db.close();
   });
 
-  it("carries the learner's chosen voice all the way into the session", () => {
+  it("keeps the selected voice out of the listening session", () => {
     const db = freshDb();
     writeSettings(db, { tutorVoice: "cedar" });
-    expect(buildTutorSessionConfig(db).config.audio.output.voice).toBe("cedar");
+    expect("output" in buildTutorSessionConfig(db).config.audio).toBe(false);
     db.close();
   });
 });

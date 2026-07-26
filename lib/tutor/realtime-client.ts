@@ -1,3 +1,5 @@
+import type { RealtimeTurnUsage } from "../analysis/rates";
+
 // The WebRTC client seam for the tutor (E-34). The browser connects to the Realtime
 // API using ONLY the short-lived ephemeral client secret the server minted — never
 // the real API key (secret-exposure, never-waivable). Everything WebRTC-shaped is
@@ -37,6 +39,52 @@ export function parseRealtimeEvent(data: string): RealtimeEvent | null {
   } catch {
     return null;
   }
+}
+
+/** Text-only Realtime replies arrive as GA `response.output_text.delta` events. */
+export function extractTextDelta(event: RealtimeEvent): string | null {
+  if (typeof event.type !== "string" || !event.type.endsWith("text.delta")) return null;
+  return typeof event.delta === "string" ? event.delta : null;
+}
+
+/** Normalize the usage object carried on `response.done`; no secret-bearing fields
+ * leave the data channel. */
+export function extractRealtimeUsage(event: RealtimeEvent): RealtimeTurnUsage | null {
+  if (!isResponseComplete(event)) return null;
+  const response =
+    typeof event.response === "object" && event.response !== null
+      ? (event.response as Record<string, unknown>)
+      : null;
+  const usage =
+    response && typeof response.usage === "object" && response.usage !== null
+      ? (response.usage as Record<string, unknown>)
+      : null;
+  if (!usage) return null;
+  const inputDetails =
+    typeof usage.input_token_details === "object" && usage.input_token_details !== null
+      ? (usage.input_token_details as Record<string, unknown>)
+      : typeof usage.input_tokens_details === "object" && usage.input_tokens_details !== null
+        ? (usage.input_tokens_details as Record<string, unknown>)
+        : {};
+  const cachedDetails =
+    typeof inputDetails.cached_tokens_details === "object" &&
+    inputDetails.cached_tokens_details !== null
+      ? (inputDetails.cached_tokens_details as Record<string, unknown>)
+      : {};
+  const outputDetails =
+    typeof usage.output_token_details === "object" && usage.output_token_details !== null
+      ? (usage.output_token_details as Record<string, unknown>)
+      : typeof usage.output_tokens_details === "object" && usage.output_tokens_details !== null
+        ? (usage.output_tokens_details as Record<string, unknown>)
+        : {};
+  return {
+    inputTokens: Number(usage.input_tokens) || 0,
+    cachedInputTokens: Number(inputDetails.cached_tokens) || 0,
+    audioInputTokens: Number(inputDetails.audio_tokens) || 0,
+    cachedAudioInputTokens: Number(cachedDetails.audio_tokens) || 0,
+    outputTokens: Number(usage.output_tokens) || 0,
+    reasoningTokens: Number(outputDetails.reasoning_tokens) || 0,
+  };
 }
 
 /** A completed `log_evidence` tool call extracted from an event: its call id and the
@@ -139,6 +187,8 @@ export interface RealtimeHandlers {
   onTurnComplete?: () => void;
   /** The learner started speaking. */
   onSpeechStarted?: () => void;
+  /** One complete text-only response, with usage when the provider supplied it. */
+  onTurnText?: (text: string, usage: RealtimeTurnUsage | null) => void;
   /** Any other event, for UI (e.g. the dots field). Optional. */
   onEvent?: (event: RealtimeEvent) => void;
 }
@@ -205,6 +255,7 @@ export const MAX_CONTINUATIONS_PER_TURN = 1;
 export interface DataChannelLike {
   onmessage: ((ev: { data: string }) => void) | null;
   onopen?: (() => void) | null;
+  readyState?: string;
   send(data: string): void;
 }
 
@@ -213,8 +264,29 @@ export interface DataChannelLike {
 export function openingResponse(instructions: string): Record<string, unknown> {
   return { type: "response.create", response: { instructions } };
 }
+
+export function manualTurnEvents(): readonly [Record<string, unknown>, Record<string, unknown>] {
+  return [
+    { type: "input_audio_buffer.commit" },
+    { type: "response.create", response: { output_modalities: ["text"] } },
+  ];
+}
+
+export function repairResponse(invalid: string): Record<string, unknown> {
+  return {
+    type: "response.create",
+    response: {
+      output_modalities: ["text"],
+      instructions:
+        "Your previous response was invalid. Return only one complete JSON object in the required schema. " +
+        "The first character must be { and the last must be }; add no parentheses, fences, label, or commentary. " +
+        `Do not add new claims. Previous response: ${invalid.slice(0, 6000)}`,
+    },
+  };
+}
 export interface TrackLike {
   kind: string;
+  enabled?: boolean;
 }
 export interface MediaStreamLike {
   getTracks(): TrackLike[];
@@ -252,6 +324,10 @@ export interface TutorConnectDeps {
 export interface TutorConnection {
   pc: PeerConnectionLike;
   channel: DataChannelLike;
+  beginTurn(): boolean;
+  commitTurn(): boolean;
+  requestRepair(invalid: string): boolean;
+  isRecording(): boolean;
   stop(): void;
 }
 
@@ -265,53 +341,47 @@ export interface TutorConnection {
 export async function connectTutor(deps: TutorConnectDeps): Promise<TutorConnection> {
   const stream = await deps.getMicStream();
   const pc = deps.createPeerConnection();
-  for (const track of stream.getTracks()) pc.addTrack(track, stream);
+  const tracks = stream.getTracks();
+  for (const track of tracks) {
+    // Manual turns are closed by default. The model receives audio only after the
+    // learner explicitly presses Speak.
+    track.enabled = false;
+    pc.addTrack(track, stream);
+  }
 
   const channel = pc.createDataChannel(REALTIME_EVENT_CHANNEL);
-
-  // Answering the tool call belongs HERE, not in the page: it is part of the protocol,
-  // it must happen whatever the app does with the evidence, and it must not wait on the
-  // server round-trip that persists it. See the block above for what happens without it.
-  let owed = false;
-  let continuations = 0;
-  const handlers: RealtimeHandlers = {
-    ...deps.handlers,
-    onLogEvidence: (args, callId) => {
-      if (callId && continuations < MAX_CONTINUATIONS_PER_TURN) {
-        channel.send(JSON.stringify(functionCallOutput(callId, { ok: true })));
-        owed = true;
-      }
-      return deps.handlers.onLogEvidence(args, callId);
-    },
-    onTurnComplete: () => {
-      if (owed) {
-        owed = false;
-        continuations += 1;
-        channel.send(JSON.stringify(continueResponse()));
-      }
-      deps.handlers.onTurnComplete?.();
-    },
-    onSpeechStarted: () => {
-      // A new learner turn: the budget of continuations resets, and anything owed by
-      // the turn the learner just interrupted is abandoned rather than spoken over.
-      continuations = 0;
-      owed = false;
-      deps.handlers.onSpeechStarted?.();
-    },
+  const pending: string[] = [];
+  const send = (event: Record<string, unknown>) => {
+    const serialized = JSON.stringify(event);
+    if (channel.readyState && channel.readyState !== "open") pending.push(serialized);
+    else channel.send(serialized);
   };
+
+  let recording = false;
+  let processing = false;
+  let repairs = 0;
+  let text = "";
 
   channel.onmessage = (ev) => {
     const event = parseRealtimeEvent(ev.data);
-    if (event) dispatchRealtimeEvent(event, handlers);
+    if (!event) return;
+    const delta = extractTextDelta(event);
+    if (delta) text += delta;
+    if (isResponseComplete(event)) {
+      processing = false;
+      const complete = text;
+      text = "";
+      deps.handlers.onTurnText?.(complete, extractRealtimeUsage(event));
+    }
+    dispatchRealtimeEvent(event, deps.handlers);
   };
-  // Erika opens the conversation. `deps.greeting` is an instruction for the FIRST
-  // response only; the persona still governs everything after it.
-  if (deps.greeting) {
-    channel.onopen = () => channel.send(JSON.stringify(openingResponse(deps.greeting as string)));
-  }
+  channel.onopen = () => {
+    for (const event of pending.splice(0)) channel.send(event);
+    if (deps.greeting) channel.send(JSON.stringify(openingResponse(deps.greeting)));
+  };
 
-  // The tutor's voice comes DOWN this connection as a media track. Wired before the
-  // offer, because the track can arrive as soon as the remote description is set.
+  // Text-only sessions should never produce a remote audio track; retaining the
+  // callback makes an unexpected provider regression observable.
   pc.ontrack = (ev) => deps.onRemoteAudio?.(ev.streams[0]);
 
   const offer = await pc.createOffer();
@@ -325,7 +395,37 @@ export async function connectTutor(deps: TutorConnectDeps): Promise<TutorConnect
   return {
     pc,
     channel,
+    beginTurn() {
+      if (recording || processing) return false;
+      recording = true;
+      repairs = 0;
+      text = "";
+      for (const track of tracks) track.enabled = true;
+      return true;
+    },
+    commitTurn() {
+      if (!recording || processing) return false;
+      recording = false;
+      processing = true;
+      for (const track of tracks) track.enabled = false;
+      const [commit, create] = manualTurnEvents();
+      send(commit);
+      send(create);
+      return true;
+    },
+    requestRepair(invalid) {
+      if (recording || processing || repairs >= 1) return false;
+      repairs += 1;
+      processing = true;
+      text = "";
+      send(repairResponse(invalid));
+      return true;
+    },
+    isRecording() {
+      return recording;
+    },
     stop() {
+      for (const track of tracks) track.enabled = false;
       pc.close();
     },
   };

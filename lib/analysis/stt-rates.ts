@@ -16,7 +16,8 @@
 // the call like every other biller.
 
 export const STT_MODEL = "gpt-4o-mini-transcribe" as const;
-export type SttModelId = typeof STT_MODEL;
+export const TUTOR_STT_MODEL = "gpt-4o-transcribe" as const;
+export type SttModelId = typeof STT_MODEL | typeof TUTOR_STT_MODEL;
 
 export interface SttModelRate {
   usdPerAudioMinute: number;
@@ -32,6 +33,9 @@ export interface SttModelRate {
  */
 export const STT_RATES: Record<SttModelId, SttModelRate> = {
   "gpt-4o-mini-transcribe": { usdPerAudioMinute: 0.006 },
+  // Published $0.006/minute. Book 25% headroom because under-pricing is the
+  // dangerous direction and the provider may bill token-shaped short turns.
+  "gpt-4o-transcribe": { usdPerAudioMinute: 0.0075 },
 };
 
 /** USD to transcribe `seconds` of drill audio, per the rates table. A partial

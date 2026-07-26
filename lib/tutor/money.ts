@@ -1,7 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db";
-import { monthKey, releaseReservation, reserveSpend, type SpendReservation } from "../analysis/budget";
-import { realtimeSessionCost, type RealtimeModelId } from "../analysis/rates";
+import {
+  finalizeReservation,
+  monthKey,
+  releaseReservation,
+  reserveSpend,
+  type SpendReservation,
+} from "../analysis/budget";
+import {
+  TTS_MODEL,
+  realtimeTextSessionCost,
+  ttsAudioSecondsFromMp3Bytes,
+  ttsCallCost,
+  ttsCostFromAudioSeconds,
+  type RealtimeModelId,
+} from "../analysis/rates";
 
 // The realtime tutor's money spine (E-34, D-10/D-20). The tutor is the MOST
 // EXPENSIVE money path AND a long-lived session — a call can run for many minutes
@@ -83,7 +96,7 @@ export function maxTutorSessionSeconds(): number {
 
 /** The per-session estimate shown before the call (WO criterion 5). */
 export function estimateTutorSessionUsd(model: RealtimeModelId, minutes: number): number {
-  return realtimeSessionCost(model, minutes);
+  return realtimeTextSessionCost(model, minutes);
 }
 
 /** Total USD currently PENDING (reserved, not yet finalized) for a tutor session. */
@@ -239,6 +252,7 @@ export function finalizeTutorLease(
   model: RealtimeModelId,
   actualMinutes: number,
   date: Date = new Date(),
+  usageCostUsd?: number,
 ): number {
   const hash = tutorContentHash(tutorId);
   return db.transaction((): number => {
@@ -246,7 +260,10 @@ export function finalizeTutorLease(
     const openedAt = tutorLeaseOpenedAtMs(db, tutorId);
     const serverMinutes = openedAt !== null ? Math.max(0, (date.getTime() - openedAt) / 60000) : 0;
     const billedMinutes = Math.max(Math.max(0, actualMinutes), serverMinutes);
-    const actual = estimateTutorSessionUsd(model, billedMinutes);
+    const actual =
+      typeof usageCostUsd === "number" && Number.isFinite(usageCostUsd)
+        ? Math.max(0, usageCostUsd)
+        : estimateTutorSessionUsd(model, billedMinutes);
     const committed = Math.min(actual, reserved);
     db.prepare("DELETE FROM spend_ledger WHERE content_hash = ? AND state = 'pending'").run(hash);
     if (committed > 0) {
@@ -267,16 +284,72 @@ export function releaseTutorLease(db: Db, tutorId: string): void {
   for (const { id } of r) releaseReservation(db, id);
 }
 
-// ── ONE LEG AGAIN (E-43, Amendment 5) ────────────────────────────────────────
-//
-// This branch briefly carried a SECOND money path here: a per-reply TTS reservation
-// (`tutor-tts:<id>:<seq>`), reserved before each synthesis call and settled on the
-// bytes that arrived. It went with the speaking leg it billed. The tutor is back to
-// ONE billable leg — the Realtime session itself — so there is one lease, one prefix
-// and one committed row per conversation, and no second vendor call to reserve
-// against mid-turn.
-//
-// That is a real simplification of the money spine and not just of the transport: a
-// reply used to be able to be refused by the cap HALFWAY THROUGH A CONVERSATION,
-// leaving a live session that could hear but not answer. It cannot now; the only
-// refusal points are opening a session and extending its lease.
+export function tutorSpeechContentHash(tutorId: string, seq: number | string): string {
+  return `tutor-tts:${tutorId}:${seq}`;
+}
+
+export function tutorSpeechStarted(db: Db, tutorId: string, seq: number | string): boolean {
+  return Boolean(
+    db
+      .prepare("SELECT 1 FROM spend_ledger WHERE content_hash = ? LIMIT 1")
+      .get(tutorSpeechContentHash(tutorId, seq)),
+  );
+}
+
+/** Reserve the common output leg before either architecture asks OpenAI to speak. */
+export function reserveTutorSpeech(
+  db: Db,
+  tutorId: string,
+  seq: number | string,
+  text: string,
+  budgetUsd: number,
+): SpendReservation | null {
+  if (tutorSpeechStarted(db, tutorId, seq)) return null;
+  return reserveSpend(
+    db,
+    {
+      model: TTS_MODEL,
+      contentHash: tutorSpeechContentHash(tutorId, seq),
+      costUsd: ttsCallCost(TTS_MODEL, text.length),
+    },
+    budgetUsd,
+  );
+}
+
+/** Commit synthesized bytes even when the structured turn later fails elsewhere.
+ * Zero bytes means the provider never delivered audio and releases the reservation. */
+export function settleTutorSpeech(
+  db: Db,
+  reservation: SpendReservation,
+  text: string,
+  audioBytes: number,
+): number {
+  if (audioBytes <= 0) {
+    releaseReservation(db, reservation);
+    return 0;
+  }
+  const seconds = ttsAudioSecondsFromMp3Bytes(audioBytes);
+  const actual = Math.min(
+    ttsCostFromAudioSeconds(TTS_MODEL, seconds, text.length),
+    reservation.costUsd,
+  );
+  finalizeReservation(db, reservation, actual);
+  return actual;
+}
+
+/** All committed legs belonging to one conversation, across either architecture. */
+export function tutorConversationCommittedUsd(db: Db, tutorId: string): number {
+  const row = db
+    .prepare(
+      "SELECT COALESCE(SUM(cost_usd), 0) AS total FROM spend_ledger " +
+        "WHERE state = 'committed' AND (" +
+        "content_hash = ? OR content_hash LIKE ? OR content_hash LIKE ? OR content_hash LIKE ?)",
+    )
+    .get(
+      tutorContentHash(tutorId),
+      `tutor-tts:${tutorId}:%`,
+      `tutor-stt:${tutorId}:%`,
+      `tutor-terra:${tutorId}:%`,
+    ) as { total: number };
+  return row.total;
+}

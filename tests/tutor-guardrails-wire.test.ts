@@ -79,11 +79,7 @@ describe("every precision guardrail reaches the wire", () => {
   });
 
   it("tells the model this is SPOKEN, and to keep every turn short", () => {
-    // The spoken-output block survives the return to audio-out. The brevity clause is
-    // the one dial that improves both halves of what the operator asked for: audio
-    // output bills at $64/1M and is the largest leg of a conversation, and a shorter
-    // reply hands the turn back sooner. Measured motivation: a 19.45-second reply to a
-    // 5-second learner turn on the shipping configuration.
+    // The response is text for a separate TTS leg, but its content is still spoken.
     const db = freshDb();
     const sent = wireInstructions(db);
     expect(sent).toContain("This is a spoken conversation");
@@ -110,18 +106,13 @@ describe("every precision guardrail reaches the wire", () => {
   });
 
   it("does NOT re-implement the register dial as voice styling", () => {
-    // Amendment 2: both voices the operator chose were the PLAIN samples, and D-23
-    // governs WHAT the tutor says through the language model, where register has
-    // always belonged. Under audio-out `audio.output` exists again — it carries the
-    // learner's chosen voice — so the assertion is no longer "no output block" but
-    // "nothing in it but the voice". A `speed` or an instruction string appearing here
-    // would be the register dial quietly becoming prosody.
+    // D-23 governs what the language model says. The selected voice belongs to the
+    // common TTS route, so the listening session has no output-audio styling at all.
     const db = freshDb();
     const { config } = buildTutorSessionConfig(db);
     const wire = buildMintSessionWireBody(config) as unknown as Record<string, unknown>;
     expect(JSON.stringify(wire)).not.toContain("instructions_audio");
-    const output = (wire.audio as { output: Record<string, unknown> }).output;
-    expect(Object.keys(output)).toEqual(["voice"]);
+    expect("output" in (wire.audio as Record<string, unknown>)).toBe(false);
     db.close();
   });
 });
