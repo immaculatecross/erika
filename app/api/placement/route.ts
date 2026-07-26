@@ -3,8 +3,16 @@ import { apiError } from "@/lib/api/error";
 import { getDb } from "@/lib/db";
 import { buildPlacementCheck } from "@/lib/placement/check";
 import { placementStatus } from "@/lib/placement/status";
-import { scorePlacement, recognizedItemIds, BANDS, type PlacementAnswer, type Band } from "@/lib/placement/scoring";
+import {
+  scorePlacement,
+  recognizedItemIds,
+  invalidatesMeasurement,
+  BANDS,
+  type PlacementAnswer,
+  type Band,
+} from "@/lib/placement/scoring";
 import { seedPlacement } from "@/lib/knowledge/seed-placement";
+import { resolveLevel } from "@/lib/onboarding/spoken";
 
 // The placement vocabulary check (E-35, D-19). GET builds a fresh check (real words
 // per frequency band + pseudowords) and reports whether the learner has been placed
@@ -19,6 +27,21 @@ import { seedPlacement } from "@/lib/knowledge/seed-placement";
 // `calibrated` now reflects real confidence, not sample size alone. `runId` is the
 // placement generation: a later run supersedes an earlier one, so a careless placement
 // is repairable by re-taking the check rather than by deleting the database.
+//
+// [E-46 criteria 3, 10] The body may now carry `spokenBand` — a level heard in a short
+// free-spoken sample by `POST /api/onboarding/spoken`, a measurement of PRODUCTION where
+// the check measures recognition. `lib/placement/scoring.ts` is untouched: it still scores
+// the yes/no answers exactly as before and this route never overrides one of its decisions.
+// The two measurements are combined by `resolveLevel`, which only ever RAISES the level,
+// and it rescues the one learner the check cannot help — the yes-biased advanced learner
+// whose run is refused as unmeasurable and who, until now, had no route but taking the same
+// check again (RETRO-004 §1).
+//
+// The refusal's teeth stay exactly where they were. An invalidated run still seeds NO
+// vocabulary: a "yes" on a real word from a learner who also said yes to invented ones
+// carries no information, and that is as true when their speech is levelled as when it is
+// not. Only the LEVEL survives, and only when it came from somewhere a response style
+// could not reach. With no spoken band, every branch below is byte-identical to before.
 //
 // [REVIEW-63] Those flags described the result; they did not govern it. A run whose
 // response-style control failed was reported as unmeasurable and seeded anyway (F1), a
@@ -71,6 +94,13 @@ export async function POST(request: Request) {
   }
 
   const result = scorePlacement(answers);
+  const rawSpoken = (body as { spokenBand?: unknown })?.spokenBand;
+  const spokenBand = isBand(rawSpoken) ? rawSpoken : null;
+  const resolved = resolveLevel({ level: result.level, caveat: result.caveat }, spokenBand);
+  // The check could not be measured and the speech supplied the level instead. The caveat
+  // is what refuses the seeding, so it is cleared ONLY here — and only because the thing it
+  // was refusing (a level read off a response style) is no longer what is being written.
+  const rescuedBySpeech = invalidatesMeasurement(result.caveat) && resolved.source === "spoken";
   // Seeding records a placement RUN, which supersedes every earlier one (§DE-2): the
   // derivation stops counting the previous placement's seeds, so re-taking the check
   // actually re-places the learner. `evidence` is still only ever appended to.
@@ -81,15 +111,17 @@ export async function POST(request: Request) {
   // wrote 39 recognition rows. `seedPlacement` refuses a `"response-style"` run outright,
   // returning `runId: null` and zero counts, so the sentence is true rather than nearly true.
   const seeded = seedPlacement(getDb(), {
-    level: result.level,
-    recognizedItemIds: recognizedItemIds(answers),
+    level: resolved.level,
+    recognizedItemIds: invalidatesMeasurement(result.caveat) ? [] : recognizedItemIds(answers),
     calibrated: result.calibrated,
     falseAlarmRate: result.falseAlarmRate,
-    caveat: result.caveat,
+    caveat: rescuedBySpeech ? null : result.caveat,
   });
 
   return NextResponse.json({
-    level: result.level,
+    level: resolved.level,
+    // Where the level came from, so the copy states it rather than implying it.
+    levelSource: resolved.source,
     calibrated: result.calibrated,
     // Why the estimate is rough, so the UI can say so rather than imply confidence.
     caveat: result.caveat,
