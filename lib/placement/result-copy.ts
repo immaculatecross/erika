@@ -31,6 +31,10 @@ export interface PlacementResultView {
   supersededItems: number;
   /** The answers never reached the server, so nothing was scored (REVIEW-64 N5). */
   submitFailed?: boolean;
+  /** Which measurement the level came from (E-46 criteria 3, 10). Absent on a run with
+   *  no spoken sample, which is every run before this milestone — so the sentence is
+   *  unchanged for them. */
+  levelSource?: "check" | "spoken" | "none";
 }
 
 export const CAVEAT_REASON: Record<PlacementCaveat, string> = {
@@ -96,6 +100,23 @@ export function levelLine(r: PlacementResultView): string {
   // measurement (A1 asked and not recognized, non-words rejected) and still reads as the very
   // start — the true beginner, who must not be handed a wall of hedging.
   if (r.level === null && r.caveat) return unplaceableLine(r);
+
+  // [E-46 criteria 3, 10] The level came from the SPOKEN sample, not from the yes/no
+  // answers. Two different sentences, because two different things happened, and reusing
+  // the plain one would be a lie in both directions: it would credit the word check for a
+  // level it did not produce, and — in the rescued case — it would append "this is a rough
+  // placement, several invented words were marked known" to a level those answers had no
+  // hand in. Every clause below is still read from the response, never assumed.
+  if (r.levelSource === "spoken" && r.level) {
+    const rules =
+      r.seededRules > 0
+        ? ` ${r.seededRules} grammar ${r.seededRules === 1 ? "point" : "points"} below it ${r.seededRules === 1 ? "is" : "are"} marked seen.`
+        : "";
+    if (r.caveat) {
+      return `The word check could not be measured. ${CAVEAT_REASON[r.caveat]} Your speaking sample placed you around ${r.level}, so that is where you start.${rules} The words you marked are not counted.`;
+    }
+    return `Placed around ${r.level}. Your speaking sample placed you higher than the word check did, so the higher one is used.${rules}`;
+  }
 
   const where = r.level ? `around ${r.level}` : "at the very start";
   // Verb agreement, not decoration: writing the test for these states surfaced "1 word you

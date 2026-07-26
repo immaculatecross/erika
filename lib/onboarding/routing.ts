@@ -33,6 +33,18 @@
 /** The one onboarding surface. Every incomplete-onboarding page lands here. */
 export const ONBOARDING_PATH = "/welcome";
 
+/**
+ * Where onboarding deposits the learner: their first session, composed from what the
+ * assessment just learned about them (E-46 criterion 5, Amendment 1 criterion 9).
+ *
+ * ONE constant, so the seam is a rename rather than a search. On `master` today the
+ * day's composed material is `/practice/learn` — the composer's own selection for
+ * this local day, at the learner's placed edge. WO-E44 introduces `/practice/session`
+ * as the single daily session; when it merges, this constant moves and nothing else
+ * does.
+ */
+export const FIRST_SESSION_PATH = "/practice/learn";
+
 /** The pathname the root layout reads to know where the request was going. The
  *  middleware stamps it; a layout cannot otherwise see its own URL. */
 export const PATHNAME_HEADER = "x-erika-pathname";

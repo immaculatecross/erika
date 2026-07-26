@@ -254,11 +254,11 @@ export default function SettingsPage() {
         <div className="flex flex-col gap-1.5 border-t border-hairline pt-4" data-placement-entry>
           <span className={LABEL}>Placement</span>
           <p className="text-[13px] text-secondary">
-            Re-take the quick vocabulary check to re-estimate your level, or record a new enrollment take. The newest
+            Re-take the vocabulary check and the speaking sample to re-estimate your level, or record a new enrollment take. The newest
             run replaces the last one — your daily plan follows it.
           </p>
           <Link
-            href="/practice/placement"
+            href="/welcome"
             data-rerun-placement
             className="mt-1 inline-flex w-fit rounded-full bg-black/[0.06] px-4 py-2 text-[15px] font-medium text-ink transition-transform active:scale-[0.98] dark:bg-white/[0.08]"
           >
