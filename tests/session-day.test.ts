@@ -37,16 +37,9 @@ afterEach(() => {
   else process.env.OPENAI_API_KEY = keyBefore;
 });
 
-function createConversationRecord(db: Db): void {
-  db.exec(`
-    CREATE TABLE tutor_conversations (
-      id TEXT PRIMARY KEY, started_at TEXT, ended_at TEXT, duration_seconds REAL,
-      min_seconds INTEGER NOT NULL, met_minimum INTEGER NOT NULL DEFAULT 0,
-      session_id TEXT, local_day TEXT
-    );
-  `);
-}
-
+// `tutor_conversations` is E-43's v29 table and every `freshDb()` already carries it —
+// the migration runner creates it. It used to be hand-written here because E-43 had not
+// merged; hand-writing it now would throw "table already exists".
 function creditConversation(db: Db, day: string, met: boolean): void {
   db.prepare(
     "INSERT INTO tutor_conversations (id, min_seconds, met_minimum, ended_at, local_day) VALUES (?, 600, ?, datetime('now'), ?)",
@@ -116,7 +109,6 @@ describe("the day's goal is the session, not the card queue", () => {
 describe("the conversation counts only when the minimum was met (the operator's rule)", () => {
   it("leaves the step open while the conversation fell short", () => {
     const db = freshDb();
-    createConversationRecord(db);
     const day = localDay();
     const session = openSession(db, day);
     expect(session.steps).toContain("conversation");
@@ -130,7 +122,6 @@ describe("the conversation counts only when the minimum was met (the operator's 
 
   it("credits it — without any client claim — once the minimum was met", () => {
     const db = freshDb();
-    createConversationRecord(db);
     const day = localDay();
     const session = openSession(db, day);
     for (const step of session.steps) {
@@ -159,7 +150,6 @@ describe("the day is recorded wherever the session is observed complete", () => 
     // EMPTY: no completion sentence, no closed ring, no streak day, for a learner who
     // finished their day exactly as designed.
     const db = freshDb();
-    createConversationRecord(db);
     const day = localDay();
     const session = openSession(db, day);
     expect(session.steps[session.steps.length - 1]).toBe("conversation");
@@ -182,7 +172,6 @@ describe("the day is recorded wherever the session is observed complete", () => 
 
   it("does not record a day whose session is unfinished, however often it is read", () => {
     const db = freshDb();
-    createConversationRecord(db);
     const day = localDay();
     const session = openSession(db, day);
     markStepDone(db, day, session.steps[0]);

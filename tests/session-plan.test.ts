@@ -48,17 +48,12 @@ function setBudget(db: Db, usd: number): void {
   ).run(String(usd));
 }
 
-/** E-43's v29 table, created by hand: E-43 is not merged, and this is the exact
- *  contract E-44 consumes. Creating it here proves the consuming half works without
- *  merging the milestone that produces it. */
-function createConversationRecord(db: Db): void {
-  db.exec(`
-    CREATE TABLE tutor_conversations (
-      id TEXT PRIMARY KEY, started_at TEXT, ended_at TEXT, duration_seconds REAL,
-      min_seconds INTEGER NOT NULL, met_minimum INTEGER NOT NULL DEFAULT 0,
-      session_id TEXT, local_day TEXT
-    );
-  `);
+/** E-43's v29 `tutor_conversations` now ships on master, so every `freshDb()` has it.
+ *  Dropping it is how we still exercise the planner's capability probe
+ *  (`conversationRecordAvailable`) — a build that cannot observe a conversation must
+ *  not ask for one. */
+function dropConversationRecord(db: Db): void {
+  db.exec("DROP TABLE tutor_conversations;");
 }
 
 /** One fully analysed session with one finding — the recordings OVERLAY (D-27),
@@ -188,7 +183,6 @@ describe("CRITERION 3 — a step that cannot run is absent, with a reason", () =
   it("names the budget, not the key, when the cap is what refuses", () => {
     process.env.OPENAI_API_KEY = "sk-test-key";
     const db = freshDb();
-    createConversationRecord(db);
     setBudget(db, 0);
     expect(textModelReachable(db)).toEqual({ ok: false, reason: "budget" });
 
@@ -200,10 +194,11 @@ describe("CRITERION 3 — a step that cannot run is absent, with a reason", () =
   });
 
   it("offers no conversation step on a build that cannot record one", () => {
-    // E-43's v29 is absent here, which is the truth on this branch: the day cannot
-    // observe whether a conversation happened, so it must not ask for one.
+    // With E-43's v29 dropped, the day cannot observe whether a conversation happened,
+    // so it must not ask for one.
     process.env.OPENAI_API_KEY = "sk-test-key";
     const db = freshDb();
+    dropConversationRecord(db);
     const plan = planSession(db, "2026-07-25");
 
     expect(plan.steps).not.toContain("conversation");
@@ -214,7 +209,6 @@ describe("CRITERION 3 — a step that cannot run is absent, with a reason", () =
   it("offers it as soon as E-43's record exists and a call is possible", () => {
     process.env.OPENAI_API_KEY = "sk-test-key";
     const db = freshDb();
-    createConversationRecord(db);
     const plan = planSession(db, "2026-07-25");
 
     expect(plan.steps).toEqual(["lesson", "drills", "conversation"]);
@@ -226,7 +220,6 @@ describe("CRITERION 3 — a step that cannot run is absent, with a reason", () =
     // Dropping it would silently un-do work the learner has genuinely done.
     process.env.OPENAI_API_KEY = "sk-test-key";
     const db = freshDb();
-    createConversationRecord(db);
     setBudget(db, 0);
     db.prepare(
       "INSERT INTO tutor_conversations (id, min_seconds, met_minimum, ended_at, local_day) VALUES ('t1', 600, 1, datetime('now'), '2026-07-25')",
